@@ -61,7 +61,12 @@ export function generateItem(rng: Rng, id: string, options: GenerateOptions, dat
     const groups = new Set<string>();
     for (let i = 0; i < target; i++) {
       const pool = Object.values(data.affixes).filter(
-        (a) => a.slots.includes(base.slot) && !groups.has(a.group) && used[a.kind] < caps[a.kind] && a.tiers.some((t) => t.minLevel <= options.itemLevel),
+        (a) =>
+          a.slots.includes(base.slot) &&
+          fitsDefence(a, base) &&
+          !groups.has(a.group) &&
+          used[a.kind] < caps[a.kind] &&
+          a.tiers.some((t) => t.minLevel <= options.itemLevel),
       );
       const affix = weightedPick(rng, pool, (a) => a.weight);
       if (!affix) break;
@@ -83,6 +88,11 @@ export function generateItem(rng: Rng, id: string, options: GenerateOptions, dat
     ...(base.energyShield ? { energyShield: rollValue(rng, base.energyShield) } : {}),
   };
   return item;
+}
+
+function fitsDefence(affix: AffixDef, base: BaseDef): boolean {
+  if (!affix.requires || (!base.armour && !base.energyShield)) return true;
+  return Boolean(base[affix.requires]);
 }
 
 function rollAffix(rng: Rng, affix: AffixDef, itemLevel: number, data: ItemsData): RolledAffix {

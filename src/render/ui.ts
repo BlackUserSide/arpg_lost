@@ -182,6 +182,22 @@ export function label(scene: Phaser.Scene, x: number, y: number, text: string, s
 
 export type ButtonStyle = 'primary' | 'secondary' | 'danger' | 'link';
 
+/**
+ * Fires onClick only for a press that started on this object. A bare pointer-up (e.g. a menu
+ * appearing under a resting cursor right after an attack click) must not activate it.
+ */
+function onPress(target: Phaser.GameObjects.GameObject, onClick: () => void): void {
+  let pressed = false;
+  target
+    .on('pointerdown', () => (pressed = true))
+    .on('pointerout', () => (pressed = false))
+    .on('pointerup', () => {
+      if (!pressed) return;
+      pressed = false;
+      onClick();
+    });
+}
+
 const frameHitArea = (w: number, h: number): Phaser.Types.Input.InputConfiguration => ({
   useHandCursor: true,
   hitArea: new Phaser.Geom.Rectangle(FRAME_PAD, FRAME_PAD, w, h),
@@ -204,8 +220,8 @@ export function makeButton(
     const link = scene.add.container(x, y, [hit, t]);
     hit.setInteractive({ useHandCursor: true })
       .on('pointerover', () => t.setColor(UI.goldBrightText))
-      .on('pointerout', () => t.setColor(UI.goldText))
-      .on('pointerup', onClick);
+      .on('pointerout', () => t.setColor(UI.goldText));
+    onPress(hit, onClick);
     return link;
   }
   const normal = frameTexture(scene, w, h, style);
@@ -236,10 +252,8 @@ export function makeButton(
       tweenTo(1);
     })
     .on('pointerdown', () => tweenTo(0.96))
-    .on('pointerup', () => {
-      tweenTo(1.04);
-      onClick();
-    });
+    .on('pointerup', () => tweenTo(1.04));
+  onPress(bg, onClick);
   return button;
 }
 
@@ -251,8 +265,8 @@ export function makeCard(scene: Phaser.Scene, x: number, y: number, w: number, h
   card
     .setInteractive(frameHitArea(w, h))
     .on('pointerover', () => card.setTexture(hover))
-    .on('pointerout', () => card.setTexture(normal))
-    .on('pointerup', onClick);
+    .on('pointerout', () => card.setTexture(normal));
+  onPress(card, onClick);
   return card;
 }
 
@@ -288,4 +302,19 @@ export function makeAvatar(scene: Phaser.Scene, x: number, y: number, size: numb
 /** Standard screen entrance. */
 export function fadeIn(scene: Phaser.Scene): void {
   scene.cameras.main.fadeIn(250, 10, 9, 12);
+}
+
+/**
+ * Pins an object to the screen (scroll factor 0), including container children: Phaser hit-tests
+ * children with their own scroll factor, so a pinned container with world-space children would draw
+ * correctly but miss clicks whenever the camera has scrolled.
+ */
+export function pinToScreen<T extends Phaser.GameObjects.GameObject>(obj: T, depth?: number): T {
+  const pin = (o: Phaser.GameObjects.GameObject): void => {
+    (o as unknown as Phaser.GameObjects.Components.ScrollFactor).setScrollFactor?.(0);
+    if (o instanceof Phaser.GameObjects.Container) o.list.forEach(pin);
+  };
+  pin(obj);
+  if (depth !== undefined) (obj as unknown as Phaser.GameObjects.Components.Depth).setDepth(depth);
+  return obj;
 }

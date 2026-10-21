@@ -39,6 +39,8 @@ export interface AffixDef {
   readonly kind: AffixKind;
   readonly slots: readonly Slot[];
   readonly weight: number;
+  /** Defence-scaling affixes only roll on bases that have that defence (jewellery has none and is exempt). */
+  readonly requires?: 'armour' | 'energyShield';
   readonly line: StatLine;
   /** Ordered from worst (T5) to best (T1) by minLevel. */
   readonly tiers: readonly AffixTier[];
@@ -72,6 +74,8 @@ export interface LootRules {
   readonly tierWeights: readonly number[];
   readonly salvage: Readonly<Record<Rarity, number>>;
   readonly stashSize: number;
+  /** Off until character levels exist (M3); requirements still show in tooltips. */
+  readonly enforceLevelRequirement: boolean;
   /** Temporary arena rewards until runs end with a chest (docs/design/maps.md). */
   readonly arenaRewards: { readonly killsPerItem: number; readonly maxItems: number; readonly wavesPerItemLevel: number; readonly maxItemLevel: number };
   readonly rareNameWords: { readonly first: readonly string[]; readonly second: readonly string[] };

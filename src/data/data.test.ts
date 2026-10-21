@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionDef } from '../core/world/content';
+import { generateItem } from '../core/items/generate';
 import { SLOTS } from '../core/items/types';
+import { createRng } from '../core/rng';
 import { content } from './index';
 import { itemsData } from './items';
 
@@ -109,6 +111,22 @@ describe('item data validation', () => {
       const affixes = Object.values(itemsData.affixes).filter((a) => a.slots.includes(slot));
       expect(affixes.some((a) => a.kind === 'prefix')).toBe(true);
       expect(affixes.some((a) => a.kind === 'suffix')).toBe(true);
+    }
+  });
+});
+
+describe('item generation with real data', () => {
+  it('defence affixes only roll on bases with that defence', () => {
+    const rng = createRng(11);
+    for (let i = 0; i < 400; i++) {
+      for (const slot of ['armour', 'helmet', 'gloves', 'boots'] as const) {
+        const item = generateItem(rng, `t${i}`, { itemLevel: 30, rarity: 'rare', slot }, itemsData);
+        const base = itemsData.bases[item.baseId]!;
+        for (const a of item.affixes) {
+          const req = itemsData.affixes[a.affixId]!.requires;
+          if (req) expect(base[req], `${a.affixId} on ${base.id}`).toBeDefined();
+        }
+      }
     }
   });
 });

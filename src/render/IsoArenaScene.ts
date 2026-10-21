@@ -10,7 +10,7 @@ import { itemsData } from '../data/items';
 import { content } from '../data';
 import { getApp } from './app';
 import { Hud } from './hud';
-import { fadeIn, heading, label, makeButton, makeFrame, UI } from './ui';
+import { fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
 import { screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
 
@@ -242,9 +242,7 @@ export class IsoArenaScene extends Phaser.Scene {
     const menu = makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, compact ? 44 : 52, 'Main menu', () => this.leaveToMenu());
     objects.push(primary, menu);
     objects.push(label(this, width / 2, buttonY - (compact ? 40 : 48), kind === 'death' ? 'R — try again   ·   Esc — menu' : 'Esc — resume', UI.size.small, UI.muted).setOrigin(0.5));
-    for (const o of objects) {
-      (o as unknown as Phaser.GameObjects.Components.ScrollFactor & Phaser.GameObjects.Components.Depth).setScrollFactor(0).setDepth(20000);
-    }
+    for (const o of objects) pinToScreen(o, 20000);
     const fadeTargets = objects.slice(1);
     for (const o of fadeTargets) (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha(0);
     this.tweens.add({ targets: fadeTargets, alpha: 1, duration: kind === 'death' ? 600 : 150, delay: kind === 'death' ? 500 : 0 });

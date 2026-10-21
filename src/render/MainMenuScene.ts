@@ -80,6 +80,9 @@ export class MainMenuScene extends Phaser.Scene {
     const playY = height - (compact ? 40 : 64);
     if (selected) {
       this.root.add(makeButton(this, sceneW / 2, playY, compact ? 200 : 260, compact ? 48 : 60, 'Enter the dungeon', () => this.play(selected.id), 'primary'));
+      const playW = compact ? 200 : 260;
+      const invW = compact ? 110 : 150;
+      this.root.add(makeButton(this, sceneW / 2 - playW / 2 - 12 - invW / 2, playY, invW, compact ? 40 : 48, 'Inventory', () => this.scene.start('inventory', { characterId: selected.id })));
       this.root.add(label(this, sceneW / 2, playY - (compact ? 38 : 50), selected.name, compact ? UI.size.body : UI.size.heading, UI.goldBrightText, true).setOrigin(0.5));
     } else {
       this.root.add(label(this, sceneW / 2, playY, 'Create a character to begin', UI.size.heading, UI.muted).setOrigin(0.5));

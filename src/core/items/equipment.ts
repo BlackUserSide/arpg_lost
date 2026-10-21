@@ -28,7 +28,7 @@ export function canEquip(
   const allowed: readonly EquipSlot[] = base.slot === 'ring' ? ['ring1', 'ring2'] : [base.slot];
   if (!allowed.includes(target)) return 'wrong-slot';
   // Requirement ≈ item level (docs/design/items.md).
-  if (item.level > character.level) return 'level';
+  if (data.rules.enforceLevelRequirement && item.level > character.level) return 'level';
   if (base.weapon && base.weapon.type !== character.weaponType) return 'weapon-type';
   return null;
 }

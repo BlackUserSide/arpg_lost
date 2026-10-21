@@ -12,8 +12,16 @@ function tiers(ranges: ReadonlyArray<readonly [number, number]>, step: number): 
 const ARMOUR_SLOTS: readonly Slot[] = ['helmet', 'armour', 'gloves', 'boots'];
 const ALL_DEFENSIVE: readonly Slot[] = ['helmet', 'armour', 'gloves', 'boots', 'ring', 'amulet'];
 
-function affix(id: string, kind: AffixDef['kind'], slots: readonly Slot[], weight: number, line: StatLine, t: AffixTier[], group = id): AffixDef {
-  return { id, group, kind, slots, weight, line, tiers: t };
+function affix(
+  id: string,
+  kind: AffixDef['kind'],
+  slots: readonly Slot[],
+  weight: number,
+  line: StatLine,
+  t: AffixTier[],
+  requires?: AffixDef['requires'],
+): AffixDef {
+  return { id, group: id, kind, slots, weight, line, tiers: t, ...(requires ? { requires } : {}) };
 }
 
 const pct = (...r: Array<[number, number]>): AffixTier[] => tiers(r, 0.01);
@@ -24,10 +32,10 @@ const affixList: AffixDef[] = [
   // ── Prefixes: damage, life, energy shield, armour ──
   affix('life_flat', 'prefix', ALL_DEFENSIVE, 1000, { stat: 'life', kind: 'flat' }, int([8, 14], [15, 24], [25, 34], [35, 44], [45, 55])),
   affix('life_inc', 'prefix', ['armour', 'amulet'], 400, { stat: 'life', kind: 'increased' }, pct([0.04, 0.06], [0.07, 0.09], [0.1, 0.12], [0.13, 0.15], [0.16, 0.18])),
-  affix('es_flat', 'prefix', ['helmet', 'armour', 'gloves', 'boots', 'amulet'], 600, { stat: 'energyShield', kind: 'flat' }, int([5, 9], [10, 16], [17, 24], [25, 33], [34, 42])),
-  affix('es_inc', 'prefix', ARMOUR_SLOTS, 400, { stat: 'energyShield', kind: 'increased' }, pct([0.1, 0.15], [0.16, 0.22], [0.23, 0.3], [0.31, 0.38], [0.39, 0.46])),
-  affix('armour_flat', 'prefix', ARMOUR_SLOTS, 600, { stat: 'armour', kind: 'flat' }, int([8, 15], [16, 30], [31, 50], [51, 75], [76, 100])),
-  affix('armour_inc', 'prefix', ARMOUR_SLOTS, 400, { stat: 'armour', kind: 'increased' }, pct([0.1, 0.15], [0.16, 0.22], [0.23, 0.3], [0.31, 0.38], [0.39, 0.46])),
+  affix('es_flat', 'prefix', ['helmet', 'armour', 'gloves', 'boots', 'amulet'], 600, { stat: 'energyShield', kind: 'flat' }, int([5, 9], [10, 16], [17, 24], [25, 33], [34, 42]), 'energyShield'),
+  affix('es_inc', 'prefix', ARMOUR_SLOTS, 400, { stat: 'energyShield', kind: 'increased' }, pct([0.1, 0.15], [0.16, 0.22], [0.23, 0.3], [0.31, 0.38], [0.39, 0.46]), 'energyShield'),
+  affix('armour_flat', 'prefix', ARMOUR_SLOTS, 600, { stat: 'armour', kind: 'flat' }, int([8, 15], [16, 30], [31, 50], [51, 75], [76, 100]), 'armour'),
+  affix('armour_inc', 'prefix', ARMOUR_SLOTS, 400, { stat: 'armour', kind: 'increased' }, pct([0.1, 0.15], [0.16, 0.22], [0.23, 0.3], [0.31, 0.38], [0.39, 0.46]), 'armour'),
   affix('added_physical', 'prefix', ['weapon', 'ring', 'gloves', 'amulet'], 500, { stat: 'damage', kind: 'flat', damageType: 'physical' }, int([1, 3], [3, 5], [5, 8], [8, 12], [12, 16])),
   affix('added_fire', 'prefix', ['weapon', 'ring', 'gloves', 'amulet'], 500, { stat: 'damage', kind: 'flat', damageType: 'fire' }, int([2, 4], [4, 7], [7, 11], [11, 16], [16, 22])),
   affix('added_cold', 'prefix', ['weapon', 'ring', 'gloves', 'amulet'], 500, { stat: 'damage', kind: 'flat', damageType: 'cold' }, int([2, 4], [4, 7], [7, 11], [11, 16], [16, 22])),
@@ -114,6 +122,8 @@ const rules: LootRules = {
   tierWeights: [10, 25, 50, 80, 100],
   salvage: { normal: 1, magic: 3, rare: 8, unique: 25, legendary: 100 },
   stashSize: 30,
+  // TEMPORARY: no character levels yet, so every item would be unequippable.
+  enforceLevelRequirement: false,
   arenaRewards: { killsPerItem: 20, maxItems: 3, wavesPerItemLevel: 3, maxItemLevel: 30 },
   rareNameWords: {
     first: ['Grim', 'Dusk', 'Ashen', 'Blood', 'Storm', 'Bone', 'Gloom', 'Rune', 'Iron', 'Hollow', 'Wraith', 'Ember'],
