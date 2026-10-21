@@ -24,6 +24,9 @@ const TILE_SCALE = 0.5;
 const CORPSE_TIME = 2.5;
 const AREA_TTL = 0.18;
 const LIGHT_RADIUS = 520;
+/** Light falloff texture side; must exceed 2 × LIGHT_RADIUS. */
+const LIGHT_TEXTURE = 1200;
+const DARKNESS = 0.92;
 /** Visual height of projectiles above the ground, in screen pixels. */
 const PROJECTILE_HEIGHT = 34;
 /** Seconds a skill key press stays queued while the hero is busy. */
@@ -92,7 +95,7 @@ export class IsoArenaScene extends Phaser.Scene {
   private areas: AreaFx[] = [];
   private fx!: Phaser.GameObjects.Graphics;
   private fxTop!: Phaser.GameObjects.Graphics;
-  private light!: Phaser.GameObjects.Image;
+  private light!: Phaser.GameObjects.Container;
   private hud!: Hud;
   private overlay: Phaser.GameObjects.GameObject[] | undefined;
   private paused = false;
@@ -148,7 +151,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.fxTop = this.add.graphics().setDepth(4000);
     const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
     this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
-    this.light = this.add.image(0, 0, this.makeLightTexture()).setDepth(5000);
+    this.light = this.createLight();
 
     const { width, height } = this.content.arena;
     const left = toScreen(vec(0, height)).x;
@@ -572,21 +575,33 @@ export class IsoArenaScene extends Phaser.Scene {
     }
   }
 
-  /** Radial darkness with a lit circle around the hero. */
-  private makeLightTexture(): string {
+  /**
+   * Darkness with a lit circle around the hero: a small gradient texture for the light falloff plus
+   * plain dark rectangles reaching far beyond any screen, so wide displays never show an unlit strip
+   * and GPU memory stays small (a screen-sized gradient texture would be ~100 MB on 1440p).
+   */
+  private createLight(): Phaser.GameObjects.Container {
     const key = 'light-mask';
-    if (this.textures.exists(key)) return key;
-    const size = 2400;
-    const canvas = this.textures.createCanvas(key, size, size);
-    const ctx = canvas!.getContext();
-    const gradient = ctx.createRadialGradient(size / 2, size / 2, LIGHT_RADIUS * 0.3, size / 2, size / 2, LIGHT_RADIUS);
-    gradient.addColorStop(0, 'rgba(0,0,0,0)');
-    gradient.addColorStop(0.6, 'rgba(0,0,0,0.45)');
-    gradient.addColorStop(1, 'rgba(0,0,0,0.92)');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, size, size);
-    canvas!.refresh();
-    return key;
+    const size = LIGHT_TEXTURE;
+    if (!this.textures.exists(key)) {
+      const canvas = this.textures.createCanvas(key, size, size)!;
+      const ctx = canvas.getContext();
+      const gradient = ctx.createRadialGradient(size / 2, size / 2, LIGHT_RADIUS * 0.3, size / 2, size / 2, LIGHT_RADIUS);
+      gradient.addColorStop(0, 'rgba(0,0,0,0)');
+      gradient.addColorStop(0.6, `rgba(0,0,0,${DARKNESS * 0.49})`);
+      gradient.addColorStop(1, `rgba(0,0,0,${DARKNESS})`);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, size, size);
+      canvas.refresh();
+    }
+    const far = 20000;
+    const half = size / 2;
+    const outside = this.add.graphics().fillStyle(0x000000, DARKNESS);
+    outside.fillRect(-far, -far, 2 * far, far - half); // above
+    outside.fillRect(-far, half, 2 * far, far - half); // below
+    outside.fillRect(-far, -half, far - half, size); // left
+    outside.fillRect(half, -half, far - half, size); // right
+    return this.add.container(0, 0, [this.add.image(0, 0, key), outside]).setDepth(5000);
   }
 
   private spawnDamageNumber(pos: Vec2, amount: number, isCrit: boolean, onPlayer: boolean): void {
