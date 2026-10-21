@@ -21,10 +21,22 @@
         "fps": 18,
         "loop": false
       },
-      "skill": {
-        "file": "knight_skill.png",
+      "cleave": {
+        "file": "knight_cleave.png",
         "frames": 6,
         "fps": 18,
+        "loop": false
+      },
+      "dash": {
+        "file": "knight_dash.png",
+        "frames": 6,
+        "fps": 16,
+        "loop": false
+      },
+      "cry": {
+        "file": "knight_cry.png",
+        "frames": 6,
+        "fps": 12,
         "loop": false
       },
       "hit": {
@@ -35,6 +47,106 @@
       },
       "death": {
         "file": "knight_death.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      }
+    },
+    "ranger": {
+      "idle": {
+        "file": "ranger_idle.png",
+        "frames": 4,
+        "fps": 4,
+        "loop": true
+      },
+      "run": {
+        "file": "ranger_run.png",
+        "frames": 8,
+        "fps": 12,
+        "loop": true
+      },
+      "attack": {
+        "file": "ranger_attack.png",
+        "frames": 6,
+        "fps": 18,
+        "loop": false
+      },
+      "volley": {
+        "file": "ranger_volley.png",
+        "frames": 6,
+        "fps": 18,
+        "loop": false
+      },
+      "trap": {
+        "file": "ranger_trap.png",
+        "frames": 6,
+        "fps": 16,
+        "loop": false
+      },
+      "roll": {
+        "file": "ranger_roll.png",
+        "frames": 6,
+        "fps": 16,
+        "loop": false
+      },
+      "hit": {
+        "file": "ranger_hit.png",
+        "frames": 3,
+        "fps": 16,
+        "loop": false
+      },
+      "death": {
+        "file": "ranger_death.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      }
+    },
+    "mage": {
+      "idle": {
+        "file": "mage_idle.png",
+        "frames": 4,
+        "fps": 4,
+        "loop": true
+      },
+      "run": {
+        "file": "mage_run.png",
+        "frames": 8,
+        "fps": 12,
+        "loop": true
+      },
+      "attack": {
+        "file": "mage_attack.png",
+        "frames": 6,
+        "fps": 18,
+        "loop": false
+      },
+      "fireball": {
+        "file": "mage_fireball.png",
+        "frames": 6,
+        "fps": 14,
+        "loop": false
+      },
+      "nova": {
+        "file": "mage_nova.png",
+        "frames": 6,
+        "fps": 14,
+        "loop": false
+      },
+      "teleport": {
+        "file": "mage_teleport.png",
+        "frames": 6,
+        "fps": 16,
+        "loop": false
+      },
+      "hit": {
+        "file": "mage_hit.png",
+        "frames": 3,
+        "fps": 16,
+        "loop": false
+      },
+      "death": {
+        "file": "mage_death.png",
         "frames": 6,
         "fps": 10,
         "loop": false

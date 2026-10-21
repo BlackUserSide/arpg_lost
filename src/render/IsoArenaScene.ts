@@ -24,8 +24,11 @@ const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
 const HERO_SPRITE = 'knight';
 const MOB_SPRITES: Record<string, string> = { zombie: 'skeleton_warrior', runner: 'skeleton_minion' };
 
-type AnimId = 'idle' | 'run' | 'attack' | 'skill' | 'hit' | 'death';
-type SpriteSet = Partial<Record<AnimId | 'spawn', { file: string; frames: number; fps: number; loop: boolean }>>;
+/** Which baked animation plays for each core action id; unknown actions fall back to `attack`. */
+const ACTION_ANIMS: Record<string, string> = { warrior_strike: 'attack', cleave: 'cleave' };
+
+type AnimId = string;
+type SpriteSet = Partial<Record<AnimId, { file: string; frames: number; fps: number; loop: boolean }>>;
 const SPRITE_SETS = sprites.characters as Record<string, SpriteSet>;
 
 interface Actor {
@@ -172,7 +175,7 @@ export class IsoArenaScene extends Phaser.Scene {
         const isSkill = event.actionId !== classDef.basicAttack.id;
         this.swings.push({ ...event, ttl: SWING_TTL, isSkill });
         this.hero.facing = event.facing;
-        this.playOneShot(this.hero, isSkill ? 'skill' : 'attack');
+        this.playOneShot(this.hero, ACTION_ANIMS[event.actionId] ?? 'attack');
         break;
       }
       case 'mobAttack': {
@@ -182,8 +185,8 @@ export class IsoArenaScene extends Phaser.Scene {
       }
       case 'hit': {
         const actor = event.targetId === PLAYER_ID ? this.hero : this.mobs.get(event.targetId);
-        // Hit reaction must not interrupt an attack swing.
-        if (actor && actor.oneShot?.anim !== 'attack' && actor.oneShot?.anim !== 'skill') this.playOneShot(actor, 'hit');
+        // Hit reaction only interrupts idle/run, never an attack or skill.
+        if (actor && !actor.oneShot) this.playOneShot(actor, 'hit');
         this.spawnDamageNumber(event.pos, event.amount, event.isCrit, event.targetId === PLAYER_ID);
         break;
       }
