@@ -3,11 +3,10 @@ import { createCharacter, type CreateCharacterError } from '../core/progression/
 import { content } from '../data';
 import { profileRules } from '../data/profile';
 import { getApp } from './app';
-import { CLASS_LOOKS, loadSprites, spriteFrame, textureKey } from './sprites';
-import { label, makeButton, UI } from './ui';
-
-const CARD_W = 200;
-const CARD_H = 270;
+import { BODY_FONT } from './fonts';
+import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
+import { CLASS_LOOKS, loadSprites, ORIGIN_Y, textureKey } from './sprites';
+import { fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
 const SUGGESTED_NAMES: Record<string, readonly string[]> = {
   warrior: ['Borin', 'Hilda', 'Garrick', 'Torvin'],
@@ -16,10 +15,10 @@ const SUGGESTED_NAMES: Record<string, readonly string[]> = {
 };
 
 const ERRORS: Record<CreateCharacterError, string> = {
-  limit: `You can have up to ${profileRules.maxCharacters} characters.`,
+  limit: `You can have up to ${profileRules.maxCharacters} heroes.`,
   'name-length': `Name must be ${profileRules.nameMinLength}–${profileRules.nameMaxLength} characters.`,
   'name-chars': 'Use letters, digits, spaces, "-" or "_".',
-  'unknown-class': 'Pick a class.',
+  'unknown-class': 'Choose a class.',
 };
 
 function pickName(classId: string): string {
@@ -27,13 +26,14 @@ function pickName(classId: string): string {
   return names[Math.floor(Math.random() * names.length)] ?? 'Hero';
 }
 
-/** Pick a class and a name. The name field is a DOM input so mobile keyboards work. */
+/** Choose a class (previewed by the campfire) and a name. The name field is a DOM input for mobile keyboards. */
 export class CreateCharacterScene extends Phaser.Scene {
   private classId = 'warrior';
   private nameInput: HTMLInputElement | undefined;
   private nameEdited = false;
-  private time0 = 0;
-  private cardSprites: Array<{ sprite: Phaser.GameObjects.Sprite; set: string }> = [];
+  private errorText = '';
+  private backdrop!: MenuBackdrop;
+  private root!: Phaser.GameObjects.Container;
 
   constructor() {
     super('create-character');
@@ -41,94 +41,123 @@ export class CreateCharacterScene extends Phaser.Scene {
 
   preload(): void {
     loadSprites(this);
+    preloadBackdrop(this);
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor('#0b0a0e');
+    this.cameras.main.setBackgroundColor(UI.bg);
     this.classId = CLASS_LOOKS[0]?.classId ?? 'warrior';
     this.nameEdited = false;
-    this.cardSprites = [];
+    this.errorText = '';
+    this.backdrop = new MenuBackdrop(this);
     const input = this.createNameInput();
+    input.value = pickName(this.classId);
 
-    const title = label(this, 0, 0, 'New character', 30, UI.goldText).setOrigin(0.5);
-    const error = label(this, 0, 0, '', 15, '#e06c6c').setOrigin(0.5);
-    const cards = CLASS_LOOKS.map((look, i) => {
-      const bg = this.add.rectangle(0, 0, CARD_W, CARD_H, UI.panel).setStrokeStyle(2, UI.panelBorder);
-      const sprite = this.add.sprite(0, -40, textureKey(look.sprite, 'idle'), 0).setScale(1.5);
-      sprite.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
-      this.cardSprites.push({ sprite, set: look.sprite });
-      const name = label(this, 0, 50, look.name, 22).setOrigin(0.5);
-      const desc = label(this, 0, 82, look.description, 13, UI.muted).setOrigin(0.5, 0).setAlign('center').setWordWrapWidth(CARD_W - 24);
-      const key = label(this, -CARD_W / 2 + 10, -CARD_H / 2 + 6, String(i + 1), 14, UI.muted);
-      const container = this.add.container(0, 0, [bg, sprite, name, desc, key]);
-      bg.setInteractive({ useHandCursor: true }).on('pointerup', () => select(look.classId));
-      return { container, bg, look };
-    });
-
-    const select = (classId: string): void => {
-      this.classId = classId;
-      for (const card of cards) card.bg.setStrokeStyle(2, card.look.classId === classId ? UI.gold : UI.panelBorder);
-      if (!this.nameEdited) input.value = pickName(classId);
-      error.setText('');
-    };
-    select(this.classId);
-
-    const create = (): void => {
-      const app = getApp(this);
-      const result = createCharacter(app.profile, { name: input.value, classId: this.classId }, profileRules, Object.keys(content.classes));
-      if (!result.ok) {
-        error.setText(ERRORS[result.error]);
-        return;
-      }
-      app.selectedCharacterId = result.character.id;
-      app.save();
-      this.scene.start('main-menu');
-    };
-    const createButton = makeButton(this, 0, 0, 200, 48, 'Create', create, 'primary');
-    const backButton = makeButton(this, 0, 0, 120, 40, 'Back', () => this.scene.start('main-menu'));
-
-    // Typing must not trigger game shortcuts.
     input.addEventListener('keydown', (e) => {
+      // Typing must not trigger game shortcuts.
       e.stopPropagation();
-      if (e.key === 'Enter') create();
+      if (e.key === 'Enter') this.submit();
     });
     input.addEventListener('keyup', (e) => e.stopPropagation());
     input.addEventListener('input', () => (this.nameEdited = true));
-
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => {
       if (document.activeElement === input) return;
       const look = CLASS_LOOKS[Number(e.key) - 1];
-      if (look) select(look.classId);
-      if (e.key === 'Escape') this.scene.start('main-menu');
+      if (look) this.select(look.classId);
+      if (e.key === 'Escape') this.back();
     });
 
-    const layout = (): void => {
-      const { width, height } = this.scale;
-      const scale = Math.min(1, (width - 24) / (cards.length * (CARD_W + 16)));
-      const cardsY = height / 2 - 40;
-      title.setPosition(width / 2, cardsY - (CARD_H * scale) / 2 - 40);
-      cards.forEach((card, i) => {
-        const offset = (i - (cards.length - 1) / 2) * (CARD_W + 16) * scale;
-        card.container.setPosition(width / 2 + offset, cardsY).setScale(scale);
-      });
-      const formY = cardsY + (CARD_H * scale) / 2 + 40;
-      this.positionInput(width / 2 - 110, formY - 20, 220, 40);
-      createButton.setPosition(width / 2, formY + 68);
-      backButton.setPosition(width / 2, formY + 124);
-      error.setPosition(width / 2, formY + 34);
-    };
-    layout();
-    this.scale.on('resize', layout);
+    this.build();
+    fadeIn(this);
+    const rebuild = (): void => this.build();
+    this.scale.on('resize', rebuild);
     this.events.once('shutdown', () => {
-      this.scale.off('resize', layout);
+      this.scale.off('resize', rebuild);
       this.nameInput?.remove();
       this.nameInput = undefined;
     });
   }
 
   override update(_t: number, dtMs: number): void {
-    this.time0 += dtMs / 1000;
-    for (const { sprite, set } of this.cardSprites) sprite.setFrame(spriteFrame(set, 'idle', 6, this.time0));
+    this.backdrop.update(dtMs / 1000);
+  }
+
+  private select(classId: string): void {
+    this.classId = classId;
+    if (this.nameInput && !this.nameEdited) this.nameInput.value = pickName(classId);
+    this.errorText = '';
+    this.build();
+  }
+
+  private build(): void {
+    this.root?.destroy();
+    this.root = this.add.container(0, 0);
+    const { width, height } = this.scale;
+    const compact = width < 820 || height < 520;
+    const panelW = compact ? Math.min(300, width * 0.48) : 380;
+    const panelX = width - panelW / 2 - (compact ? 12 : 28);
+    const sceneW = width - panelW - (compact ? 24 : 56);
+
+    this.backdrop.layout(sceneW * 0.55, height * 0.62, width, height);
+    this.backdrop.setHero(CLASS_LOOKS.find((l) => l.classId === this.classId)?.sprite);
+    this.root.add(heading(this, compact ? 16 : 32, compact ? 10 : 22, 'New hero', compact ? 30 : UI.size.display));
+
+    const top = compact ? 12 : 28;
+    const bottom = height - top;
+    this.root.add(makeFrame(this, panelX, (top + bottom) / 2, panelW, bottom - top, 'panel'));
+    this.root.add(heading(this, panelX - panelW / 2 + 18, top + 10, 'Choose a class', compact ? 18 : 22));
+
+    const rowW = panelW - 24;
+    const rowH = compact ? Math.max(44, Math.min(66, (bottom - top - 200) / 3)) : 92;
+    let y = top + (compact ? 44 : 58) + rowH / 2;
+    for (const [i, look] of CLASS_LOOKS.entries()) {
+      const isSelected = look.classId === this.classId;
+      this.root.add(makeCard(this, panelX, y, rowW, rowH, isSelected, () => this.select(look.classId)));
+      const left = panelX - rowW / 2;
+      const portrait = this.add
+        .sprite(left + rowH * 0.5, y + rowH / 2 - 6, textureKey(look.sprite, 'idle'), 6 * 4)
+        .setOrigin(0.5, ORIGIN_Y)
+        .setScale((rowH - 10) / 66);
+      portrait.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+      this.root.add(portrait);
+      const textX = left + rowH + 4;
+      this.root.add(label(this, textX, y - rowH / 2 + (compact ? 6 : 12), look.name, compact ? UI.size.body : UI.size.heading, isSelected ? UI.goldBrightText : UI.text, true));
+      if (rowH >= 56) {
+        this.root.add(label(this, textX, y - rowH / 2 + (compact ? 28 : 40), look.description, UI.size.small, UI.muted).setWordWrapWidth(rowW - rowH - 16));
+      }
+      this.root.add(label(this, panelX + rowW / 2 - 12, y - rowH / 2 + 8, String(i + 1), 12, UI.muted).setOrigin(1, 0));
+      y += rowH + (compact ? 6 : 10);
+    }
+
+    const nameTop = y - rowH / 2 + (compact ? 2 : 8);
+    this.root.add(label(this, panelX - rowW / 2, nameTop, 'Name', UI.size.small, UI.muted));
+    const inputY = nameTop + 22;
+    const inputH = compact ? 36 : 42;
+    this.positionInput(panelX - rowW / 2, inputY, rowW, inputH);
+    if (this.errorText) this.root.add(label(this, panelX, inputY + inputH + 8, this.errorText, UI.size.small, UI.danger).setOrigin(0.5, 0));
+
+    const buttonsY = bottom - (compact ? 32 : 44);
+    const buttonH = compact ? 42 : 52;
+    this.root.add(makeButton(this, panelX + rowW / 4 + 6, buttonsY, rowW / 2 - 6, buttonH, 'Create', () => this.submit(), 'primary'));
+    this.root.add(makeButton(this, panelX - rowW / 4 - 6, buttonsY, rowW / 2 - 6, buttonH, 'Back', () => this.back()));
+  }
+
+  private submit(): void {
+    const app = getApp(this);
+    const result = createCharacter(app.profile, { name: this.nameInput?.value ?? '', classId: this.classId }, profileRules, Object.keys(content.classes));
+    if (!result.ok) {
+      this.errorText = ERRORS[result.error];
+      this.build();
+      return;
+    }
+    app.selectedCharacterId = result.character.id;
+    app.save();
+    this.back();
+  }
+
+  private back(): void {
+    this.nameInput?.blur();
+    this.scene.start('main-menu');
   }
 
   private createNameInput(): HTMLInputElement {
@@ -137,20 +166,22 @@ export class CreateCharacterScene extends Phaser.Scene {
     input.maxLength = profileRules.nameMaxLength;
     input.autocomplete = 'off';
     input.spellcheck = false;
-    input.setAttribute('aria-label', 'Character name');
+    input.setAttribute('aria-label', 'Hero name');
     Object.assign(input.style, {
       position: 'absolute',
       boxSizing: 'border-box',
-      background: '#15141a',
-      color: '#e6e1d6',
-      border: '2px solid #3a3542',
-      font: '18px Georgia, serif',
-      textAlign: 'center',
+      background: 'linear-gradient(#0d0a0e, #1a1519)',
+      color: UI.text,
+      border: '2px solid #8a6a32',
+      borderRadius: '2px',
+      boxShadow: 'inset 0 2px 6px rgba(0,0,0,0.8)',
+      font: `bold 18px ${BODY_FONT}`,
+      padding: '0 12px',
       outline: 'none',
       zIndex: '10',
     });
-    input.addEventListener('focus', () => (input.style.borderColor = '#e8c15a'));
-    input.addEventListener('blur', () => (input.style.borderColor = '#3a3542'));
+    input.addEventListener('focus', () => (input.style.borderColor = '#f3d58a'));
+    input.addEventListener('blur', () => (input.style.borderColor = '#8a6a32'));
     document.body.appendChild(input);
     this.nameInput = input;
     return input;

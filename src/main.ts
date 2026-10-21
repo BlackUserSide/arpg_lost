@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { LocalPlatform } from './platform/localPlatform';
+import { loadFonts } from './render/fonts';
 import { APP_KEY, createApp } from './render/app';
 import { CreateCharacterScene } from './render/CreateCharacterScene';
 import { IsoArenaScene } from './render/IsoArenaScene';
@@ -7,6 +8,7 @@ import { MainMenuScene } from './render/MainMenuScene';
 
 async function boot(): Promise<void> {
   const platform = new LocalPlatform();
+  await loadFonts();
   const app = await createApp(platform);
 
   const game = new Phaser.Game({
