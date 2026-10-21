@@ -17,4 +17,10 @@ export function normalize(v: Vec2): Vec2 {
   return len > 0 ? { x: v.x / len, y: v.y / len } : { x: 0, y: 0 };
 }
 
-export const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+export function rotate(v: Vec2, radians: number): Vec2 {
+  const c = Math.cos(radians);
+  const s = Math.sin(radians);
+  return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
+}
+
+export const clamp =(value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));

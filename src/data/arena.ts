@@ -10,6 +10,6 @@ export const arena: ArenaDef = {
     batchStart: 3,
     batchGrowth: 0.5,
     maxAlive: 45,
-    mobIds: ['zombie', 'zombie', 'runner'],
+    mobIds: ['zombie', 'zombie', 'zombie', 'runner', 'runner', 'archer'],
   },
 };

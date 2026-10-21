@@ -10,11 +10,20 @@ export interface BakeAnim {
   readonly loop: boolean;
 }
 
+export interface BakeAttachment {
+  /** Separate glTF model (e.g. a weapon) parented to a bone of the character. */
+  readonly model: string;
+  readonly bone: string;
+  /** Euler rotation in degrees (x, y, z) relative to the bone. */
+  readonly rotation?: readonly [number, number, number];
+}
+
 export interface BakeCharacter {
   readonly id: string;
   readonly model: string;
   /** Mesh node names to hide (unused weapons / shields). */
   readonly hide: readonly string[];
+  readonly attach?: readonly BakeAttachment[];
   /** Height on screen in pixels (world units). */
   readonly height: number;
   readonly anims: readonly BakeAnim[];
@@ -87,6 +96,21 @@ export const CHARACTERS: readonly BakeCharacter[] = [
       { id: 'idle', clip: 'Idle_Combat', frames: 4, fps: 4, loop: true },
       { id: 'run', clip: 'Walking_D_Skeletons', frames: 8, fps: 10, loop: true },
       { id: 'attack', clip: '1H_Melee_Attack_Chop', frames: 6, fps: 14, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 3, fps: 16, loop: false },
+      { id: 'death', clip: 'Death_C_Skeletons', frames: 6, fps: 10, loop: false },
+      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 6, fps: 10, loop: false },
+    ],
+  },
+  {
+    id: 'skeleton_archer',
+    model: 'Skeleton_Rogue.glb',
+    hide: [],
+    attach: [{ model: 'Skeleton_Crossbow.gltf', bone: 'handslot.r', rotation: [0, 180, 0] }],
+    height: 58,
+    anims: [
+      { id: 'idle', clip: '1H_Ranged_Aiming', frames: 4, fps: 4, loop: true },
+      { id: 'run', clip: 'Walking_D_Skeletons', frames: 8, fps: 10, loop: true },
+      { id: 'attack', clip: '1H_Ranged_Shoot', frames: 6, fps: 14, loop: false },
       { id: 'hit', clip: 'Hit_A', frames: 3, fps: 16, loop: false },
       { id: 'death', clip: 'Death_C_Skeletons', frames: 6, fps: 10, loop: false },
       { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 6, fps: 10, loop: false },

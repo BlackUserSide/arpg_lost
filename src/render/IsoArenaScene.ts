@@ -1,35 +1,33 @@
 import * as Phaser from 'phaser';
-import { normalize, sub, vec, type Vec2 } from '../core/math';
+import { vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
 import { createWorld, getClass, PLAYER_ID, playerStat, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
 import { content } from '../data';
 import { directionRow, screenDirToWorld, toScreen, toWorld } from './iso';
-import sprites from './sprites.json';
+import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
 
-// Art test scene: isometric view, Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker).
+// Isometric arena: Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker).
 
 const DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
-const CLASS_ID = 'warrior';
 
 const TILE_WORLD = 68; // world units per floor tile side (96px wide diamond at ISO_K)
 const TILE_SCALE = 0.5;
 const CORPSE_TIME = 2.5;
-const SWING_TTL = 0.14;
+const AREA_TTL = 0.18;
 const LIGHT_RADIUS = 520;
+/** Visual height of projectiles above the ground, in screen pixels. */
+const PROJECTILE_HEIGHT = 34;
+/** Seconds a skill key press stays queued while the hero is busy. */
+const INPUT_BUFFER = 0.35;
 
 const PLAIN_FLOORS = [0, 1, 2, 3, 20, 21, 22, 23];
 const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
 
-const HERO_SPRITE = 'knight';
-const MOB_SPRITES: Record<string, string> = { zombie: 'skeleton_warrior', runner: 'skeleton_minion' };
-
-/** Which baked animation plays for each core action id; unknown actions fall back to `attack`. */
-const ACTION_ANIMS: Record<string, string> = { warrior_strike: 'attack', cleave: 'cleave' };
-
-type AnimId = string;
-type SpriteSet = Partial<Record<AnimId, { file: string; frames: number; fps: number; loop: boolean }>>;
-const SPRITE_SETS = sprites.characters as Record<string, SpriteSet>;
+/** Visual-only colors per action / damage flavour. */
+const AREA_COLORS: Record<string, number> = { cleave: 0xff9a3c, fireball: 0xff6a1a, explosive_trap: 0xff8a2a, frost_nova: 0x8fd3ff };
+const PROJECTILE_COLORS: Record<string, number> = { ranger_bolt: 0xe8e2cf, volley: 0xe8e2cf, wand_bolt: 0xb58cff, fireball: 0xff7a1a };
+const MOB_PROJECTILE_COLOR = 0xff4b4b;
 
 interface Actor {
   sprite: Phaser.GameObjects.Sprite;
@@ -39,7 +37,7 @@ interface Actor {
   time: number;
   moving: boolean;
   /** One-shot animation playing on top of idle/run. */
-  oneShot: { anim: AnimId; elapsed: number } | undefined;
+  oneShot: { anim: string; elapsed: number } | undefined;
 }
 
 interface Corpse {
@@ -47,69 +45,75 @@ interface Corpse {
   ttl: number;
 }
 
-interface Swing {
+interface AreaFx {
   origin: Vec2;
   facing: Vec2;
   radius: number;
   angleDeg: number;
+  color: number;
   ttl: number;
-  isSkill: boolean;
 }
 
-type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R', Phaser.Input.Keyboard.Key>;
-
-const textureKey = (set: string, anim: string): string => `${set}_${anim}`;
+type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'ESC', Phaser.Input.Keyboard.Key>;
 
 export class IsoArenaScene extends Phaser.Scene {
   private readonly content: Content = content;
+  private classId = 'warrior';
   private world!: WorldState;
   private accumulator = 0;
   private keys!: Keys;
   private hero!: Actor;
   private mobs = new Map<number, Actor>();
   private corpses: Corpse[] = [];
-  private swings: Swing[] = [];
+  private areas: AreaFx[] = [];
   private fx!: Phaser.GameObjects.Graphics;
+  private fxTop!: Phaser.GameObjects.Graphics;
   private light!: Phaser.GameObjects.Image;
   private hud!: Phaser.GameObjects.Graphics;
   private hudText!: Phaser.GameObjects.Text;
+  private skillText!: Phaser.GameObjects.Text;
   private deathText!: Phaser.GameObjects.Text;
   private textPool: Phaser.GameObjects.Text[] = [];
+  private skillWasDown: boolean[] = [];
+  private skillBuffer: number[] = [];
 
   constructor() {
     super('iso-arena');
   }
 
+  init(data: { classId?: string }): void {
+    if (data.classId) this.classId = data.classId;
+  }
+
   preload(): void {
     this.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
-    for (const [set, anims] of Object.entries(SPRITE_SETS)) {
-      for (const [anim, def] of Object.entries(anims)) {
-        if (!def) continue;
-        this.load.spritesheet(textureKey(set, anim), `assets/sprites/${def.file}`, {
-          frameWidth: sprites.frameSize,
-          frameHeight: sprites.frameSize,
-        });
-      }
-    }
+    loadSprites(this);
   }
 
   create(): void {
-    this.world = createWorld(this.content, CLASS_ID, (Math.random() * 2 ** 32) >>> 0);
+    this.world = createWorld(this.content, this.classId, (Math.random() * 2 ** 32) >>> 0);
+    // Dev-only handle for debugging and automated checks from the console.
+    if (import.meta.env.DEV) (window as unknown as { __world: WorldState }).__world = this.world;
     this.accumulator = 0;
     this.mobs.clear();
     this.corpses = [];
-    this.swings = [];
+    this.areas = [];
+    this.textPool = [];
+    this.skillWasDown = [];
+    this.skillBuffer = [];
 
     for (const [set, anims] of Object.entries(SPRITE_SETS)) {
       for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
     }
 
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R') as Keys;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,ESC') as Keys;
 
     this.buildFloor();
     this.fx = this.add.graphics().setDepth(-1000);
-    this.hero = this.createActor(HERO_SPRITE, this.world.player.pos);
+    this.fxTop = this.add.graphics().setDepth(4000);
+    const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
+    this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
     this.light = this.add.image(0, 0, this.makeLightTexture()).setDepth(5000);
 
     const { width, height } = this.content.arena;
@@ -121,8 +125,9 @@ export class IsoArenaScene extends Phaser.Scene {
 
     this.hud = this.add.graphics().setScrollFactor(0).setDepth(10000);
     this.hudText = this.add.text(16, 64, '', { color: '#ddd', fontSize: '16px' }).setScrollFactor(0).setDepth(10000);
+    this.skillText = this.add.text(0, 0, '', { color: '#ddd', fontSize: '15px', align: 'center' }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(10000);
     this.deathText = this.add
-      .text(0, 0, 'You died\nPress R to restart', { color: '#fff', fontSize: '32px', align: 'center' })
+      .text(0, 0, 'You died\nR — restart · Esc — choose class', { color: '#fff', fontSize: '28px', align: 'center' })
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(10001)
@@ -130,8 +135,12 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   override update(_time: number, deltaMs: number): void {
+    if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
+      this.scene.start('class-select');
+      return;
+    }
     if (Phaser.Input.Keyboard.JustDown(this.keys.R) && this.world.player.dead) {
-      this.scene.restart();
+      this.scene.restart({ classId: this.classId });
       return;
     }
 
@@ -160,25 +169,40 @@ export class IsoArenaScene extends Phaser.Scene {
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const screenMove = vec((k.D.isDown ? 1 : 0) - (k.A.isDown ? 1 : 0), (k.S.isDown ? 1 : 0) - (k.W.isDown ? 1 : 0));
+    const held = [pointer.rightButtonDown(), k.Q.isDown, k.E.isDown];
+    // A quick tap during an attack would be lost; keep it buffered for a short while.
+    const skills = held.map((down, i) => {
+      if (down && !this.skillWasDown[i]) this.skillBuffer[i] = INPUT_BUFFER;
+      this.skillWasDown[i] = down;
+      this.skillBuffer[i] = Math.max(0, (this.skillBuffer[i] ?? 0) - DT);
+      return down || (this.skillBuffer[i] ?? 0) > 0;
+    });
     return {
       move: screenDirToWorld(screenMove),
       // Aim at ground level under the cursor; sprites stand on their feet.
       aim: toWorld(vec(aim.x, aim.y)),
       basicAttack: pointer.leftButtonDown(),
-      skills: [pointer.rightButtonDown(), k.Q.isDown, k.E.isDown],
+      skills,
     };
   }
 
   private onEvent(event: WorldEvent): void {
     switch (event.type) {
       case 'action': {
-        const classDef = getClass(this.content, this.world.player.classId);
-        const isSkill = event.actionId !== classDef.basicAttack.id;
-        this.swings.push({ ...event, ttl: SWING_TTL, isSkill });
+        // Consume the buffered press so a tap fires the skill once.
+        const slot = getClass(this.content, this.classId).skills.findIndex((s) => s.id === event.actionId);
+        if (slot >= 0) this.skillBuffer[slot] = 0;
         this.hero.facing = event.facing;
         this.playOneShot(this.hero, ACTION_ANIMS[event.actionId] ?? 'attack');
         break;
       }
+      case 'area':
+        this.areas.push({ ...event, color: AREA_COLORS[event.actionId] ?? 0xdde4ff, ttl: AREA_TTL });
+        break;
+      case 'teleport':
+        this.areas.push({ origin: event.from, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
+        this.areas.push({ origin: event.to, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
+        break;
       case 'mobAttack': {
         const actor = this.mobs.get(event.id);
         if (actor) this.playOneShot(actor, 'attack');
@@ -195,6 +219,7 @@ export class IsoArenaScene extends Phaser.Scene {
         const actor = this.mobs.get(event.id);
         if (actor) {
           this.playOneShot(actor, 'death');
+          actor.sprite.clearTint();
           actor.sprite.setDepth(toScreen(actor.lastPos).y - 40);
           this.corpses.push({ actor, ttl: CORPSE_TIME });
           this.mobs.delete(event.id);
@@ -211,19 +236,20 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   private createActor(set: string, pos: Vec2): Actor {
-    const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, sprites.originY / sprites.frameSize);
+    const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y);
     return { sprite, set, lastPos: pos, facing: vec(1, 1), time: 0, moving: false, oneShot: undefined };
   }
 
-  private playOneShot(actor: Actor, anim: AnimId): void {
+  private playOneShot(actor: Actor, anim: string): void {
     if (actor.oneShot?.anim === 'death') return;
     actor.oneShot = { anim, elapsed: 0 };
   }
 
   private syncActors(dt: number): void {
     const player = this.world.player;
-    if (!player.dead) this.hero.facing = player.facing;
+    if (!player.dead) this.hero.facing = player.motion ? player.motion.dir : player.facing;
     this.updateActor(this.hero, player.pos, dt);
+    this.hero.sprite.setAlpha(player.invulnerable > 0 ? 0.55 : 1);
 
     for (const mob of this.world.mobs) {
       let actor = this.mobs.get(mob.id);
@@ -231,9 +257,11 @@ export class IsoArenaScene extends Phaser.Scene {
         actor = this.createActor(MOB_SPRITES[mob.defId] ?? 'skeleton_warrior', mob.pos);
         this.mobs.set(mob.id, actor);
       }
-      const toPlayer = normalize(sub(player.pos, mob.pos));
-      if (toPlayer.x !== 0 || toPlayer.y !== 0) actor.facing = toPlayer;
+      actor.facing = mob.facing;
       this.updateActor(actor, mob.pos, dt);
+      if (mob.stun > 0) actor.sprite.setTint(0xfff27a);
+      else if (mob.slow > 0) actor.sprite.setTint(0x8fd3ff);
+      else actor.sprite.clearTint();
     }
   }
 
@@ -249,7 +277,7 @@ export class IsoArenaScene extends Phaser.Scene {
 
   private applyFrame(actor: Actor, dt: number): void {
     const set = SPRITE_SETS[actor.set] ?? {};
-    let anim: AnimId = actor.moving ? 'run' : 'idle';
+    let anim = actor.moving ? 'run' : 'idle';
     let col = 0;
 
     const shot = actor.oneShot;
@@ -263,6 +291,8 @@ export class IsoArenaScene extends Phaser.Scene {
       } else {
         actor.oneShot = undefined;
       }
+    } else if (shot) {
+      actor.oneShot = undefined;
     }
     const def = set[anim];
     if (!def) return;
@@ -288,22 +318,48 @@ export class IsoArenaScene extends Phaser.Scene {
 
   private drawFx(dt: number): void {
     const g = this.fx.clear();
-    // Ring under the hero so they never get lost in a crowd.
-    const hero = toScreen(this.world.player.pos);
-    g.lineStyle(2, 0xe8c15a, 0.9).strokeEllipse(hero.x, hero.y, 46, 23);
-    for (const swing of this.swings) swing.ttl -= dt;
-    this.swings = this.swings.filter((s) => s.ttl > 0);
-    for (const swing of this.swings) {
-      const half = Phaser.Math.DegToRad(swing.angleDeg / 2);
-      const dir = Math.atan2(swing.facing.y, swing.facing.x);
-      const points = [toScreen(swing.origin)];
-      const segments = 16;
+    const top = this.fxTop.clear();
+    const player = this.world.player;
+
+    // Ring under the hero so they never get lost in a crowd; orange while buffed.
+    const hero = toScreen(player.pos);
+    g.lineStyle(2, player.buffs.length > 0 ? 0xff9a3c : 0xe8c15a, 0.9).strokeEllipse(hero.x, hero.y, 46, 23);
+
+    for (const trap of this.world.traps) {
+      const p = toScreen(trap.pos);
+      const armed = trap.armTimer <= 0;
+      const pulse = armed ? 0.6 + 0.4 * Math.sin(this.world.time * 10) : 0.4;
+      g.fillStyle(armed ? 0xff5a1a : 0x777777, pulse).fillEllipse(p.x, p.y, 22, 11);
+      g.lineStyle(1, 0x000000, 0.8).strokeEllipse(p.x, p.y, 22, 11);
+    }
+
+    for (const area of this.areas) area.ttl -= dt;
+    this.areas = this.areas.filter((a) => a.ttl > 0);
+    for (const area of this.areas) {
+      const half = Phaser.Math.DegToRad(Math.min(area.angleDeg, 360) / 2);
+      const dir = Math.atan2(area.facing.y, area.facing.x);
+      const full = area.angleDeg >= 360;
+      const points = full ? [] : [toScreen(area.origin)];
+      const segments = full ? 32 : 16;
       for (let i = 0; i <= segments; i++) {
         const a = dir - half + (2 * half * i) / segments;
-        points.push(toScreen(vec(swing.origin.x + Math.cos(a) * swing.radius, swing.origin.y + Math.sin(a) * swing.radius)));
+        points.push(toScreen(vec(area.origin.x + Math.cos(a) * area.radius, area.origin.y + Math.sin(a) * area.radius)));
       }
-      g.fillStyle(swing.isSkill ? 0xff9a3c : 0xdde4ff, (swing.ttl / SWING_TTL) * 0.5);
+      g.fillStyle(area.color, (area.ttl / AREA_TTL) * 0.45);
       g.fillPoints(points.map((p) => new Phaser.Math.Vector2(p.x, p.y)), true);
+    }
+
+    for (const p of this.world.projectiles) {
+      const s = toScreen(p.pos);
+      const tail = toScreen(vec(p.pos.x - p.dir.x * 18, p.pos.y - p.dir.y * 18));
+      const color = p.owner === 'mob' ? MOB_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
+      g.fillStyle(0x000000, 0.35).fillEllipse(s.x, s.y, p.radius * 2, p.radius);
+      if (p.explodeRadius > 0) {
+        top.fillStyle(color, 0.35).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 2.2);
+        top.fillStyle(color, 1).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 1.2);
+      } else {
+        top.lineStyle(3, color, 1).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
+      }
     }
   }
 
@@ -365,6 +421,7 @@ export class IsoArenaScene extends Phaser.Scene {
     const p = this.world.player;
     const classDef = getClass(this.content, p.classId);
     const maxLife = playerStat(classDef, p, 'life');
+    const maxShield = playerStat(classDef, p, 'energyShield');
     const maxMana = playerStat(classDef, p, 'mana');
     const h = this.hud.clear();
     const bar = (y: number, value: number, max: number, color: number): void => {
@@ -372,12 +429,25 @@ export class IsoArenaScene extends Phaser.Scene {
       h.fillStyle(color).fillRect(16, y, max > 0 ? (220 * Math.max(0, value)) / max : 0, 16);
     };
     bar(16, p.life, maxLife, 0xc0392b);
+    if (maxShield > 0) h.fillStyle(0x9fd8ff, 0.7).fillRect(16, 16, (220 * p.energyShield) / Math.max(maxLife, maxShield), 5);
     bar(38, p.mana, maxMana, 0x2e6fd8);
     const seconds = Math.floor(this.world.time);
     this.hudText.setText(
       `Kills ${this.world.kills}   Wave ${this.world.spawn.wave}   ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}\n` +
-        'WASD move · LMB attack · RMB cleave · ?view=flat for debug view',
+        'WASD move · LMB attack · RMB/Q/E skills · Esc class select',
     );
+
+    const keys = ['RMB', 'Q', 'E'];
+    this.skillText.setText(
+      classDef.skills
+        .map((s, i) => {
+          const cd = p.cooldowns[s.id] ?? 0;
+          const state = cd > 0.05 ? `${cd.toFixed(1)}s` : p.mana < s.manaCost ? 'no mana' : 'ready';
+          return `[${keys[i]}] ${s.id.replace(/_/g, ' ')} — ${state}`;
+        })
+        .join('     '),
+    );
+    this.skillText.setPosition(this.scale.width / 2, this.scale.height - 16);
     this.deathText.setPosition(this.scale.width / 2, this.scale.height / 2);
   }
 }

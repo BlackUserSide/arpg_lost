@@ -190,6 +190,44 @@
         "loop": false
       }
     },
+    "skeleton_archer": {
+      "idle": {
+        "file": "skeleton_archer_idle.png",
+        "frames": 4,
+        "fps": 4,
+        "loop": true
+      },
+      "run": {
+        "file": "skeleton_archer_run.png",
+        "frames": 8,
+        "fps": 10,
+        "loop": true
+      },
+      "attack": {
+        "file": "skeleton_archer_attack.png",
+        "frames": 6,
+        "fps": 14,
+        "loop": false
+      },
+      "hit": {
+        "file": "skeleton_archer_hit.png",
+        "frames": 3,
+        "fps": 16,
+        "loop": false
+      },
+      "death": {
+        "file": "skeleton_archer_death.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      },
+      "spawn": {
+        "file": "skeleton_archer_spawn.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      }
+    },
     "skeleton_minion": {
       "idle": {
         "file": "skeleton_minion_idle.png",

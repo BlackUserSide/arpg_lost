@@ -60,6 +60,16 @@ async function bakeCharacter(def: BakeCharacter): Promise<Record<string, Manifes
     if (def.hide.includes(obj.name)) obj.visible = false;
     if ((obj as THREE.Mesh).isMesh) obj.frustumCulled = false;
   });
+  for (const attachment of def.attach ?? []) {
+    // GLTFLoader strips characters like '.' from node names.
+    const bone = model.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(attachment.bone));
+    if (!bone) throw new Error(`Bone not found: ${attachment.bone}`);
+    const prop = (await new GLTFLoader().loadAsync(`/${attachment.model}`)).scene;
+    prop.traverse((obj) => (obj.frustumCulled = false));
+    const [rx, ry, rz] = (attachment.rotation ?? [0, 0, 0]).map(THREE.MathUtils.degToRad) as [number, number, number];
+    prop.rotation.set(rx, ry, rz);
+    bone.add(prop);
+  }
 
   const box = new THREE.Box3().setFromObject(model);
   const scale = def.height / Math.cos(PITCH) / (box.max.y - box.min.y);
@@ -148,6 +158,16 @@ async function save(file: string, data: string, encoding: 'base64' | 'utf8'): Pr
 }
 
 async function main(): Promise<void> {
+  // ?only=<id> re-bakes one character and keeps the existing manifest (its animation list must not change).
+  const only = new URLSearchParams(location.search).get('only');
+  if (only) {
+    const def = CHARACTERS.find((c) => c.id === only);
+    if (!def) throw new Error(`Unknown character: ${only}`);
+    await bakeCharacter(def);
+    log('Done');
+    (window as unknown as { bakeDone: boolean }).bakeDone = true;
+    return;
+  }
   const characters: Record<string, Record<string, ManifestAnim>> = {};
   for (const def of CHARACTERS) characters[def.id] = await bakeCharacter(def);
   const manifest = { frameSize: FRAME, originY: BAKE.originY, characters };

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { ActionDef } from '../core/world/content';
 import { content } from './index';
+
+const allActions = (): ActionDef[] => Object.values(content.classes).flatMap((c) => [c.basicAttack, ...c.skills]);
 
 describe('data validation', () => {
   it('class, action and mob ids are unique and match their keys', () => {
@@ -14,18 +17,44 @@ describe('data validation', () => {
     for (const [key, mob] of Object.entries(content.mobs)) expect(mob.id).toBe(key);
   });
 
-  it('classes have at most 3 skills and sane numbers', () => {
+  it('has the three MVP classes with exactly 3 skills each', () => {
+    expect(Object.keys(content.classes).sort()).toEqual(['mage', 'ranger', 'warrior']);
+    for (const cls of Object.values(content.classes)) expect(cls.skills).toHaveLength(3);
+  });
+
+  it('weapons and basic attacks are sane', () => {
     for (const cls of Object.values(content.classes)) {
-      expect(cls.skills.length).toBeLessThanOrEqual(3);
       expect(cls.weapon.attacksPerSecond).toBeGreaterThan(0);
       for (const range of Object.values(cls.weapon.damage)) expect(range.min).toBeLessThanOrEqual(range.max);
-      for (const action of [cls.basicAttack, ...cls.skills]) {
-        expect(action.manaCost).toBeGreaterThanOrEqual(0);
-        expect(action.cooldown).toBeGreaterThanOrEqual(0);
-        expect(action.shape.radius).toBeGreaterThan(0);
-      }
       expect(cls.basicAttack.manaCost).toBe(0);
       expect(cls.basicAttack.cooldown).toBe(0);
+      expect(cls.basicAttack.tags).toContain('attack');
+    }
+  });
+
+  it('actions are consistent', () => {
+    for (const action of allActions()) {
+      expect(action.manaCost).toBeGreaterThanOrEqual(0);
+      expect(action.cooldown).toBeGreaterThanOrEqual(0);
+      // Non-attacks need an explicit use time; attacks use weapon speed.
+      if (!action.tags.includes('attack')) expect(action.castTime).toBeDefined();
+      if (action.damage?.source === 'skill') {
+        for (const range of Object.values(action.damage.base)) expect(range.min).toBeLessThanOrEqual(range.max);
+      }
+      const d = action.delivery;
+      if (d.kind === 'projectile') {
+        expect(d.count).toBeGreaterThan(0);
+        expect(d.speed).toBeGreaterThan(0);
+      }
+      if (d.kind === 'arc') expect(d.radius).toBeGreaterThan(0);
+    }
+  });
+
+  it('ranged mobs have a projectile and a preferred range inside attack range', () => {
+    for (const mob of Object.values(content.mobs)) {
+      if (mob.preferredRange === undefined) continue;
+      expect(mob.attack.projectile).toBeDefined();
+      expect(mob.preferredRange).toBeLessThan(mob.attack.range);
     }
   });
 
