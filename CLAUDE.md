@@ -128,4 +128,5 @@ balance-analyst — src/data/, симуляции в tools/sim/.
 platform-release — src/platform/, src/save/, сборка, CI, вес.
 reviewer — read-only проверка правил перед коммитом.
 ui-designer — визуальный стиль меню и HUD, UI-кит, шрифты, иконки (стиль-гайд: docs/design/ui-style.md).
+Дорожная карта и беклог: docs/roadmap.md — у каждой задачи версия (0.MINOR = этап), приоритет P0–P3, размер S/M/L. Отложенное записывать туда. Версия в package.json, показывается в меню; MINOR повышать при завершении этапа, PATCH — при исправлениях.
 Скиллы (.claude/skills/): /add-skill, /add-affix, /add-mob — добавление контента из описания дизайнера; /design-interview — интервью с дизайнером, ответы записываются в docs/design/.

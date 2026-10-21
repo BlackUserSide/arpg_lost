@@ -89,6 +89,7 @@ export class MainMenuScene extends Phaser.Scene {
     }
     if (!compact) this.buildRecords(32, 92);
     this.buildLoginHint(sceneW, compact);
+    this.root.add(label(this, 12, height - 8, `v${__APP_VERSION__}`, 12, UI.muted).setOrigin(0, 1).setAlpha(0.6));
   }
 
   private buildAccountWidget(width: number, compact: boolean): void {
