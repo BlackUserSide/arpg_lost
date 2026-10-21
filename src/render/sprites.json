@@ -5,264 +5,264 @@
     "knight": {
       "idle": {
         "file": "knight_idle.png",
-        "frames": 4,
-        "fps": 4,
+        "frames": 10,
+        "fps": 9.37,
         "loop": true
       },
       "run": {
         "file": "knight_run.png",
-        "frames": 8,
-        "fps": 12,
+        "frames": 14,
+        "fps": 17.5,
         "loop": true
       },
       "attack": {
         "file": "knight_attack.png",
-        "frames": 6,
-        "fps": 18,
+        "frames": 8,
+        "fps": 24,
         "loop": false
       },
       "cleave": {
         "file": "knight_cleave.png",
-        "frames": 6,
-        "fps": 18,
+        "frames": 8,
+        "fps": 24,
         "loop": false
       },
       "dash": {
         "file": "knight_dash.png",
-        "frames": 6,
-        "fps": 16,
+        "frames": 8,
+        "fps": 21,
         "loop": false
       },
       "cry": {
         "file": "knight_cry.png",
-        "frames": 6,
-        "fps": 12,
+        "frames": 8,
+        "fps": 16,
         "loop": false
       },
       "hit": {
         "file": "knight_hit.png",
-        "frames": 3,
-        "fps": 16,
+        "frames": 4,
+        "fps": 20,
         "loop": false
       },
       "death": {
         "file": "knight_death.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       }
     },
     "ranger": {
       "idle": {
         "file": "ranger_idle.png",
-        "frames": 4,
-        "fps": 4,
+        "frames": 10,
+        "fps": 6.25,
         "loop": true
       },
       "run": {
         "file": "ranger_run.png",
-        "frames": 8,
-        "fps": 12,
+        "frames": 14,
+        "fps": 17.5,
         "loop": true
       },
       "attack": {
         "file": "ranger_attack.png",
-        "frames": 6,
-        "fps": 18,
+        "frames": 8,
+        "fps": 24,
         "loop": false
       },
       "volley": {
         "file": "ranger_volley.png",
-        "frames": 6,
-        "fps": 18,
+        "frames": 8,
+        "fps": 24,
         "loop": false
       },
       "trap": {
         "file": "ranger_trap.png",
-        "frames": 6,
-        "fps": 16,
+        "frames": 8,
+        "fps": 21,
         "loop": false
       },
       "roll": {
         "file": "ranger_roll.png",
-        "frames": 6,
-        "fps": 16,
+        "frames": 8,
+        "fps": 21,
         "loop": false
       },
       "hit": {
         "file": "ranger_hit.png",
-        "frames": 3,
-        "fps": 16,
+        "frames": 4,
+        "fps": 20,
         "loop": false
       },
       "death": {
         "file": "ranger_death.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       }
     },
     "mage": {
       "idle": {
         "file": "mage_idle.png",
-        "frames": 4,
-        "fps": 4,
+        "frames": 10,
+        "fps": 9.37,
         "loop": true
       },
       "run": {
         "file": "mage_run.png",
-        "frames": 8,
-        "fps": 12,
+        "frames": 14,
+        "fps": 17.5,
         "loop": true
       },
       "attack": {
         "file": "mage_attack.png",
-        "frames": 6,
-        "fps": 18,
+        "frames": 8,
+        "fps": 24,
         "loop": false
       },
       "fireball": {
         "file": "mage_fireball.png",
-        "frames": 6,
-        "fps": 14,
+        "frames": 8,
+        "fps": 19,
         "loop": false
       },
       "nova": {
         "file": "mage_nova.png",
-        "frames": 6,
-        "fps": 14,
+        "frames": 8,
+        "fps": 19,
         "loop": false
       },
       "teleport": {
         "file": "mage_teleport.png",
-        "frames": 6,
-        "fps": 16,
+        "frames": 8,
+        "fps": 21,
         "loop": false
       },
       "hit": {
         "file": "mage_hit.png",
-        "frames": 3,
-        "fps": 16,
+        "frames": 4,
+        "fps": 20,
         "loop": false
       },
       "death": {
         "file": "mage_death.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       }
     },
     "skeleton_warrior": {
       "idle": {
         "file": "skeleton_warrior_idle.png",
-        "frames": 4,
-        "fps": 4,
+        "frames": 10,
+        "fps": 9.37,
         "loop": true
       },
       "run": {
         "file": "skeleton_warrior_run.png",
-        "frames": 8,
-        "fps": 10,
+        "frames": 14,
+        "fps": 8.75,
         "loop": true
       },
       "attack": {
         "file": "skeleton_warrior_attack.png",
-        "frames": 6,
-        "fps": 14,
+        "frames": 8,
+        "fps": 19,
         "loop": false
       },
       "hit": {
         "file": "skeleton_warrior_hit.png",
-        "frames": 3,
-        "fps": 16,
+        "frames": 4,
+        "fps": 20,
         "loop": false
       },
       "death": {
         "file": "skeleton_warrior_death.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       },
       "spawn": {
         "file": "skeleton_warrior_spawn.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       }
     },
     "skeleton_archer": {
       "idle": {
         "file": "skeleton_archer_idle.png",
-        "frames": 4,
-        "fps": 4,
+        "frames": 10,
+        "fps": 9.37,
         "loop": true
       },
       "run": {
         "file": "skeleton_archer_run.png",
-        "frames": 8,
-        "fps": 10,
+        "frames": 14,
+        "fps": 8.75,
         "loop": true
       },
       "attack": {
         "file": "skeleton_archer_attack.png",
-        "frames": 6,
-        "fps": 14,
+        "frames": 8,
+        "fps": 19,
         "loop": false
       },
       "hit": {
         "file": "skeleton_archer_hit.png",
-        "frames": 3,
-        "fps": 16,
+        "frames": 4,
+        "fps": 20,
         "loop": false
       },
       "death": {
         "file": "skeleton_archer_death.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       },
       "spawn": {
         "file": "skeleton_archer_spawn.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       }
     },
     "skeleton_minion": {
       "idle": {
         "file": "skeleton_minion_idle.png",
-        "frames": 4,
-        "fps": 4,
+        "frames": 10,
+        "fps": 9.37,
         "loop": true
       },
       "run": {
         "file": "skeleton_minion_run.png",
-        "frames": 8,
-        "fps": 14,
+        "frames": 14,
+        "fps": 17.5,
         "loop": true
       },
       "attack": {
         "file": "skeleton_minion_attack.png",
-        "frames": 5,
-        "fps": 16,
+        "frames": 8,
+        "fps": 21,
         "loop": false
       },
       "hit": {
         "file": "skeleton_minion_hit.png",
-        "frames": 3,
-        "fps": 16,
+        "frames": 4,
+        "fps": 20,
         "loop": false
       },
       "death": {
         "file": "skeleton_minion_death.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       },
       "spawn": {
         "file": "skeleton_minion_spawn.png",
-        "frames": 6,
-        "fps": 10,
+        "frames": 8,
+        "fps": 14,
         "loop": false
       }
     }

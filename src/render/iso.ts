@@ -33,3 +33,18 @@ export function directionRow(worldDir: Vec2): number {
   const fromEast = ((octant % 8) + 8) % 8; // 0 E, 1 SE, 2 S, 3 SW, 4 W, 5 NW, 6 N, 7 NE
   return (fromEast + 4) % 8;
 }
+
+/**
+ * Like directionRow, but keeps `current` until the direction is clearly past the octant edge,
+ * so sprites don't flicker between two rows when the facing hovers around a boundary.
+ */
+export function stickyDirectionRow(worldDir: Vec2, current: number, marginDeg = 10): number {
+  const next = directionRow(worldDir);
+  if (current < 0 || next === current) return next;
+  const s = toScreen(worldDir);
+  const angle = Math.atan2(s.y, s.x);
+  const center = (((current + 4) % 8) * Math.PI) / 4;
+  let diff = Math.abs(angle - center) % (Math.PI * 2);
+  if (diff > Math.PI) diff = Math.PI * 2 - diff;
+  return diff <= Math.PI / 8 + (marginDeg * Math.PI) / 180 ? current : next;
+}

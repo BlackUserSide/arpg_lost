@@ -86,7 +86,10 @@ async function bakeCharacter(def: BakeCharacter): Promise<Record<string, Manifes
     outline(sheet);
     sheetsEl.append(document.createTextNode(`${file} `), sheet, document.createElement('br'));
     await save(`public/assets/sprites/${file}`, sheet.toDataURL('image/png').split(',')[1]!, 'base64');
-    result[anim.id] = { file, frames: anim.frames, fps: anim.fps, loop: anim.loop };
+    const clip = THREE.AnimationClip.findByName(gltf.animations, anim.clip)!;
+    // Loops without explicit fps play at the clip's natural speed.
+    const fps = anim.fps ?? Math.round((anim.frames / clip.duration) * 100) / 100;
+    result[anim.id] = { file, frames: anim.frames, fps, loop: anim.loop };
   }
   scene.remove(model);
   return result;

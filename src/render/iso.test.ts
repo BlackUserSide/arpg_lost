@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { vec } from '../core/math';
-import { directionRow, toScreen, toWorld } from './iso';
+import { directionRow, stickyDirectionRow, toScreen, toWorld } from './iso';
 
 describe('iso projection', () => {
   it('round-trips world -> screen -> world', () => {
@@ -23,5 +23,15 @@ describe('iso projection', () => {
     expect(directionRow(toWorld(vec(1, 0)))).toBe(4); // E
     expect(directionRow(toWorld(vec(0, 1)))).toBe(6); // S
     expect(directionRow(toWorld(vec(-1, 1)))).toBe(7); // SW
+  });
+
+  it('keeps the current row near an octant edge, switches when clearly past it', () => {
+    const at = (deg: number): ReturnType<typeof vec> => toWorld(vec(Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)));
+    // E row (4) is centred at 0°, SE row (5) at 45°; the edge is 22.5°.
+    expect(directionRow(at(25))).toBe(5);
+    expect(stickyDirectionRow(at(25), 4)).toBe(4);
+    expect(stickyDirectionRow(at(35), 4)).toBe(5);
+    expect(stickyDirectionRow(at(-25), 4)).toBe(4);
+    expect(stickyDirectionRow(at(25), -1)).toBe(5);
   });
 });

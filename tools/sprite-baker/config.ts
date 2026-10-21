@@ -6,7 +6,8 @@ export interface BakeAnim {
   /** Clip name inside the glTF. */
   readonly clip: string;
   readonly frames: number;
-  readonly fps: number;
+  /** Playback fps. Omit for loops to play at the clip's natural speed (frames / clip duration). */
+  readonly fps?: number;
   readonly loop: boolean;
 }
 
@@ -45,14 +46,14 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     hide: ['1H_Sword_Offhand', 'Badge_Shield', 'Rectangle_Shield', 'Spike_Shield', '2H_Sword'],
     height: 64,
     anims: [
-      { id: 'idle', clip: 'Idle', frames: 4, fps: 4, loop: true },
-      { id: 'run', clip: 'Running_A', frames: 8, fps: 12, loop: true },
-      { id: 'attack', clip: '1H_Melee_Attack_Chop', frames: 6, fps: 18, loop: false },
-      { id: 'cleave', clip: '1H_Melee_Attack_Slice_Horizontal', frames: 6, fps: 18, loop: false },
-      { id: 'dash', clip: 'Dodge_Forward', frames: 6, fps: 16, loop: false },
-      { id: 'cry', clip: 'Cheer', frames: 6, fps: 12, loop: false },
-      { id: 'hit', clip: 'Hit_A', frames: 3, fps: 16, loop: false },
-      { id: 'death', clip: 'Death_A', frames: 6, fps: 10, loop: false },
+      { id: 'idle', clip: 'Idle', frames: 10, loop: true },
+      { id: 'run', clip: 'Running_A', frames: 14, loop: true },
+      { id: 'attack', clip: '1H_Melee_Attack_Chop', frames: 8, fps: 24, loop: false },
+      { id: 'cleave', clip: '1H_Melee_Attack_Slice_Horizontal', frames: 8, fps: 24, loop: false },
+      { id: 'dash', clip: 'Dodge_Forward', frames: 8, fps: 21, loop: false },
+      { id: 'cry', clip: 'Cheer', frames: 8, fps: 16, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_A', frames: 8, fps: 14, loop: false },
     ],
   },
   {
@@ -61,14 +62,14 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     hide: ['Knife_Offhand', '1H_Crossbow', 'Knife', 'Throwable'],
     height: 62,
     anims: [
-      { id: 'idle', clip: '2H_Ranged_Aiming', frames: 4, fps: 4, loop: true },
-      { id: 'run', clip: 'Running_A', frames: 8, fps: 12, loop: true },
-      { id: 'attack', clip: '2H_Ranged_Shoot', frames: 6, fps: 18, loop: false },
-      { id: 'volley', clip: '2H_Ranged_Shooting', frames: 6, fps: 18, loop: false },
-      { id: 'trap', clip: 'Throw', frames: 6, fps: 16, loop: false },
-      { id: 'roll', clip: 'Dodge_Forward', frames: 6, fps: 16, loop: false },
-      { id: 'hit', clip: 'Hit_A', frames: 3, fps: 16, loop: false },
-      { id: 'death', clip: 'Death_A', frames: 6, fps: 10, loop: false },
+      { id: 'idle', clip: '2H_Ranged_Aiming', frames: 10, loop: true },
+      { id: 'run', clip: 'Running_A', frames: 14, loop: true },
+      { id: 'attack', clip: '2H_Ranged_Shoot', frames: 8, fps: 24, loop: false },
+      { id: 'volley', clip: '2H_Ranged_Shooting', frames: 8, fps: 24, loop: false },
+      { id: 'trap', clip: 'Throw', frames: 8, fps: 21, loop: false },
+      { id: 'roll', clip: 'Dodge_Forward', frames: 8, fps: 21, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_A', frames: 8, fps: 14, loop: false },
     ],
   },
   {
@@ -77,14 +78,14 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     hide: ['Spellbook', 'Spellbook_open', '2H_Staff'],
     height: 62,
     anims: [
-      { id: 'idle', clip: 'Idle', frames: 4, fps: 4, loop: true },
-      { id: 'run', clip: 'Running_A', frames: 8, fps: 12, loop: true },
-      { id: 'attack', clip: 'Spellcast_Shoot', frames: 6, fps: 18, loop: false },
-      { id: 'fireball', clip: 'Spellcast_Long', frames: 6, fps: 14, loop: false },
-      { id: 'nova', clip: 'Spellcast_Raise', frames: 6, fps: 14, loop: false },
-      { id: 'teleport', clip: 'Spellcasting', frames: 6, fps: 16, loop: false },
-      { id: 'hit', clip: 'Hit_A', frames: 3, fps: 16, loop: false },
-      { id: 'death', clip: 'Death_A', frames: 6, fps: 10, loop: false },
+      { id: 'idle', clip: 'Idle', frames: 10, loop: true },
+      { id: 'run', clip: 'Running_A', frames: 14, loop: true },
+      { id: 'attack', clip: 'Spellcast_Shoot', frames: 8, fps: 24, loop: false },
+      { id: 'fireball', clip: 'Spellcast_Long', frames: 8, fps: 19, loop: false },
+      { id: 'nova', clip: 'Spellcast_Raise', frames: 8, fps: 19, loop: false },
+      { id: 'teleport', clip: 'Spellcasting', frames: 8, fps: 21, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_A', frames: 8, fps: 14, loop: false },
     ],
   },
   {
@@ -93,12 +94,12 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     hide: [],
     height: 62,
     anims: [
-      { id: 'idle', clip: 'Idle_Combat', frames: 4, fps: 4, loop: true },
-      { id: 'run', clip: 'Walking_D_Skeletons', frames: 8, fps: 10, loop: true },
-      { id: 'attack', clip: '1H_Melee_Attack_Chop', frames: 6, fps: 14, loop: false },
-      { id: 'hit', clip: 'Hit_A', frames: 3, fps: 16, loop: false },
-      { id: 'death', clip: 'Death_C_Skeletons', frames: 6, fps: 10, loop: false },
-      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 6, fps: 10, loop: false },
+      { id: 'idle', clip: 'Idle', frames: 10, loop: true },
+      { id: 'run', clip: 'Walking_D_Skeletons', frames: 14, loop: true },
+      { id: 'attack', clip: '1H_Melee_Attack_Chop', frames: 8, fps: 19, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false },
+      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false },
     ],
   },
   {
@@ -108,12 +109,12 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     attach: [{ model: 'Skeleton_Crossbow.gltf', bone: 'handslot.r', rotation: [0, 180, 0] }],
     height: 58,
     anims: [
-      { id: 'idle', clip: '1H_Ranged_Aiming', frames: 4, fps: 4, loop: true },
-      { id: 'run', clip: 'Walking_D_Skeletons', frames: 8, fps: 10, loop: true },
-      { id: 'attack', clip: '1H_Ranged_Shoot', frames: 6, fps: 14, loop: false },
-      { id: 'hit', clip: 'Hit_A', frames: 3, fps: 16, loop: false },
-      { id: 'death', clip: 'Death_C_Skeletons', frames: 6, fps: 10, loop: false },
-      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 6, fps: 10, loop: false },
+      { id: 'idle', clip: '1H_Ranged_Aiming', frames: 10, loop: true },
+      { id: 'run', clip: 'Walking_D_Skeletons', frames: 14, loop: true },
+      { id: 'attack', clip: '1H_Ranged_Shoot', frames: 8, fps: 19, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false },
+      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false },
     ],
   },
   {
@@ -122,12 +123,12 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     hide: [],
     height: 52,
     anims: [
-      { id: 'idle', clip: 'Idle_Combat', frames: 4, fps: 4, loop: true },
-      { id: 'run', clip: 'Running_C', frames: 8, fps: 14, loop: true },
-      { id: 'attack', clip: 'Unarmed_Melee_Attack_Punch_A', frames: 5, fps: 16, loop: false },
-      { id: 'hit', clip: 'Hit_A', frames: 3, fps: 16, loop: false },
-      { id: 'death', clip: 'Death_C_Skeletons', frames: 6, fps: 10, loop: false },
-      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 6, fps: 10, loop: false },
+      { id: 'idle', clip: 'Idle', frames: 10, loop: true },
+      { id: 'run', clip: 'Running_C', frames: 14, loop: true },
+      { id: 'attack', clip: 'Unarmed_Melee_Attack_Punch_A', frames: 8, fps: 21, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false },
+      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false },
     ],
   },
 ];

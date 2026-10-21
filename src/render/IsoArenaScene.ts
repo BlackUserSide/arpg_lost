@@ -1,13 +1,13 @@
 import * as Phaser from 'phaser';
-import { vec, type Vec2 } from '../core/math';
+import { distance, vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
-import { createWorld, getClass, PLAYER_ID, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { createWorld, getClass, getMob, PLAYER_ID, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
 import { applyRunResult, findCharacter } from '../core/progression/profile';
 import { content } from '../data';
 import { getApp } from './app';
 import { Hud } from './hud';
 import { fadeIn, heading, label, makeButton, makeFrame, UI } from './ui';
-import { directionRow, screenDirToWorld, toScreen, toWorld } from './iso';
+import { screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
 
 // Isometric arena: Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker).
@@ -24,6 +24,12 @@ const LIGHT_RADIUS = 520;
 const PROJECTILE_HEIGHT = 34;
 /** Seconds a skill key press stays queued while the hero is busy. */
 const INPUT_BUFFER = 0.35;
+/** Larger jumps between sim steps (teleport, spawn) are not interpolated. */
+const SNAP_DISTANCE = 80;
+/** Mob display positions ease towards the simulation to hide crowd-separation jitter. */
+const MOB_SMOOTHING = 22;
+/** Below this speed (world units/s) an actor is considered standing. */
+const MOVING_SPEED = 8;
 
 const PLAIN_FLOORS = [0, 1, 2, 3, 20, 21, 22, 23];
 const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
@@ -36,9 +42,14 @@ const MOB_PROJECTILE_COLOR = 0xff4b4b;
 interface Actor {
   sprite: Phaser.GameObjects.Sprite;
   set: string;
-  lastPos: Vec2;
+  /** Interpolated (and for mobs smoothed) world position used for drawing. */
+  display: Vec2;
   facing: Vec2;
+  /** Sprite direction row, with hysteresis. */
+  row: number;
   time: number;
+  /** Run cycle phase, advanced proportionally to actual movement speed. */
+  runPhase: number;
   moving: boolean;
   /** One-shot animation playing on top of idle/run. */
   oneShot: { anim: string; elapsed: number } | undefined;
@@ -67,6 +78,8 @@ export class IsoArenaScene extends Phaser.Scene {
   private runRecorded = false;
   private world!: WorldState;
   private accumulator = 0;
+  private alpha = 1;
+  private prevPositions = new Map<number, Vec2>();
   private keys!: Keys;
   private hero!: Actor;
   private mobs = new Map<number, Actor>();
@@ -102,6 +115,8 @@ export class IsoArenaScene extends Phaser.Scene {
     // Dev-only handle for debugging and automated checks from the console.
     if (import.meta.env.DEV) (window as unknown as { __world: WorldState }).__world = this.world;
     this.accumulator = 0;
+    this.alpha = 1;
+    this.prevPositions.clear();
     this.mobs.clear();
     this.corpses = [];
     this.areas = [];
@@ -255,18 +270,21 @@ export class IsoArenaScene extends Phaser.Scene {
     this.accumulator += deltaMs / 1000;
     let steps = 0;
     while (this.accumulator >= DT && steps < MAX_STEPS_PER_FRAME) {
+      this.snapshotPositions();
       for (const event of step(this.world, this.readInput(), this.content, DT)) this.onEvent(event);
       this.accumulator -= DT;
       steps++;
     }
     if (steps === MAX_STEPS_PER_FRAME) this.accumulator = 0;
 
+    // Render between the last two sim states so motion is smooth at any refresh rate.
+    this.alpha = Math.min(1, this.accumulator / DT);
     const dt = deltaMs / 1000;
     this.syncActors(dt);
     this.updateCorpses(dt);
     this.drawFx(dt);
 
-    const heroScreen = toScreen(this.world.player.pos);
+    const heroScreen = toScreen(this.hero.display);
     this.cameras.main.centerOn(heroScreen.x, heroScreen.y - 30);
     this.light.setPosition(heroScreen.x, heroScreen.y - 30);
     this.hud.update(this.world, dt);
@@ -328,7 +346,7 @@ export class IsoArenaScene extends Phaser.Scene {
         if (actor) {
           this.playOneShot(actor, 'death');
           actor.sprite.clearTint();
-          actor.sprite.setDepth(toScreen(actor.lastPos).y - 40);
+          actor.sprite.setDepth(toScreen(actor.display).y - 40);
           this.corpses.push({ actor, ttl: CORPSE_TIME });
           this.mobs.delete(event.id);
         }
@@ -347,7 +365,31 @@ export class IsoArenaScene extends Phaser.Scene {
 
   private createActor(set: string, pos: Vec2): Actor {
     const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y);
-    return { sprite, set, lastPos: pos, facing: vec(1, 1), time: 0, moving: false, oneShot: undefined };
+    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined };
+  }
+
+  /** Remembers where everything was before a sim step, for interpolation. */
+  private snapshotPositions(): void {
+    const prev = this.prevPositions;
+    prev.clear();
+    prev.set(PLAYER_ID, this.world.player.pos);
+    for (const mob of this.world.mobs) prev.set(mob.id, mob.pos);
+    for (const p of this.world.projectiles) prev.set(p.id, p.pos);
+  }
+
+  private interpolated(id: number, current: Vec2): Vec2 {
+    const prev = this.prevPositions.get(id);
+    if (!prev || distance(prev, current) > SNAP_DISTANCE) return current;
+    const a = this.alpha;
+    return vec(prev.x + (current.x - prev.x) * a, prev.y + (current.y - prev.y) * a);
+  }
+
+  /** World units per second over the last sim step. */
+  private speedOf(id: number, current: Vec2): number {
+    const prev = this.prevPositions.get(id);
+    if (!prev) return 0;
+    const d = distance(prev, current);
+    return d > SNAP_DISTANCE ? 0 : d / DT;
   }
 
   private playOneShot(actor: Actor, anim: string): void {
@@ -357,8 +399,10 @@ export class IsoArenaScene extends Phaser.Scene {
 
   private syncActors(dt: number): void {
     const player = this.world.player;
+    const classDef = getClass(this.content, this.classId);
     if (!player.dead) this.hero.facing = player.motion ? player.motion.dir : player.facing;
-    this.updateActor(this.hero, player.pos, dt);
+    this.hero.display = this.interpolated(PLAYER_ID, player.pos);
+    this.updateActor(this.hero, dt, this.speedOf(PLAYER_ID, player.pos), classDef.baseStats.movementSpeed ?? 200);
     this.hero.sprite.setAlpha(player.invulnerable > 0 ? 0.55 : 1);
 
     for (const mob of this.world.mobs) {
@@ -368,19 +412,29 @@ export class IsoArenaScene extends Phaser.Scene {
         this.mobs.set(mob.id, actor);
       }
       actor.facing = mob.facing;
-      this.updateActor(actor, mob.pos, dt);
+      const target = this.interpolated(mob.id, mob.pos);
+      if (distance(actor.display, target) > SNAP_DISTANCE) actor.display = target;
+      else {
+        const k = 1 - Math.exp(-MOB_SMOOTHING * dt);
+        actor.display = vec(actor.display.x + (target.x - actor.display.x) * k, actor.display.y + (target.y - actor.display.y) * k);
+      }
+      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), getMob(this.content, mob.defId).moveSpeed);
       if (mob.stun > 0) actor.sprite.setTint(0xfff27a);
       else if (mob.slow > 0) actor.sprite.setTint(0x8fd3ff);
       else actor.sprite.clearTint();
     }
   }
 
-  private updateActor(actor: Actor, pos: Vec2, dt: number): void {
-    actor.moving = Math.hypot(pos.x - actor.lastPos.x, pos.y - actor.lastPos.y) > 0.01;
-    actor.lastPos = pos;
+  private updateActor(actor: Actor, dt: number, speed: number, referenceSpeed: number): void {
+    // Moving state comes from sim velocity, not from per-frame deltas (which are zero on frames
+    // without a sim step at high refresh rates and made run/idle flicker).
+    actor.moving = speed > MOVING_SPEED;
     actor.time += dt;
+    // Run cycle speed follows actual speed so feet don't slide (slowed mobs animate slower).
+    if (actor.moving) actor.runPhase += dt * Phaser.Math.Clamp(speed / Math.max(1, referenceSpeed), 0.5, 2);
+    actor.row = stickyDirectionRow(actor.facing, actor.row);
     this.applyFrame(actor, dt);
-    const screen = toScreen(pos);
+    const screen = toScreen(actor.display);
     actor.sprite.setPosition(screen.x, screen.y);
     if (actor.oneShot?.anim !== 'death') actor.sprite.setDepth(screen.y);
   }
@@ -406,11 +460,12 @@ export class IsoArenaScene extends Phaser.Scene {
     }
     const def = set[anim];
     if (!def) return;
-    if (anim === 'run' || anim === 'idle') col = Math.floor(actor.time * def.fps) % def.frames;
+    if (anim === 'run') col = Math.floor(actor.runPhase * def.fps) % def.frames;
+    else if (anim === 'idle') col = Math.floor(actor.time * def.fps) % def.frames;
 
     const key = textureKey(actor.set, anim);
     if (actor.sprite.texture.key !== key) actor.sprite.setTexture(key);
-    actor.sprite.setFrame(directionRow(actor.facing) * def.frames + col);
+    actor.sprite.setFrame(Math.max(0, actor.row) * def.frames + col);
   }
 
   private updateCorpses(dt: number): void {
@@ -432,7 +487,7 @@ export class IsoArenaScene extends Phaser.Scene {
     const player = this.world.player;
 
     // Ring under the hero so they never get lost in a crowd; orange while buffed.
-    const hero = toScreen(player.pos);
+    const hero = toScreen(this.hero.display);
     g.lineStyle(2, player.buffs.length > 0 ? 0xff9a3c : 0xe8c15a, 0.9).strokeEllipse(hero.x, hero.y, 46, 23);
 
     for (const trap of this.world.traps) {
@@ -460,8 +515,9 @@ export class IsoArenaScene extends Phaser.Scene {
     }
 
     for (const p of this.world.projectiles) {
-      const s = toScreen(p.pos);
-      const tail = toScreen(vec(p.pos.x - p.dir.x * 18, p.pos.y - p.dir.y * 18));
+      const pos = this.interpolated(p.id, p.pos);
+      const s = toScreen(pos);
+      const tail = toScreen(vec(pos.x - p.dir.x * 18, pos.y - p.dir.y * 18));
       const color = p.owner === 'mob' ? MOB_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
       g.fillStyle(0x000000, 0.35).fillEllipse(s.x, s.y, p.radius * 2, p.radius);
       if (p.explodeRadius > 0) {
