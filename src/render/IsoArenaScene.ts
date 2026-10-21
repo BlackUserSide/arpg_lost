@@ -123,8 +123,14 @@ export class IsoArenaScene extends Phaser.Scene {
     const classDef = getClass(this.content, this.classId);
     // Equipment enters the run as modifiers plus the equipped weapon.
     const loadout = character
-      ? { modifiers: equipmentModifiers(character.equipment, itemsData), weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon) }
+      ? {
+          level: character.level,
+          xp: character.xp,
+          modifiers: equipmentModifiers(character.equipment, itemsData),
+          weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon),
+        }
       : {};
+    // TEMPORARY (until maps, 0.4): the arena's area level follows the hero, so there is no low-area penalty.
     this.world = createWorld(this.content, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout);
     this.rewards = undefined;
     // Dev-only handle for debugging and automated checks from the console.
@@ -160,7 +166,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.cameras.main.setBounds(left - 200, -200, right - left + 400, bottom + 400);
     this.cameras.main.setBackgroundColor('#07070a');
 
-    this.hud = new Hud(this, getClass(this.content, this.classId));
+    this.hud = new Hud(this, getClass(this.content, this.classId), this.content.progression);
     this.hud.layout(this.scale.width, this.scale.height);
     this.overlay = undefined;
     this.paused = false;
@@ -208,7 +214,7 @@ export class IsoArenaScene extends Phaser.Scene {
     objects.push(shade);
     const panelW = Math.min(420, width - 32);
     const lootLines = kind === 'death' ? Math.max(1, this.rewards?.items.length ?? 0) : 0;
-    const panelH = (kind === 'death' ? (compact ? 230 : 270) : compact ? 190 : 220) + lootLines * 24 + (kind === 'death' ? 24 : 0);
+    const panelH = (kind === 'death' ? (compact ? 254 : 294) : compact ? 190 : 220) + lootLines * 24 + (kind === 'death' ? 24 : 0);
     objects.push(makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel'));
     const top = height / 2 - panelH / 2;
     const title = heading(this, width / 2, top + (compact ? 30 : 40), kind === 'death' ? 'You have fallen' : 'Paused', compact ? 28 : 36).setOrigin(0.5);
@@ -218,6 +224,9 @@ export class IsoArenaScene extends Phaser.Scene {
       const seconds = Math.floor(this.world.time);
       const summary = `Survived ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}  ·  ${this.world.kills} kills  ·  wave ${this.world.spawn.wave}`;
       objects.push(label(this, width / 2, y, summary, UI.size.body, UI.muted).setOrigin(0.5, 0));
+      y += 24;
+      const xpLine = `+${Math.floor(this.world.xpGained)} XP  ·  level ${this.world.player.level}`;
+      objects.push(label(this, width / 2, y, xpLine, UI.size.body, UI.goldBrightText, true).setOrigin(0.5, 0));
       y += 34;
       objects.push(heading(this, width / 2, y, 'Loot', 20).setOrigin(0.5, 0));
       y += 28;
@@ -278,6 +287,7 @@ export class IsoArenaScene extends Phaser.Scene {
       kills: this.world.kills,
       duration: this.world.time,
       died: this.world.player.dead,
+      progress: { level: this.world.player.level, xp: this.world.player.xp },
     });
     this.rewards = grantArenaRewards(app.profile, createRng((Math.random() * 2 ** 32) >>> 0), { kills: this.world.kills, wave: this.world.spawn.wave }, itemsData);
     app.save();
@@ -383,6 +393,9 @@ export class IsoArenaScene extends Phaser.Scene {
         }
         break;
       }
+      case 'levelUp':
+        this.showLevelUp(event.level);
+        break;
       case 'playerDeath':
         this.playOneShot(this.hero, 'death');
         this.endRun();
@@ -602,6 +615,30 @@ export class IsoArenaScene extends Phaser.Scene {
     outside.fillRect(-far, -half, far - half, size); // left
     outside.fillRect(half, -half, far - half, size); // right
     return this.add.container(0, 0, [this.add.image(0, 0, key), outside]).setDepth(5000);
+  }
+
+  /** Golden burst around the hero, a banner and a pulse on the XP bar. Life and mana are refilled by the core. */
+  private showLevelUp(level: number): void {
+    this.hud.levelUp();
+    this.cameras.main.flash(180, 255, 230, 160);
+    const heroPos = this.world.player.pos;
+    this.areas.push({ origin: heroPos, facing: vec(1, 0), radius: 120, angleDeg: 360, color: 0xffd36a, ttl: AREA_TTL * 3 });
+    const screen = toScreen(heroPos);
+    const ring = this.add.ellipse(screen.x, screen.y, 40, 20).setStrokeStyle(4, 0xffd36a, 1).setDepth(4001);
+    this.tweens.add({ targets: ring, scaleX: 6, scaleY: 6, alpha: 0, duration: 700, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+    const pillar = this.add.rectangle(screen.x, screen.y, 46, 220, 0xffe7a0, 0.55).setOrigin(0.5, 1).setDepth(4001).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({ targets: pillar, scaleX: 0.1, alpha: 0, duration: 800, ease: 'Quad.easeIn', onComplete: () => pillar.destroy() });
+
+    const { width, height } = this.scale;
+    const banner = heading(this, width / 2, height * 0.28, 'Level Up', 44).setOrigin(0.5);
+    const sub = label(this, width / 2, height * 0.28 + 38, `Level ${level}  ·  life and mana restored`, UI.size.body, UI.goldBrightText, true).setOrigin(0.5);
+    for (const t of [banner, sub]) {
+      pinToScreen(t, 15000);
+      t.setAlpha(0);
+      this.tweens.add({ targets: t, alpha: 1, duration: 200, hold: 1300, yoyo: true, onComplete: () => t.destroy() });
+    }
+    banner.setScale(1.4);
+    this.tweens.add({ targets: banner, scale: 1, duration: 300, ease: 'Back.easeOut' });
   }
 
   private spawnDamageNumber(pos: Vec2, amount: number, isCrit: boolean, onPlayer: boolean): void {

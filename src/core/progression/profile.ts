@@ -54,6 +54,8 @@ export interface RunResult {
   readonly mapLevel?: number;
   /** Set when the map was fully cleared. */
   readonly clearTime?: number;
+  /** Hero level and XP at the end of the run (XP is kept on death). */
+  readonly progress?: { readonly level: number; readonly xp: number };
 }
 
 export type CreateCharacterError = 'limit' | 'name-length' | 'name-chars' | 'unknown-class';
@@ -118,6 +120,10 @@ export function applyRunResult(profile: Profile, characterId: string, run: RunRe
   if (run.died) character.stats.deaths++;
   character.stats.kills += run.kills;
   character.stats.longestRun = Math.max(character.stats.longestRun, run.duration);
+  if (run.progress) {
+    character.level = run.progress.level;
+    character.xp = run.progress.xp;
+  }
 
   const records = profile.records;
   records.mostKillsInRun = Math.max(records.mostKillsInRun, run.kills);

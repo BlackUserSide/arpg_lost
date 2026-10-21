@@ -2,6 +2,7 @@ import * as Phaser from 'phaser';
 import { equippedWeapon, equipmentModifiers } from '../core/items/equipment';
 import { equipFromStash, salvageFromStash, SALVAGE_CURRENCY, unequipToStash, type InventoryError } from '../core/items/inventory';
 import type { EquipSlot, Item } from '../core/items/types';
+import { levelModifiers, xpToNextLevel } from '../core/progression/levels';
 import { findCharacter, type CharacterRecord } from '../core/progression/profile';
 import { computeStat } from '../core/stats/modifiers';
 import type { StatId } from '../core/stats/types';
@@ -50,6 +51,11 @@ const STAT_ROWS: ReadonlyArray<[StatId, string, 'int' | 'pct' | 'dec']> = [
   ['lightningResistance', 'Lightning Res', 'pct'],
   ['lifeRegen', 'Life Regen', 'dec'],
 ];
+
+function levelLine(character: CharacterRecord): string {
+  const next = xpToNextLevel(character.level, content.progression);
+  return Number.isFinite(next) ? `Level ${character.level} · ${Math.floor(character.xp)} / ${next} XP` : `Level ${character.level}`;
+}
 
 function sameSelection(a: Selection, b: Selection): boolean {
   if (!a || !b || a.where !== b.where) return false;
@@ -120,7 +126,9 @@ export class InventoryScene extends Phaser.Scene {
     const titleH = compact ? 40 : 64;
     const look = CLASS_LOOKS.find((l) => l.classId === character.classId);
 
-    this.root.add(heading(this, m + 4, compact ? 4 : 12, compact ? character.name : `${character.name} — ${look?.name ?? ''}`, compact ? 24 : 34));
+    const title = heading(this, m + 4, compact ? 4 : 12, compact ? character.name : `${character.name} — ${look?.name ?? ''}`, compact ? 24 : 34);
+    this.root.add(title);
+    this.root.add(label(this, title.x + title.width + 16, title.y + title.height - (compact ? 20 : 26), levelLine(character), UI.size.small, UI.goldBrightText));
     this.root.add(makeButton(this, width - m - 60, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, 'Back', () => this.back()));
 
     const top = titleH + (compact ? 0 : 6);
@@ -200,14 +208,17 @@ export class InventoryScene extends Phaser.Scene {
     card.on('pointerover', () => this.setHover({ where: 'stash', id: item.id })).on('pointerout', () => this.setHover(undefined));
     this.root.add(card);
     const base = itemsData.bases[item.baseId];
-    if (base) this.root.add(this.add.image(x, y, itemIcon(this, base, item.rarity)).setDisplaySize(size - 10, size - 10));
+    // Items above the hero's level are dimmed and show the required level.
+    const tooHigh = item.level > (this.character?.level ?? 1);
+    if (base) this.root.add(this.add.image(x, y, itemIcon(this, base, item.rarity)).setDisplaySize(size - 10, size - 10).setAlpha(tooHigh ? 0.4 : 1));
+    if (tooHigh) this.root.add(label(this, x - size / 2 + 4, y + size / 2 - 16, String(item.level), 11, UI.danger, true).setStroke('#000', 3));
     // Rarity pip in the corner.
     this.root.add(this.add.circle(x + size / 2 - 7, y - size / 2 + 7, 3, Phaser.Display.Color.HexStringToColor(UI.rarity[item.rarity]).color));
   }
 
   private buildStats(character: CharacterRecord, x: number, y: number, w: number): void {
     const classDef = getClass(content, character.classId);
-    const mods = equipmentModifiers(character.equipment, itemsData);
+    const mods = [...equipmentModifiers(character.equipment, itemsData), ...levelModifiers(character.level, content.progression)];
     const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
     this.root.add(heading(this, x, y, 'Attributes', 18));
     const fmt = (v: number, kind: 'int' | 'pct' | 'dec'): string => (kind === 'pct' ? `${Math.round(v * 100)}%` : kind === 'dec' ? (Math.round(v * 10) / 10).toFixed(1) : String(Math.round(v)));
@@ -274,7 +285,8 @@ export class InventoryScene extends Phaser.Scene {
         y += 10;
       }
       lastKind = line.kind;
-      const tone = line.kind === 'implicit' ? '#b9d4ff' : line.kind === 'affix' ? '#8fb3ff' : line.kind === 'meta' ? UI.muted : UI.text;
+      const tooHigh = line.kind === 'meta' && item.level > (this.character?.level ?? 1);
+      const tone = tooHigh ? UI.danger : line.kind === 'implicit' ? '#b9d4ff' : line.kind === 'affix' ? '#8fb3ff' : line.kind === 'meta' ? UI.muted : UI.text;
       const text = label(this, x, y, line.text, line.kind === 'meta' ? 12 : UI.size.small, tone, line.kind === 'affix').setWordWrapWidth(w);
       parts.push(text);
       y += text.height + 1;
