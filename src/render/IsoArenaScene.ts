@@ -1,10 +1,12 @@
 import * as Phaser from 'phaser';
 import { vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
-import { createWorld, getClass, PLAYER_ID, playerStat, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { createWorld, getClass, PLAYER_ID, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
 import { applyRunResult, findCharacter } from '../core/progression/profile';
 import { content } from '../data';
 import { getApp } from './app';
+import { Hud } from './hud';
+import { fadeIn, heading, label, makeButton, makeFrame, UI } from './ui';
 import { directionRow, screenDirToWorld, toScreen, toWorld } from './iso';
 import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
 
@@ -73,10 +75,9 @@ export class IsoArenaScene extends Phaser.Scene {
   private fx!: Phaser.GameObjects.Graphics;
   private fxTop!: Phaser.GameObjects.Graphics;
   private light!: Phaser.GameObjects.Image;
-  private hud!: Phaser.GameObjects.Graphics;
-  private hudText!: Phaser.GameObjects.Text;
-  private skillText!: Phaser.GameObjects.Text;
-  private deathText!: Phaser.GameObjects.Text;
+  private hud!: Hud;
+  private overlay: Phaser.GameObjects.GameObject[] | undefined;
+  private paused = false;
   private textPool: Phaser.GameObjects.Text[] = [];
   private skillWasDown: boolean[] = [];
   private skillBuffer: number[] = [];
@@ -129,18 +130,96 @@ export class IsoArenaScene extends Phaser.Scene {
     this.cameras.main.setBounds(left - 200, -200, right - left + 400, bottom + 400);
     this.cameras.main.setBackgroundColor('#07070a');
 
-    this.hud = this.add.graphics().setScrollFactor(0).setDepth(10000);
-    this.hudText = this.add.text(16, 64, '', { color: '#ddd', fontSize: '16px' }).setScrollFactor(0).setDepth(10000);
-    this.skillText = this.add.text(0, 0, '', { color: '#ddd', fontSize: '15px', align: 'center' }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(10000);
-    this.deathText = this.add
-      .text(0, 0, 'You died\nR — try again · Esc — menu', { color: '#fff', fontSize: '28px', align: 'center' })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(10001)
-      .setVisible(false);
+    this.hud = new Hud(this, getClass(this.content, this.classId));
+    this.hud.layout(this.scale.width, this.scale.height);
+    this.overlay = undefined;
+    this.paused = false;
+    const relayout = (): void => {
+      this.hud.layout(this.scale.width, this.scale.height);
+      if (this.overlay) this.showOverlay(this.paused ? 'pause' : 'death');
+    };
+    this.scale.on('resize', relayout);
+    // Leaving the tab pauses the run (and tells the portal gameplay stopped).
+    const autoPause = (): void => {
+      if (!this.paused && !this.world.player.dead) this.setPaused(true);
+    };
+    this.game.events.on(Phaser.Core.Events.BLUR, autoPause);
+    this.game.events.on(Phaser.Core.Events.HIDDEN, autoPause);
 
     getApp(this).platform.gameplayStart();
-    this.events.once('shutdown', () => this.endRun());
+    fadeIn(this);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', relayout);
+      this.game.events.off(Phaser.Core.Events.BLUR, autoPause);
+      this.game.events.off(Phaser.Core.Events.HIDDEN, autoPause);
+      this.endRun();
+    });
+  }
+
+  private setPaused(paused: boolean): void {
+    this.paused = paused;
+    const platform = getApp(this).platform;
+    if (paused) {
+      platform.gameplayStop();
+      this.showOverlay('pause');
+    } else {
+      platform.gameplayStart();
+      this.hideOverlay();
+      this.accumulator = 0;
+    }
+  }
+
+  private showOverlay(kind: 'pause' | 'death'): void {
+    this.hideOverlay();
+    const { width, height } = this.scale;
+    const compact = width < 820 || height < 520;
+    const objects: Phaser.GameObjects.GameObject[] = [];
+    const shade = this.add.rectangle(width / 2, height / 2, width, height, kind === 'death' ? 0x1a0303 : 0x000000, kind === 'death' ? 0.6 : 0.55).setInteractive();
+    objects.push(shade);
+    const panelW = Math.min(420, width - 32);
+    const panelH = kind === 'death' ? (compact ? 230 : 270) : compact ? 190 : 220;
+    objects.push(makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel'));
+    const top = height / 2 - panelH / 2;
+    const title = heading(this, width / 2, top + (compact ? 30 : 40), kind === 'death' ? 'You have fallen' : 'Paused', compact ? 28 : 36).setOrigin(0.5);
+    objects.push(title);
+    let y = top + (compact ? 64 : 82);
+    if (kind === 'death') {
+      const seconds = Math.floor(this.world.time);
+      const summary = `Survived ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}  ·  ${this.world.kills} kills  ·  wave ${this.world.spawn.wave}`;
+      objects.push(label(this, width / 2, y, summary, UI.size.body, UI.muted).setOrigin(0.5, 0));
+      y += 36;
+    }
+    const buttonW = Math.min(200, (panelW - 48) / 2);
+    const buttonY = top + panelH - (compact ? 40 : 50);
+    const primary =
+      kind === 'death'
+        ? makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, compact ? 44 : 52, 'Try again', () => this.restartRun(), 'primary')
+        : makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, compact ? 44 : 52, 'Resume', () => this.setPaused(false), 'primary');
+    const menu = makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, compact ? 44 : 52, 'Main menu', () => this.leaveToMenu());
+    objects.push(primary, menu);
+    objects.push(label(this, width / 2, buttonY - (compact ? 40 : 48), kind === 'death' ? 'R — try again   ·   Esc — menu' : 'Esc — resume', UI.size.small, UI.muted).setOrigin(0.5));
+    for (const o of objects) {
+      (o as unknown as Phaser.GameObjects.Components.ScrollFactor & Phaser.GameObjects.Components.Depth).setScrollFactor(0).setDepth(20000);
+    }
+    const fadeTargets = objects.slice(1);
+    for (const o of fadeTargets) (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha(0);
+    this.tweens.add({ targets: fadeTargets, alpha: 1, duration: kind === 'death' ? 600 : 150, delay: kind === 'death' ? 500 : 0 });
+    this.overlay = objects;
+  }
+
+  private hideOverlay(): void {
+    for (const o of this.overlay ?? []) o.destroy();
+    this.overlay = undefined;
+  }
+
+  private restartRun(): void {
+    this.scene.restart({ characterId: this.characterId });
+  }
+
+  private leaveToMenu(): void {
+    this.endRun();
+    this.cameras.main.fadeOut(200, 10, 9, 12);
+    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('main-menu'));
   }
 
   /** Records the run once (death or leaving) and tells the portal gameplay stopped. */
@@ -161,15 +240,17 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   override update(_time: number, deltaMs: number): void {
+    const dead = this.world.player.dead;
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-      this.endRun();
-      this.scene.start('main-menu');
+      if (dead) this.leaveToMenu();
+      else this.setPaused(!this.paused);
       return;
     }
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R) && this.world.player.dead) {
-      this.scene.restart({ characterId: this.characterId });
+    if (Phaser.Input.Keyboard.JustDown(this.keys.R) && dead) {
+      this.restartRun();
       return;
     }
+    if (this.paused) return;
 
     this.accumulator += deltaMs / 1000;
     let steps = 0;
@@ -188,7 +269,7 @@ export class IsoArenaScene extends Phaser.Scene {
     const heroScreen = toScreen(this.world.player.pos);
     this.cameras.main.centerOn(heroScreen.x, heroScreen.y - 30);
     this.light.setPosition(heroScreen.x, heroScreen.y - 30);
-    this.drawHud();
+    this.hud.update(this.world, dt);
   }
 
   private readInput(): PlayerInput {
@@ -255,8 +336,9 @@ export class IsoArenaScene extends Phaser.Scene {
       }
       case 'playerDeath':
         this.playOneShot(this.hero, 'death');
-        this.deathText.setVisible(true);
         this.endRun();
+        this.cameras.main.shake(250, 0.006);
+        this.showOverlay('death');
         break;
       default:
         break;
@@ -425,12 +507,12 @@ export class IsoArenaScene extends Phaser.Scene {
 
   private spawnDamageNumber(pos: Vec2, amount: number, isCrit: boolean, onPlayer: boolean): void {
     const screen = toScreen(pos);
-    const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontSize: '16px', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setDepth(6000);
+    const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
     text
       .setText(String(Math.round(amount)))
       .setPosition(screen.x + (Math.random() - 0.5) * 16, screen.y - 70)
       .setColor(onPlayer ? '#ff5050' : isCrit ? '#ffd23f' : '#ffffff')
-      .setFontSize(isCrit ? 22 : 16)
+      .setFontSize(isCrit ? 26 : 18)
       .setAlpha(1)
       .setVisible(true);
     this.tweens.add({
@@ -443,39 +525,5 @@ export class IsoArenaScene extends Phaser.Scene {
         this.textPool.push(text);
       },
     });
-  }
-
-  private drawHud(): void {
-    const p = this.world.player;
-    const classDef = getClass(this.content, p.classId);
-    const maxLife = playerStat(classDef, p, 'life');
-    const maxShield = playerStat(classDef, p, 'energyShield');
-    const maxMana = playerStat(classDef, p, 'mana');
-    const h = this.hud.clear();
-    const bar = (y: number, value: number, max: number, color: number): void => {
-      h.fillStyle(0x000000, 0.6).fillRect(16, y, 220, 16);
-      h.fillStyle(color).fillRect(16, y, max > 0 ? (220 * Math.max(0, value)) / max : 0, 16);
-    };
-    bar(16, p.life, maxLife, 0xc0392b);
-    if (maxShield > 0) h.fillStyle(0x9fd8ff, 0.7).fillRect(16, 16, (220 * p.energyShield) / Math.max(maxLife, maxShield), 5);
-    bar(38, p.mana, maxMana, 0x2e6fd8);
-    const seconds = Math.floor(this.world.time);
-    this.hudText.setText(
-      `Kills ${this.world.kills}   Wave ${this.world.spawn.wave}   ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}\n` +
-        'WASD move · LMB attack · RMB/Q/E skills · Esc class select',
-    );
-
-    const keys = ['RMB', 'Q', 'E'];
-    this.skillText.setText(
-      classDef.skills
-        .map((s, i) => {
-          const cd = p.cooldowns[s.id] ?? 0;
-          const state = cd > 0.05 ? `${cd.toFixed(1)}s` : p.mana < s.manaCost ? 'no mana' : 'ready';
-          return `[${keys[i]}] ${s.id.replace(/_/g, ' ')} — ${state}`;
-        })
-        .join('     '),
-    );
-    this.skillText.setPosition(this.scale.width / 2, this.scale.height - 16);
-    this.deathText.setPosition(this.scale.width / 2, this.scale.height / 2);
   }
 }

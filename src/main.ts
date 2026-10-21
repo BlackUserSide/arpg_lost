@@ -20,6 +20,9 @@ async function boot(): Promise<void> {
     callbacks: { preBoot: (g) => g.registry.set(APP_KEY, app) },
   });
 
+  // Dev-only handle for debugging from the console.
+  if (import.meta.env.DEV) (window as unknown as { __game: Phaser.Game }).__game = game;
+
   platform.onAuthChange((user) => {
     app.user = user;
     game.events.emit('auth-changed');
