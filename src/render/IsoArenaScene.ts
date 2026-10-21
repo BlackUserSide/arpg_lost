@@ -84,6 +84,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
     for (const [set, anims] of Object.entries(SPRITE_SETS)) {
       for (const [anim, def] of Object.entries(anims)) {
+        if (!def) continue;
         this.load.spritesheet(textureKey(set, anim), `assets/sprites/${def.file}`, {
           frameWidth: sprites.frameSize,
           frameHeight: sprites.frameSize,
