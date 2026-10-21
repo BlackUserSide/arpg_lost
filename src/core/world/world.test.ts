@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { vec } from '../math';
 import type { ActionDef, ClassDef, Content, MobDef } from './content';
-import { createWorld, step, type MobState, type PlayerInput, type WorldState } from './world';
+import { createWorld, setLoadoutModifiers, step, type MobState, type PlayerInput, type WorldState } from './world';
 
 const DT = 1 / 60;
 
@@ -391,6 +391,21 @@ describe('world: experience', () => {
     addMob(world, 520, 500, 0);
     step(world, idle, content, DT);
     expect(world.player.xp).toBe(5);
+  });
+
+  it('setLoadoutModifiers swaps loadout modifiers mid-run and clamps pools to the new maximums', () => {
+    const content = makeContent(undefined, {}, { life: 100 });
+    const world = createWorld(content, 'hero', 1, { level: 3, modifiers: [{ stat: 'life', kind: 'increased', value: 0.5 }] });
+    expect(world.player.life).toBe(180);
+    setLoadoutModifiers(world, content, [{ stat: 'life', kind: 'flat', value: 30 }]);
+    expect(world.player.gearModifiers).toEqual([{ stat: 'life', kind: 'flat', value: 30 }]);
+    expect(world.player.modifiers).toEqual([
+      { stat: 'life', kind: 'flat', value: 30 },
+      { stat: 'life', kind: 'flat', value: 20 },
+    ]);
+    expect(world.player.life).toBe(150);
+    setLoadoutModifiers(world, content, [{ stat: 'life', kind: 'increased', value: 1 }]);
+    expect(world.player.life).toBe(150);
   });
 });
 

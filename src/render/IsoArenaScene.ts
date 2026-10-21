@@ -2,12 +2,14 @@ import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
 import { createWorld, getClass, getMob, PLAYER_ID, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
-import { equippedWeapon, equipmentModifiers } from '../core/items/equipment';
+import { equippedWeapon } from '../core/items/equipment';
 import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
+import { heroModifiers } from '../core/progression/hero';
 import { applyRunResult, findCharacter } from '../core/progression/profile';
 import { createRng } from '../core/rng';
 import { itemsData } from '../data/items';
 import { content } from '../data';
+import { passiveTree } from '../data/passives';
 import { getApp } from './app';
 import { Hud } from './hud';
 import { fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
@@ -121,12 +123,12 @@ export class IsoArenaScene extends Phaser.Scene {
   create(): void {
     const character = findCharacter(getApp(this).profile, this.characterId);
     const classDef = getClass(this.content, this.classId);
-    // Equipment enters the run as modifiers plus the equipped weapon.
+    // Equipment and passives enter the run as modifiers, plus the equipped weapon.
     const loadout = character
       ? {
           level: character.level,
           xp: character.xp,
-          modifiers: equipmentModifiers(character.equipment, itemsData),
+          modifiers: heroModifiers(character, itemsData, passiveTree),
           weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon),
         }
       : {};

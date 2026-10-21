@@ -1,7 +1,8 @@
 import * as Phaser from 'phaser';
-import { equippedWeapon, equipmentModifiers } from '../core/items/equipment';
+import { equippedWeapon } from '../core/items/equipment';
 import { equipFromStash, salvageFromStash, SALVAGE_CURRENCY, unequipToStash, type InventoryError } from '../core/items/inventory';
 import type { EquipSlot, Item } from '../core/items/types';
+import { heroModifiers } from '../core/progression/hero';
 import { levelModifiers, xpToNextLevel } from '../core/progression/levels';
 import { findCharacter, type CharacterRecord } from '../core/progression/profile';
 import { computeStat } from '../core/stats/modifiers';
@@ -9,6 +10,7 @@ import type { StatId } from '../core/stats/types';
 import { getClass } from '../core/world/world';
 import { content } from '../data';
 import { itemsData } from '../data/items';
+import { passiveTree } from '../data/passives';
 import { getApp, type App } from './app';
 import { itemIcon } from './itemIcons';
 import { describeItem } from './itemText';
@@ -218,7 +220,7 @@ export class InventoryScene extends Phaser.Scene {
 
   private buildStats(character: CharacterRecord, x: number, y: number, w: number): void {
     const classDef = getClass(content, character.classId);
-    const mods = [...equipmentModifiers(character.equipment, itemsData), ...levelModifiers(character.level, content.progression)];
+    const mods = [...heroModifiers(character, itemsData, passiveTree), ...levelModifiers(character.level, content.progression)];
     const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
     this.root.add(heading(this, x, y, 'Attributes', 18));
     const fmt = (v: number, kind: 'int' | 'pct' | 'dec'): string => (kind === 'pct' ? `${Math.round(v * 100)}%` : kind === 'dec' ? (Math.round(v * 10) / 10).toFixed(1) : String(Math.round(v)));

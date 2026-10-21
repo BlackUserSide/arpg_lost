@@ -11,8 +11,9 @@ import { updateProjectiles, updateTraps } from './projectiles';
 import { allModifiers, clampToArena, getClass, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
+export { setLoadoutModifiers } from './experience';
 
-/** What the hero brings into the run: level, equipment (and later passives) as modifiers, plus the weapon. */
+/** What the hero brings into the run: level, equipment and passives as modifiers (see heroModifiers), plus the weapon. */
 export interface Loadout {
   readonly level?: number;
   readonly xp?: number;

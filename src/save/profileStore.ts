@@ -1,10 +1,13 @@
+import { createAllocation, validateAllocation } from '../core/passives/allocation';
+import type { PassiveAllocation, PassiveTreeData } from '../core/passives/types';
 import { createProfile, type Profile } from '../core/progression/profile';
+import { passiveTree } from '../data/passives';
 import type { KeyValueStorage } from '../platform/platform';
 
 // Versioned profile persistence. Bump SAVE_VERSION and add a migration whenever the Profile shape changes.
 
 export const SAVE_KEY = 'arpg.profile';
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 interface SaveFile {
   version: number;
@@ -23,6 +26,11 @@ const migrations: Record<number, (profile: unknown) => unknown> = {
       nextItemId: 1,
     };
   },
+  // v3: passive tree. Characters get an empty allocation (all points unspent).
+  2: (data) => {
+    const p = data as { characters?: Array<Record<string, unknown>> };
+    return { ...p, characters: (p.characters ?? []).map((c) => ({ passives: createAllocation(), ...c })) };
+  },
 };
 
 export interface LoadResult {
@@ -31,7 +39,8 @@ export interface LoadResult {
   backupKey?: string;
 }
 
-export function loadProfile(storage: KeyValueStorage): LoadResult {
+/** `tree` is used to validate passive allocations; a character with an invalid one gets a free full reset. */
+export function loadProfile(storage: KeyValueStorage, tree: PassiveTreeData = passiveTree): LoadResult {
   const raw = storage.getItem(SAVE_KEY);
   if (!raw) return { profile: createProfile() };
   try {
@@ -43,7 +52,9 @@ export function loadProfile(storage: KeyValueStorage): LoadResult {
       if (!migrate) throw new Error(`No migration from version ${v}`);
       data = migrate(data);
     }
-    return { profile: normalize(data) };
+    const profile = normalize(data);
+    resetInvalidPassives(profile, tree);
+    return { profile };
   } catch {
     const backupKey = `${SAVE_KEY}.broken`;
     storage.setItem(backupKey, raw);
@@ -63,11 +74,28 @@ function normalize(data: unknown): Profile {
   const p = data as Partial<Profile>;
   if (!Array.isArray(p.characters)) throw new Error('Profile has no characters array');
   return {
-    characters: p.characters.map((c) => ({ ...c, equipment: c.equipment ?? {} })),
+    characters: p.characters.map((c) => ({ ...c, equipment: c.equipment ?? {}, passives: normalizePassives(c.passives) })),
     stash: p.stash ?? base.stash,
     currency: p.currency ?? base.currency,
     records: { ...base.records, ...p.records },
     nextCharacterId: p.nextCharacterId ?? p.characters.length + 1,
     nextItemId: p.nextItemId ?? 1,
   };
+}
+
+/** Fills a partial or malformed allocation with defaults (missing / non-array fields become empty). */
+function normalizePassives(raw: unknown): PassiveAllocation {
+  const p = { ...createAllocation(), ...(typeof raw === 'object' && raw !== null ? (raw as Partial<PassiveAllocation>) : {}) };
+  return {
+    nodes: Array.isArray(p.nodes) ? p.nodes.filter((id) => typeof id === 'string') : [],
+    spec: typeof p.spec === 'string' ? p.spec : null,
+    specNodes: Array.isArray(p.specNodes) ? p.specNodes.filter((id) => typeof id === 'string') : [],
+  };
+}
+
+/** Allocations that no longer fit the tree (data change, tampering) are reset for free: wheel and spec. */
+function resetInvalidPassives(profile: Profile, tree: PassiveTreeData): void {
+  for (const character of profile.characters) {
+    if (validateAllocation(tree, character) !== null) character.passives = createAllocation();
+  }
 }

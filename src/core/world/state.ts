@@ -37,8 +37,8 @@ export interface PlayerState {
   level: number;
   /** XP towards the next level. */
   xp: number;
-  /** Modifiers brought into the run (items, later passives); level stats are added on top. */
-  readonly gearModifiers: readonly Modifier[];
+  /** Modifiers brought into the run (items, passives); level stats are added on top. */
+  gearModifiers: readonly Modifier[];
   /** Permanent modifiers: gear + level. Rebuilt on level-up. */
   modifiers: Modifier[];
   /** Equipped weapon, or the class default. */

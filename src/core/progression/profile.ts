@@ -3,6 +3,8 @@
 
 import type { Equipment } from '../items/equipment';
 import type { Item } from '../items/types';
+import { createAllocation } from '../passives/allocation';
+import type { PassiveAllocation } from '../passives/types';
 
 export interface ProfileRules {
   readonly maxCharacters: number;
@@ -26,6 +28,7 @@ export interface CharacterRecord {
   xp: number;
   stats: CharacterStats;
   equipment: Equipment;
+  passives: PassiveAllocation;
 }
 
 export interface ProfileRecords {
@@ -97,6 +100,7 @@ export function createCharacter(
     xp: 0,
     stats: { runs: 0, deaths: 0, kills: 0, longestRun: 0 },
     equipment: {},
+    passives: createAllocation(),
   };
   profile.characters.push(character);
   return { ok: true, character };
