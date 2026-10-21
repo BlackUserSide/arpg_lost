@@ -2,7 +2,9 @@ import * as Phaser from 'phaser';
 import { vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
 import { createWorld, getClass, PLAYER_ID, playerStat, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { applyRunResult, findCharacter } from '../core/progression/profile';
 import { content } from '../data';
+import { getApp } from './app';
 import { directionRow, screenDirToWorld, toScreen, toWorld } from './iso';
 import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
 
@@ -58,7 +60,9 @@ type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'ESC', Phaser.Input
 
 export class IsoArenaScene extends Phaser.Scene {
   private readonly content: Content = content;
+  private characterId = '';
   private classId = 'warrior';
+  private runRecorded = false;
   private world!: WorldState;
   private accumulator = 0;
   private keys!: Keys;
@@ -81,8 +85,10 @@ export class IsoArenaScene extends Phaser.Scene {
     super('iso-arena');
   }
 
-  init(data: { classId?: string }): void {
-    if (data.classId) this.classId = data.classId;
+  init(data: { characterId?: string }): void {
+    if (data.characterId) this.characterId = data.characterId;
+    this.classId = findCharacter(getApp(this).profile, this.characterId)?.classId ?? 'warrior';
+    this.runRecorded = false;
   }
 
   preload(): void {
@@ -127,20 +133,41 @@ export class IsoArenaScene extends Phaser.Scene {
     this.hudText = this.add.text(16, 64, '', { color: '#ddd', fontSize: '16px' }).setScrollFactor(0).setDepth(10000);
     this.skillText = this.add.text(0, 0, '', { color: '#ddd', fontSize: '15px', align: 'center' }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(10000);
     this.deathText = this.add
-      .text(0, 0, 'You died\nR — restart · Esc — choose class', { color: '#fff', fontSize: '28px', align: 'center' })
+      .text(0, 0, 'You died\nR — try again · Esc — menu', { color: '#fff', fontSize: '28px', align: 'center' })
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(10001)
       .setVisible(false);
+
+    getApp(this).platform.gameplayStart();
+    this.events.once('shutdown', () => this.endRun());
+  }
+
+  /** Records the run once (death or leaving) and tells the portal gameplay stopped. */
+  private endRun(): void {
+    if (this.runRecorded) return;
+    this.runRecorded = true;
+    const app = getApp(this);
+    app.platform.gameplayStop();
+    if (!findCharacter(app.profile, this.characterId)) return;
+    applyRunResult(app.profile, this.characterId, {
+      kills: this.world.kills,
+      duration: this.world.time,
+      died: this.world.player.dead,
+    });
+    app.save();
+    // PROPOSAL (docs/design/account.md): until bosses/loot exist, the first finished run is the "meaningful moment".
+    if (!app.user && app.loginHint === 'none') app.loginHint = 'pending';
   }
 
   override update(_time: number, deltaMs: number): void {
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-      this.scene.start('class-select');
+      this.endRun();
+      this.scene.start('main-menu');
       return;
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.R) && this.world.player.dead) {
-      this.scene.restart({ classId: this.classId });
+      this.scene.restart({ characterId: this.characterId });
       return;
     }
 
@@ -229,6 +256,7 @@ export class IsoArenaScene extends Phaser.Scene {
       case 'playerDeath':
         this.playOneShot(this.hero, 'death');
         this.deathText.setVisible(true);
+        this.endRun();
         break;
       default:
         break;
