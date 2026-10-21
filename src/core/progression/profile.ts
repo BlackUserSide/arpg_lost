@@ -1,6 +1,9 @@
 // Account profile: characters, shared stash/currency, records. Pure data + pure functions;
 // persistence lives in src/save, identity in src/platform.
 
+import type { Equipment } from '../items/equipment';
+import type { Item } from '../items/types';
+
 export interface ProfileRules {
   readonly maxCharacters: number;
   readonly nameMinLength: number;
@@ -22,6 +25,7 @@ export interface CharacterRecord {
   level: number;
   xp: number;
   stats: CharacterStats;
+  equipment: Equipment;
 }
 
 export interface ProfileRecords {
@@ -34,11 +38,12 @@ export interface ProfileRecords {
 
 export interface Profile {
   characters: CharacterRecord[];
-  /** Shared by all characters of the account. Item format arrives with M2 loot. */
-  stash: { items: unknown[] };
+  /** Shared by all characters of the account. */
+  stash: { items: Item[] };
   currency: Record<string, number>;
   records: ProfileRecords;
   nextCharacterId: number;
+  nextItemId: number;
 }
 
 export interface RunResult {
@@ -60,6 +65,7 @@ export function createProfile(): Profile {
     currency: {},
     records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 0 },
     nextCharacterId: 1,
+    nextItemId: 1,
   };
 }
 
@@ -88,6 +94,7 @@ export function createCharacter(
     level: 1,
     xp: 0,
     stats: { runs: 0, deaths: 0, kills: 0, longestRun: 0 },
+    equipment: {},
   };
   profile.characters.push(character);
   return { ok: true, character };

@@ -1,5 +1,6 @@
 import type { CombatConfig } from '../combat/config';
 import type { BaseDamage } from '../combat/damage';
+import type { WeaponType } from '../items/types';
 import type { ElementalType, Modifier, SkillTag, StatId } from '../stats/types';
 
 /** Where the action's damage comes from. Attacks scale weapon damage; spells have their own base damage. */
@@ -77,6 +78,8 @@ export interface WeaponDef {
 export interface ClassDef {
   readonly id: string;
   readonly radius: number;
+  /** The only weapon type this class can equip. */
+  readonly weaponType: WeaponType;
   readonly baseStats: Readonly<Partial<Record<StatId, number>>>;
   readonly weapon: WeaponDef;
   readonly basicAttack: ActionDef;

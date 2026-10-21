@@ -16,7 +16,7 @@ export function findAction(ctx: Ctx, id: string): ActionDef {
 export function useTime(ctx: Ctx, action: ActionDef): number {
   const mods = allModifiers(ctx.world.player);
   if (action.tags.includes('attack')) {
-    const rate = computeStat(ctx.classDef.weapon.attacksPerSecond, mods, 'attackSpeed', action.tags);
+    const rate = computeStat(ctx.world.player.weapon.attacksPerSecond, mods, 'attackSpeed', action.tags);
     return rate > 0 ? 1 / rate : Infinity;
   }
   const base = action.castTime ?? 0;
@@ -171,14 +171,14 @@ export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number):
 }
 
 export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState): void {
-  const { world, content, classDef, rng, events } = ctx;
+  const { world, content, rng, events } = ctx;
   if (action.damage) {
     const mods = allModifiers(world.player);
     let rolled: DamageByType;
     let baseCrit: number;
     if (action.damage.source === 'weapon') {
-      rolled = scaleDamage(rollBaseDamage(rng, classDef.weapon.damage), action.damage.effectiveness);
-      baseCrit = classDef.weapon.critChance;
+      rolled = scaleDamage(rollBaseDamage(rng, world.player.weapon.damage), action.damage.effectiveness);
+      baseCrit = world.player.weapon.critChance;
     } else {
       rolled = rollBaseDamage(rng, action.damage.base);
       baseCrit = action.damage.critChance;

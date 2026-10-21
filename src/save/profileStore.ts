@@ -4,7 +4,7 @@ import type { KeyValueStorage } from '../platform/platform';
 // Versioned profile persistence. Bump SAVE_VERSION and add a migration whenever the Profile shape changes.
 
 export const SAVE_KEY = 'arpg.profile';
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 interface SaveFile {
   version: number;
@@ -12,7 +12,18 @@ interface SaveFile {
 }
 
 /** migrations[n] upgrades a version-n profile to version n+1. */
-const migrations: Record<number, (profile: unknown) => unknown> = {};
+const migrations: Record<number, (profile: unknown) => unknown> = {
+  // v2: items. Characters get equipment, profile gets an item id counter; old stash had no real items.
+  1: (data) => {
+    const p = data as { characters?: Array<Record<string, unknown>>; stash?: unknown };
+    return {
+      ...p,
+      characters: (p.characters ?? []).map((c) => ({ equipment: {}, ...c })),
+      stash: { items: [] },
+      nextItemId: 1,
+    };
+  },
+};
 
 export interface LoadResult {
   profile: Profile;
@@ -52,10 +63,11 @@ function normalize(data: unknown): Profile {
   const p = data as Partial<Profile>;
   if (!Array.isArray(p.characters)) throw new Error('Profile has no characters array');
   return {
-    characters: p.characters,
+    characters: p.characters.map((c) => ({ ...c, equipment: c.equipment ?? {} })),
     stash: p.stash ?? base.stash,
     currency: p.currency ?? base.currency,
     records: { ...base.records, ...p.records },
     nextCharacterId: p.nextCharacterId ?? p.characters.length + 1,
+    nextItemId: p.nextItemId ?? 1,
   };
 }

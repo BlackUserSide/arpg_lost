@@ -2,14 +2,21 @@ import { add, clamp, normalize, scale, sub, vec } from '../math';
 import { createRng } from '../rng';
 import { computeStat } from '../stats/modifiers';
 import { performAction, pickAction, updateMotion } from './actions';
-import type { Content } from './content';
+import type { Modifier } from '../stats/types';
+import type { Content, WeaponDef } from './content';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { allModifiers, clampToArena, getClass, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
 
-export function createWorld(content: Content, classId: string, seed: number): WorldState {
+/** What the hero brings into the run: equipment (and later passives) as modifiers, plus the weapon. */
+export interface Loadout {
+  readonly modifiers?: readonly Modifier[];
+  readonly weapon?: WeaponDef;
+}
+
+export function createWorld(content: Content, classId: string, seed: number, loadout: Loadout = {}): WorldState {
   const classDef = getClass(content, classId);
   const player: PlayerState = {
     id: PLAYER_ID,
@@ -22,7 +29,8 @@ export function createWorld(content: Content, classId: string, seed: number): Wo
     mana: 0,
     actionTimer: 0,
     cooldowns: {},
-    modifiers: [],
+    modifiers: [...(loadout.modifiers ?? [])],
+    weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
     motion: undefined,

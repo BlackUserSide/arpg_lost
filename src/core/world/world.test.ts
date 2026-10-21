@@ -48,6 +48,7 @@ function hero(skills: ActionDef[], baseStats: ClassDef['baseStats'] = {}): Class
   return {
     id: 'hero',
     radius: 10,
+    weaponType: 'sword',
     baseStats: { life: 50, mana: 20, manaRegen: 0, movementSpeed: 100, ...baseStats },
     weapon: { damage: { physical: { min: 10, max: 10 } }, attacksPerSecond: 2, critChance: 0 },
     basicAttack: strike,

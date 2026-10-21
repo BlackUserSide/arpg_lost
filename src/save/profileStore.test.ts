@@ -53,3 +53,26 @@ describe('profile store', () => {
     expect(profile.stash).toEqual({ items: [] });
   });
 });
+
+describe('profile store migrations', () => {
+  it('upgrades v1 saves: characters get equipment, stash is reset, item ids start at 1', () => {
+    const storage = memoryStorage();
+    const v1 = {
+      version: 1,
+      profile: {
+        characters: [{ id: 'c1', name: 'Aria', classId: 'mage', level: 1, xp: 0, stats: { runs: 2, deaths: 1, kills: 9, longestRun: 30 } }],
+        stash: { items: ['legacy'] },
+        currency: {},
+        records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 9 },
+        nextCharacterId: 2,
+      },
+    };
+    storage.setItem(SAVE_KEY, JSON.stringify(v1));
+    const { profile, backupKey } = loadProfile(storage);
+    expect(backupKey).toBeUndefined();
+    expect(profile.characters[0]!.equipment).toEqual({});
+    expect(profile.characters[0]!.stats.kills).toBe(9);
+    expect(profile.stash.items).toEqual([]);
+    expect(profile.nextItemId).toBe(1);
+  });
+});

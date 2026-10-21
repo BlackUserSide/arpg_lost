@@ -2,7 +2,7 @@ import { clamp, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import { computeStat } from '../stats/modifiers';
 import type { Modifier, StatId, Tag } from '../stats/types';
-import type { ClassDef, Content, MobDef } from './content';
+import type { ClassDef, Content, MobDef, WeaponDef } from './content';
 
 export const PLAYER_ID = 0;
 
@@ -36,6 +36,8 @@ export interface PlayerState {
   cooldowns: Record<string, number>;
   /** Permanent modifiers (items, passives). */
   modifiers: Modifier[];
+  /** Equipped weapon, or the class default. */
+  weapon: WeaponDef;
   buffs: Buff[];
   invulnerable: number;
   motion: Motion | undefined;

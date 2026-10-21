@@ -2,7 +2,11 @@ import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
 import { createWorld, getClass, getMob, PLAYER_ID, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { equippedWeapon, equipmentModifiers } from '../core/items/equipment';
+import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
 import { applyRunResult, findCharacter } from '../core/progression/profile';
+import { createRng } from '../core/rng';
+import { itemsData } from '../data/items';
 import { content } from '../data';
 import { getApp } from './app';
 import { Hud } from './hud';
@@ -76,6 +80,7 @@ export class IsoArenaScene extends Phaser.Scene {
   private characterId = '';
   private classId = 'warrior';
   private runRecorded = false;
+  private rewards: RunRewards | undefined;
   private world!: WorldState;
   private accumulator = 0;
   private alpha = 1;
@@ -111,7 +116,14 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.world = createWorld(this.content, this.classId, (Math.random() * 2 ** 32) >>> 0);
+    const character = findCharacter(getApp(this).profile, this.characterId);
+    const classDef = getClass(this.content, this.classId);
+    // Equipment enters the run as modifiers plus the equipped weapon.
+    const loadout = character
+      ? { modifiers: equipmentModifiers(character.equipment, itemsData), weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon) }
+      : {};
+    this.world = createWorld(this.content, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout);
+    this.rewards = undefined;
     // Dev-only handle for debugging and automated checks from the console.
     if (import.meta.env.DEV) (window as unknown as { __world: WorldState }).__world = this.world;
     this.accumulator = 0;
@@ -192,7 +204,8 @@ export class IsoArenaScene extends Phaser.Scene {
     const shade = this.add.rectangle(width / 2, height / 2, width, height, kind === 'death' ? 0x1a0303 : 0x000000, kind === 'death' ? 0.6 : 0.55).setInteractive();
     objects.push(shade);
     const panelW = Math.min(420, width - 32);
-    const panelH = kind === 'death' ? (compact ? 230 : 270) : compact ? 190 : 220;
+    const lootLines = kind === 'death' ? Math.max(1, this.rewards?.items.length ?? 0) : 0;
+    const panelH = (kind === 'death' ? (compact ? 230 : 270) : compact ? 190 : 220) + lootLines * 24 + (kind === 'death' ? 24 : 0);
     objects.push(makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel'));
     const top = height / 2 - panelH / 2;
     const title = heading(this, width / 2, top + (compact ? 30 : 40), kind === 'death' ? 'You have fallen' : 'Paused', compact ? 28 : 36).setOrigin(0.5);
@@ -202,7 +215,23 @@ export class IsoArenaScene extends Phaser.Scene {
       const seconds = Math.floor(this.world.time);
       const summary = `Survived ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}  ·  ${this.world.kills} kills  ·  wave ${this.world.spawn.wave}`;
       objects.push(label(this, width / 2, y, summary, UI.size.body, UI.muted).setOrigin(0.5, 0));
-      y += 36;
+      y += 34;
+      objects.push(heading(this, width / 2, y, 'Loot', 20).setOrigin(0.5, 0));
+      y += 28;
+      const items = this.rewards?.items ?? [];
+      if (items.length === 0) {
+        const per = itemsData.rules.arenaRewards.killsPerItem;
+        objects.push(label(this, width / 2, y, `Nothing this time — every ${per} kills earn an item`, UI.size.small, UI.muted).setOrigin(0.5, 0));
+      }
+      for (const item of items) {
+        const base = itemsData.bases[item.baseId];
+        const line = item.rarity === 'rare' ? `${item.name} (${base?.name ?? ''})` : item.name;
+        objects.push(label(this, width / 2, y, `${line}  ·  ilvl ${item.level}`, UI.size.body, UI.rarity[item.rarity], true).setOrigin(0.5, 0));
+        y += 24;
+      }
+      if (this.rewards && this.rewards.salvaged > 0) {
+        objects.push(label(this, width / 2, y, `Stash full: salvaged for ${this.rewards.salvaged} shards`, UI.size.small, UI.muted).setOrigin(0.5, 0));
+      }
     }
     const buttonW = Math.min(200, (panelW - 48) / 2);
     const buttonY = top + panelH - (compact ? 40 : 50);
@@ -249,6 +278,7 @@ export class IsoArenaScene extends Phaser.Scene {
       duration: this.world.time,
       died: this.world.player.dead,
     });
+    this.rewards = grantArenaRewards(app.profile, createRng((Math.random() * 2 ** 32) >>> 0), { kills: this.world.kills, wave: this.world.spawn.wave }, itemsData);
     app.save();
     // PROPOSAL (docs/design/account.md): until bosses/loot exist, the first finished run is the "meaningful moment".
     if (!app.user && app.loginHint === 'none') app.loginHint = 'pending';

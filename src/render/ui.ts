@@ -16,6 +16,7 @@ export const UI = {
   headingFont: HEADING_FONT,
   bodyFont: BODY_FONT,
   size: { display: 44, title: 28, heading: 20, body: 16, small: 14 },
+  rarity: { normal: '#c9c4b8', magic: '#7aa2ff', rare: '#f3d58a', unique: '#e07a2e', legendary: '#ff5fd2' },
 } as const;
 
 export type FrameVariant =

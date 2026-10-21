@@ -5,6 +5,7 @@ export const classes: Record<string, ClassDef> = {
   warrior: {
     id: 'warrior',
     radius: 18,
+    weaponType: 'sword',
     baseStats: {
       life: 120,
       lifeRegen: 1.5,
@@ -59,6 +60,7 @@ export const classes: Record<string, ClassDef> = {
   ranger: {
     id: 'ranger',
     radius: 16,
+    weaponType: 'crossbow',
     baseStats: {
       life: 95,
       lifeRegen: 1,
@@ -116,6 +118,7 @@ export const classes: Record<string, ClassDef> = {
   mage: {
     id: 'mage',
     radius: 16,
+    weaponType: 'wand',
     baseStats: {
       life: 80,
       lifeRegen: 0.8,
