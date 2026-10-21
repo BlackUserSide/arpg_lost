@@ -9,6 +9,7 @@ const dummy: MobDef = {
   id: 'dummy',
   radius: 10,
   life: 100,
+  xp: 10,
   armour: 0,
   resistances: { fire: 0, cold: 0, lightning: 0 },
   moveSpeed: 0,
@@ -65,6 +66,14 @@ function makeContent(skills: ActionDef[] = [sweep, slam], spawn: Partial<Content
       width: 1000,
       height: 1000,
       spawn: { firstDelay: 1000, interval: 1000, batchStart: 0, batchGrowth: 0, maxAlive: 0, mobIds: ['dummy'], ...spawn },
+    },
+    progression: {
+      maxLevel: 5,
+      xpCurve: { base: 15, exponent: 1 },
+      mobXpGrowth: 0,
+      lowAreaPenalty: { startDiff: 2, multipliers: [0.5], floor: 0.1 },
+      mapClearBonus: 0.1,
+      perLevel: { life: 10 },
     },
   };
 }
@@ -352,6 +361,36 @@ describe('world: mobs', () => {
     expect(world.mobs).toHaveLength(5);
     step(world, idle, content, 1);
     expect(world.mobs).toHaveLength(6);
+  });
+});
+
+describe('world: experience', () => {
+  it('kills grant XP; a level-up adds level stats and restores life', () => {
+    const content = makeContent(undefined, {}, { life: 100 });
+    const world = createWorld(content, 'hero', 1, { level: 1, xp: 0 });
+    world.player.life = 20;
+    addMob(world, 520, 500, 0);
+    let events = step(world, idle, content, DT);
+    expect(world.player.xp).toBe(10);
+    expect(world.player.life).toBeLessThan(100);
+    expect(events.some((e) => e.type === 'levelUp')).toBe(false);
+
+    addMob(world, 520, 500, 0);
+    events = step(world, idle, content, DT);
+    expect(events).toContainEqual({ type: 'levelUp', level: 2 });
+    expect(world.player.level).toBe(2);
+    expect(world.player.xp).toBe(5);
+    expect(world.player.life).toBe(110);
+    expect(world.xpGained).toBe(20);
+  });
+
+  it('starts with level stats and reduces XP in a low-level area', () => {
+    const content = makeContent(undefined, {}, { life: 100 });
+    const world = createWorld(content, 'hero', 1, { level: 3, xp: 0 }, 1);
+    expect(world.player.life).toBe(120);
+    addMob(world, 520, 500, 0);
+    step(world, idle, content, DT);
+    expect(world.player.xp).toBe(5);
   });
 });
 

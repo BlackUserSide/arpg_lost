@@ -1,6 +1,7 @@
 import type { CombatConfig } from '../combat/config';
 import type { BaseDamage } from '../combat/damage';
 import type { WeaponType } from '../items/types';
+import type { ProgressionRules } from '../progression/levels';
 import type { ElementalType, Modifier, SkillTag, StatId } from '../stats/types';
 
 /** Where the action's damage comes from. Attacks scale weapon damage; spells have their own base damage. */
@@ -91,6 +92,8 @@ export interface MobDef {
   readonly id: string;
   readonly radius: number;
   readonly life: number;
+  /** Base XP at area level 1; scaled by area level (core/progression/levels). */
+  readonly xp: number;
   readonly armour: number;
   readonly resistances: Readonly<Record<ElementalType, number>>;
   readonly moveSpeed: number;
@@ -125,4 +128,5 @@ export interface Content {
   readonly classes: Readonly<Record<string, ClassDef>>;
   readonly mobs: Readonly<Record<string, MobDef>>;
   readonly arena: ArenaDef;
+  readonly progression: ProgressionRules;
 }

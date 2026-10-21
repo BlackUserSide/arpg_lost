@@ -4,6 +4,7 @@ import type { Defences } from '../combat/mitigation';
 import { add, distance, normalize, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { Content, MobDef } from './content';
+import { gainKillXp } from './experience';
 import { clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
@@ -123,6 +124,7 @@ export function removeDeadMobs(ctx: Ctx): void {
     }
     world.kills++;
     events.push({ type: 'death', id: mob.id, pos: mob.pos });
+    gainKillXp(ctx, getMob(ctx.content, mob.defId).xp);
   }
   world.mobs = alive;
 }

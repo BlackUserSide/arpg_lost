@@ -34,7 +34,12 @@ export interface PlayerState {
   /** Time until the next basic attack or skill can start. */
   actionTimer: number;
   cooldowns: Record<string, number>;
-  /** Permanent modifiers (items, passives). */
+  level: number;
+  /** XP towards the next level. */
+  xp: number;
+  /** Modifiers brought into the run (items, later passives); level stats are added on top. */
+  readonly gearModifiers: readonly Modifier[];
+  /** Permanent modifiers: gear + level. Rebuilt on level-up. */
   modifiers: Modifier[];
   /** Equipped weapon, or the class default. */
   weapon: WeaponDef;
@@ -89,6 +94,10 @@ export interface WorldState {
   traps: Trap[];
   spawn: { timer: number; wave: number };
   kills: number;
+  /** Level of the area (map level); scales mob XP. */
+  readonly areaLevel: number;
+  /** Total XP earned this run. */
+  xpGained: number;
 }
 
 export interface PlayerInput {
@@ -110,6 +119,7 @@ export type WorldEvent =
   | { type: 'hit'; targetId: number; pos: Vec2; amount: number; isCrit: boolean }
   | { type: 'spawn'; id: number }
   | { type: 'death'; id: number; pos: Vec2 }
+  | { type: 'levelUp'; level: number }
   | { type: 'playerDeath' };
 
 /** Everything a system needs during one step. */

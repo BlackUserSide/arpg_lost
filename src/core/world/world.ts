@@ -3,21 +3,28 @@ import { createRng } from '../rng';
 import { computeStat } from '../stats/modifiers';
 import { performAction, pickAction, updateMotion } from './actions';
 import type { Modifier } from '../stats/types';
+import { levelModifiers } from '../progression/levels';
 import type { Content, WeaponDef } from './content';
+import { refillPools } from './experience';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { allModifiers, clampToArena, getClass, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
 
-/** What the hero brings into the run: equipment (and later passives) as modifiers, plus the weapon. */
+/** What the hero brings into the run: level, equipment (and later passives) as modifiers, plus the weapon. */
 export interface Loadout {
+  readonly level?: number;
+  readonly xp?: number;
   readonly modifiers?: readonly Modifier[];
   readonly weapon?: WeaponDef;
 }
 
-export function createWorld(content: Content, classId: string, seed: number, loadout: Loadout = {}): WorldState {
+/** `areaLevel` defaults to the hero's level. */
+export function createWorld(content: Content, classId: string, seed: number, loadout: Loadout = {}, areaLevel = loadout.level ?? 1): WorldState {
   const classDef = getClass(content, classId);
+  const level = loadout.level ?? 1;
+  const gearModifiers = [...(loadout.modifiers ?? [])];
   const player: PlayerState = {
     id: PLAYER_ID,
     classId,
@@ -29,16 +36,17 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     mana: 0,
     actionTimer: 0,
     cooldowns: {},
-    modifiers: [...(loadout.modifiers ?? [])],
+    level,
+    xp: loadout.xp ?? 0,
+    gearModifiers,
+    modifiers: [...gearModifiers, ...levelModifiers(level, content.progression)],
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
     motion: undefined,
     dead: false,
   };
-  player.life = playerStat(classDef, player, 'life');
-  player.energyShield = playerStat(classDef, player, 'energyShield');
-  player.mana = playerStat(classDef, player, 'mana');
+  refillPools(classDef, player);
   return {
     time: 0,
     rngState: seed >>> 0,
@@ -49,6 +57,8 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     traps: [],
     spawn: { timer: content.arena.spawn.firstDelay, wave: 0 },
     kills: 0,
+    areaLevel,
+    xpGained: 0,
   };
 }
 

@@ -50,4 +50,11 @@ describe('profile', () => {
     expect(c.stats).toEqual({ runs: 3, deaths: 1, kills: 45, longestRun: 200 });
     expect(p.records).toEqual({ bestMapLevel: 3, bossKills: 2, bestClearTime: 140, mostKillsInRun: 30 });
   });
+
+  it('keeps level and XP from the run, also after death', () => {
+    const p = createProfile();
+    createCharacter(p, { name: 'Aria', classId: 'mage' }, rules, classes);
+    applyRunResult(p, 'c1', { kills: 30, duration: 120, died: true, progress: { level: 3, xp: 42 } });
+    expect(p.characters[0]).toMatchObject({ level: 3, xp: 42 });
+  });
 });

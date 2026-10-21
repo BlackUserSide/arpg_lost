@@ -1,10 +1,11 @@
 import * as Phaser from 'phaser';
+import { xpToNextLevel, type ProgressionRules } from '../core/progression/levels';
 import type { ActionDef, ClassDef } from '../core/world/content';
 import { playerStat, type WorldState } from '../core/world/world';
 import { skillIcon } from './hudIcons';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
-// In-run HUD: Diablo-style life/mana orbs, skill bar with cooldown shutters, run info, buffs.
+// In-run HUD: Diablo-style life/mana orbs, skill bar with cooldown shutters, XP bar, run info, buffs.
 // Render-only: reads world state every frame.
 
 const DEPTH = 10000;
@@ -80,6 +81,10 @@ function orbRingTexture(scene: Phaser.Scene, r: number): string {
 export class Hud {
   private readonly liquid: Phaser.GameObjects.Graphics;
   private readonly shutters: Phaser.GameObjects.Graphics;
+  private readonly xpBar: Phaser.GameObjects.Graphics;
+  private readonly levelText: Phaser.GameObjects.Text;
+  private xpRect = { x: 0, y: 0, w: 0, h: 0 };
+  private levelPulse = 0;
   private readonly life: Orb;
   private readonly mana: Orb;
   private readonly slots: Slot[];
@@ -91,9 +96,13 @@ export class Hud {
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly classDef: ClassDef,
+    private readonly progression: ProgressionRules,
   ) {
     this.liquid = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH);
     this.shutters = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 2);
+    this.xpBar = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH);
+    this.levelText = label(scene, 0, 0, '', 15, UI.goldBrightText, true).setOrigin(1, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+    this.levelText.setStroke('#000', 4);
     this.life = this.createOrb(0x6a0d0d, 0xd23a2a);
     this.mana = this.createOrb(0x0d1f6a, 0x3a72e0);
     this.slots = [classDef.basicAttack, ...classDef.skills].map((action, i) => {
@@ -128,6 +137,10 @@ export class Hud {
       slot.key.setPosition(slot.x, slot.y + size / 2 - 2);
       slot.cdText.setPosition(slot.x, slot.y);
     });
+    // XP bar spans the skill bar, just above it; level number to its left.
+    const barH = compact ? 6 : 8;
+    this.xpRect = { x: width / 2 - total / 2, y: height - margin - size - (compact ? 10 : 14) - barH, w: total, h: barH };
+    this.levelText.setPosition(this.xpRect.x - 8, this.xpRect.y + barH / 2).setFontSize(compact ? 13 : 15);
 
     const infoW = compact ? 200 : 240;
     this.infoFrame.destroy();
@@ -175,7 +188,32 @@ export class Hud {
 
     const seconds = Math.floor(world.time);
     this.info.setText(`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}    Kills ${world.kills}    Wave ${world.spawn.wave}`);
+    this.drawXp(world, dt);
     this.updateBuffs(world);
+  }
+
+  /** Flashes the XP bar and level number after a level-up. */
+  levelUp(): void {
+    this.levelPulse = 1;
+  }
+
+  private drawXp(world: WorldState, dt: number): void {
+    const { x, y, w, h } = this.xpRect;
+    const p = world.player;
+    const next = xpToNextLevel(p.level, this.progression);
+    const frac = Number.isFinite(next) ? Phaser.Math.Clamp(p.xp / next, 0, 1) : 1;
+    this.levelPulse = Math.max(0, this.levelPulse - dt / 1.2);
+    const g = this.xpBar.clear();
+    g.fillStyle(0x000000, 0.7).fillRect(x - 2, y - 2, w + 4, h + 4);
+    g.lineStyle(1, 0x9a6a22, 1).strokeRect(x - 2, y - 2, w + 4, h + 4);
+    g.fillStyle(0x1a1408, 1).fillRect(x, y, w, h);
+    g.fillStyle(0xc89a3a, 1).fillRect(x, y, w * frac, h);
+    g.fillStyle(0xf3d58a, 0.6).fillRect(x, y, w * frac, Math.max(1, h / 3));
+    // Quarter ticks.
+    g.fillStyle(0x000000, 0.5);
+    for (let i = 1; i < 4; i++) g.fillRect(x + (w * i) / 4, y, 1, h);
+    if (this.levelPulse > 0) g.fillStyle(0xfff2c0, this.levelPulse * 0.8).fillRect(x - 2, y - 2, w + 4, h + 4);
+    this.levelText.setText(String(p.level)).setScale(1 + this.levelPulse * 0.6);
   }
 
   private updateBuffs(world: WorldState): void {
@@ -189,7 +227,7 @@ export class Hud {
     buffs.forEach((buff, i) => {
       const source = this.classDef.skills.find((a) => a.selfEffects?.some((e) => e.kind === 'buff' && e.id === buff.id));
       const x = first.x - first.size / 2 + size / 2 + i * (size + 6);
-      const y = first.y - first.size / 2 - size / 2 - 10;
+      const y = first.y - first.size / 2 - size / 2 - 28; // above the XP bar
       const icon = this.scene.add.image(x, y, skillIcon(this.scene, source?.id ?? buff.id)).setDisplaySize(size, size).setScrollFactor(0).setDepth(DEPTH);
       const t = label(this.scene, x, y + size / 2 + 6, `${Math.ceil(buff.remaining)}s`, 12, UI.goldBrightText, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
       t.setStroke('#000', 3);

@@ -122,8 +122,7 @@ const rules: LootRules = {
   tierWeights: [10, 25, 50, 80, 100],
   salvage: { normal: 1, magic: 3, rare: 8, unique: 25, legendary: 100 },
   stashSize: 30,
-  // TEMPORARY: no character levels yet, so every item would be unequippable.
-  enforceLevelRequirement: false,
+  enforceLevelRequirement: true,
   arenaRewards: { killsPerItem: 20, maxItems: 3, wavesPerItemLevel: 3, maxItemLevel: 30 },
   rareNameWords: {
     first: ['Grim', 'Dusk', 'Ashen', 'Blood', 'Storm', 'Bone', 'Gloom', 'Rune', 'Iron', 'Hollow', 'Wraith', 'Ember'],
