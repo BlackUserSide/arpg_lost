@@ -1,0 +1,120 @@
+{
+  "frameSize": 128,
+  "originY": 104,
+  "characters": {
+    "knight": {
+      "idle": {
+        "file": "knight_idle.png",
+        "frames": 4,
+        "fps": 4,
+        "loop": true
+      },
+      "run": {
+        "file": "knight_run.png",
+        "frames": 8,
+        "fps": 12,
+        "loop": true
+      },
+      "attack": {
+        "file": "knight_attack.png",
+        "frames": 6,
+        "fps": 18,
+        "loop": false
+      },
+      "skill": {
+        "file": "knight_skill.png",
+        "frames": 6,
+        "fps": 18,
+        "loop": false
+      },
+      "hit": {
+        "file": "knight_hit.png",
+        "frames": 3,
+        "fps": 16,
+        "loop": false
+      },
+      "death": {
+        "file": "knight_death.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      }
+    },
+    "skeleton_warrior": {
+      "idle": {
+        "file": "skeleton_warrior_idle.png",
+        "frames": 4,
+        "fps": 4,
+        "loop": true
+      },
+      "run": {
+        "file": "skeleton_warrior_run.png",
+        "frames": 8,
+        "fps": 10,
+        "loop": true
+      },
+      "attack": {
+        "file": "skeleton_warrior_attack.png",
+        "frames": 6,
+        "fps": 14,
+        "loop": false
+      },
+      "hit": {
+        "file": "skeleton_warrior_hit.png",
+        "frames": 3,
+        "fps": 16,
+        "loop": false
+      },
+      "death": {
+        "file": "skeleton_warrior_death.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      },
+      "spawn": {
+        "file": "skeleton_warrior_spawn.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      }
+    },
+    "skeleton_minion": {
+      "idle": {
+        "file": "skeleton_minion_idle.png",
+        "frames": 4,
+        "fps": 4,
+        "loop": true
+      },
+      "run": {
+        "file": "skeleton_minion_run.png",
+        "frames": 8,
+        "fps": 14,
+        "loop": true
+      },
+      "attack": {
+        "file": "skeleton_minion_attack.png",
+        "frames": 5,
+        "fps": 16,
+        "loop": false
+      },
+      "hit": {
+        "file": "skeleton_minion_hit.png",
+        "frames": 3,
+        "fps": 16,
+        "loop": false
+      },
+      "death": {
+        "file": "skeleton_minion_death.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      },
+      "spawn": {
+        "file": "skeleton_minion_spawn.png",
+        "frames": 6,
+        "fps": 10,
+        "loop": false
+      }
+    }
+  }
+}

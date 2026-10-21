@@ -4,8 +4,9 @@ import type { Content } from '../core/world/content';
 import { createWorld, getClass, PLAYER_ID, playerStat, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
 import { content } from '../data';
 import { directionRow, screenDirToWorld, toScreen, toWorld } from './iso';
+import sprites from './sprites.json';
 
-// Art test scene: isometric view with Flare floor tiles and Bellanger character sheets.
+// Art test scene: isometric view, Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker).
 
 const DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
@@ -13,44 +14,33 @@ const CLASS_ID = 'warrior';
 
 const TILE_WORLD = 68; // world units per floor tile side (96px wide diamond at ISO_K)
 const TILE_SCALE = 0.5;
-const CHAR_SCALE = 1.5;
-const CHAR_ORIGIN_Y = 0.72;
-const FRAMES_PER_ROW = 8;
-const WALK_FPS = 8;
-const ATTACK_TIME = 0.22;
-const HIT_TIME = 0.12;
-const CORPSE_TIME = 2;
+const CORPSE_TIME = 2.5;
 const SWING_TTL = 0.14;
 const LIGHT_RADIUS = 520;
 
 const PLAIN_FLOORS = [0, 1, 2, 3, 20, 21, 22, 23];
 const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
 
-const HERO_LAYERS = ['male_base', 'male_heavy', 'male_longsword'];
-const MOB_SHEETS: Record<string, { sheet: string; tint?: number; scale?: number }> = {
-  zombie: { sheet: 'zombie' },
-  runner: { sheet: 'skeleton', scale: 0.85 },
-};
+const HERO_SPRITE = 'knight';
+const MOB_SPRITES: Record<string, string> = { zombie: 'skeleton_warrior', runner: 'skeleton_minion' };
 
-const enum Col {
-  Walk = 0,
-  Attack = 4,
-  Special = 5,
-  Hit = 6,
-  Dead = 7,
-}
+type AnimId = 'idle' | 'run' | 'attack' | 'skill' | 'hit' | 'death';
+type SpriteSet = Partial<Record<AnimId | 'spawn', { file: string; frames: number; fps: number; loop: boolean }>>;
+const SPRITE_SETS = sprites.characters as Record<string, SpriteSet>;
 
 interface Actor {
-  sprites: Phaser.GameObjects.Sprite[];
+  sprite: Phaser.GameObjects.Sprite;
+  set: string;
   lastPos: Vec2;
   facing: Vec2;
-  walkTime: number;
-  attackTime: number;
-  hitTime: number;
+  time: number;
+  moving: boolean;
+  /** One-shot animation playing on top of idle/run. */
+  oneShot: { anim: AnimId; elapsed: number } | undefined;
 }
 
 interface Corpse {
-  sprite: Phaser.GameObjects.Sprite;
+  actor: Actor;
   ttl: number;
 }
 
@@ -64,6 +54,8 @@ interface Swing {
 }
 
 type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R', Phaser.Input.Keyboard.Key>;
+
+const textureKey = (set: string, anim: string): string => `${set}_${anim}`;
 
 export class IsoArenaScene extends Phaser.Scene {
   private readonly content: Content = content;
@@ -87,8 +79,13 @@ export class IsoArenaScene extends Phaser.Scene {
 
   preload(): void {
     this.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
-    for (const name of [...HERO_LAYERS, ...Object.values(MOB_SHEETS).map((m) => m.sheet)]) {
-      this.load.spritesheet(name, `assets/test/${name}.png`, { frameWidth: 128, frameHeight: 128 });
+    for (const [set, anims] of Object.entries(SPRITE_SETS)) {
+      for (const [anim, def] of Object.entries(anims)) {
+        this.load.spritesheet(textureKey(set, anim), `assets/sprites/${def.file}`, {
+          frameWidth: sprites.frameSize,
+          frameHeight: sprites.frameSize,
+        });
+      }
     }
   }
 
@@ -99,8 +96,8 @@ export class IsoArenaScene extends Phaser.Scene {
     this.corpses = [];
     this.swings = [];
 
-    for (const name of [...HERO_LAYERS, 'zombie', 'skeleton']) {
-      this.textures.get(name).setFilter(Phaser.Textures.FilterMode.NEAREST);
+    for (const [set, anims] of Object.entries(SPRITE_SETS)) {
+      for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
     }
 
     this.input.mouse?.disableContextMenu();
@@ -108,7 +105,7 @@ export class IsoArenaScene extends Phaser.Scene {
 
     this.buildFloor();
     this.fx = this.add.graphics().setDepth(-1000);
-    this.hero = this.createActor(HERO_LAYERS, CHAR_SCALE, undefined, this.world.player.pos);
+    this.hero = this.createActor(HERO_SPRITE, this.world.player.pos);
     this.light = this.add.image(0, 0, this.makeLightTexture()).setDepth(5000);
 
     const { width, height } = this.content.arena;
@@ -172,36 +169,36 @@ export class IsoArenaScene extends Phaser.Scene {
     switch (event.type) {
       case 'action': {
         const classDef = getClass(this.content, this.world.player.classId);
-        this.swings.push({ ...event, ttl: SWING_TTL, isSkill: event.actionId !== classDef.basicAttack.id });
-        this.hero.attackTime = ATTACK_TIME;
+        const isSkill = event.actionId !== classDef.basicAttack.id;
+        this.swings.push({ ...event, ttl: SWING_TTL, isSkill });
         this.hero.facing = event.facing;
+        this.playOneShot(this.hero, isSkill ? 'skill' : 'attack');
         break;
       }
       case 'mobAttack': {
         const actor = this.mobs.get(event.id);
-        if (actor) actor.attackTime = ATTACK_TIME;
+        if (actor) this.playOneShot(actor, 'attack');
         break;
       }
       case 'hit': {
         const actor = event.targetId === PLAYER_ID ? this.hero : this.mobs.get(event.targetId);
-        if (actor) actor.hitTime = HIT_TIME;
+        // Hit reaction must not interrupt an attack swing.
+        if (actor && actor.oneShot?.anim !== 'attack' && actor.oneShot?.anim !== 'skill') this.playOneShot(actor, 'hit');
         this.spawnDamageNumber(event.pos, event.amount, event.isCrit, event.targetId === PLAYER_ID);
         break;
       }
       case 'death': {
         const actor = this.mobs.get(event.id);
         if (actor) {
-          const [body, ...rest] = actor.sprites;
-          rest.forEach((s) => s.destroy());
-          if (body) {
-            body.setFrame(directionRow(actor.facing) * FRAMES_PER_ROW + Col.Dead).setDepth(-500);
-            this.corpses.push({ sprite: body, ttl: CORPSE_TIME });
-          }
+          this.playOneShot(actor, 'death');
+          actor.sprite.setDepth(toScreen(actor.lastPos).y - 40);
+          this.corpses.push({ actor, ttl: CORPSE_TIME });
           this.mobs.delete(event.id);
         }
         break;
       }
       case 'playerDeath':
+        this.playOneShot(this.hero, 'death');
         this.deathText.setVisible(true);
         break;
       default:
@@ -209,65 +206,78 @@ export class IsoArenaScene extends Phaser.Scene {
     }
   }
 
-  private createActor(sheets: readonly string[], scale: number, tint: number | undefined, pos: Vec2): Actor {
-    const sprites = sheets.map((sheet) => {
-      const sprite = this.add.sprite(0, 0, sheet, 6 * FRAMES_PER_ROW).setOrigin(0.5, CHAR_ORIGIN_Y).setScale(scale);
-      if (tint !== undefined) sprite.setTint(tint);
-      return sprite;
-    });
-    return { sprites, lastPos: pos, facing: vec(1, 1), walkTime: 0, attackTime: 0, hitTime: 0 };
+  private createActor(set: string, pos: Vec2): Actor {
+    const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, sprites.originY / sprites.frameSize);
+    return { sprite, set, lastPos: pos, facing: vec(1, 1), time: 0, moving: false, oneShot: undefined };
+  }
+
+  private playOneShot(actor: Actor, anim: AnimId): void {
+    if (actor.oneShot?.anim === 'death') return;
+    actor.oneShot = { anim, elapsed: 0 };
   }
 
   private syncActors(dt: number): void {
     const player = this.world.player;
-    this.hero.facing = player.facing;
-    this.updateActor(this.hero, player.pos, dt, player.dead);
+    if (!player.dead) this.hero.facing = player.facing;
+    this.updateActor(this.hero, player.pos, dt);
 
     for (const mob of this.world.mobs) {
       let actor = this.mobs.get(mob.id);
       if (!actor) {
-        const look = MOB_SHEETS[mob.defId] ?? { sheet: 'zombie' };
-        actor = this.createActor([look.sheet], CHAR_SCALE * (look.scale ?? 1), look.tint, mob.pos);
+        actor = this.createActor(MOB_SPRITES[mob.defId] ?? 'skeleton_warrior', mob.pos);
         this.mobs.set(mob.id, actor);
       }
       const toPlayer = normalize(sub(player.pos, mob.pos));
       if (toPlayer.x !== 0 || toPlayer.y !== 0) actor.facing = toPlayer;
-      this.updateActor(actor, mob.pos, dt, false);
+      this.updateActor(actor, mob.pos, dt);
     }
   }
 
-  private updateActor(actor: Actor, pos: Vec2, dt: number, dead: boolean): void {
-    const moved = Math.hypot(pos.x - actor.lastPos.x, pos.y - actor.lastPos.y) > 0.01;
+  private updateActor(actor: Actor, pos: Vec2, dt: number): void {
+    actor.moving = Math.hypot(pos.x - actor.lastPos.x, pos.y - actor.lastPos.y) > 0.01;
     actor.lastPos = pos;
-    actor.attackTime = Math.max(0, actor.attackTime - dt);
-    actor.hitTime = Math.max(0, actor.hitTime - dt);
-    if (moved) actor.walkTime += dt;
-
-    let col: number;
-    if (dead) col = Col.Dead;
-    else if (actor.attackTime > 0) col = Col.Attack;
-    else if (actor.hitTime > 0) col = Col.Hit;
-    else if (moved) col = Col.Walk + (Math.floor(actor.walkTime * WALK_FPS) % 4);
-    else col = Col.Walk;
-
-    const frame = directionRow(actor.facing) * FRAMES_PER_ROW + col;
+    actor.time += dt;
+    this.applyFrame(actor, dt);
     const screen = toScreen(pos);
-    for (const sprite of actor.sprites) {
-      sprite.setFrame(frame).setPosition(screen.x, screen.y).setDepth(screen.y);
-      if (actor.hitTime > 0) sprite.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
-      else sprite.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
+    actor.sprite.setPosition(screen.x, screen.y);
+    if (actor.oneShot?.anim !== 'death') actor.sprite.setDepth(screen.y);
+  }
+
+  private applyFrame(actor: Actor, dt: number): void {
+    const set = SPRITE_SETS[actor.set] ?? {};
+    let anim: AnimId = actor.moving ? 'run' : 'idle';
+    let col = 0;
+
+    const shot = actor.oneShot;
+    const shotDef = shot && set[shot.anim];
+    if (shot && shotDef) {
+      shot.elapsed += dt;
+      const index = Math.floor(shot.elapsed * shotDef.fps);
+      if (index < shotDef.frames || shot.anim === 'death') {
+        anim = shot.anim;
+        col = Math.min(index, shotDef.frames - 1);
+      } else {
+        actor.oneShot = undefined;
+      }
     }
+    const def = set[anim];
+    if (!def) return;
+    if (anim === 'run' || anim === 'idle') col = Math.floor(actor.time * def.fps) % def.frames;
+
+    const key = textureKey(actor.set, anim);
+    if (actor.sprite.texture.key !== key) actor.sprite.setTexture(key);
+    actor.sprite.setFrame(directionRow(actor.facing) * def.frames + col);
   }
 
   private updateCorpses(dt: number): void {
-    for (const corpse of this.corpses) {
-      corpse.ttl -= dt;
-      corpse.sprite.setAlpha(Math.min(1, corpse.ttl / 0.5));
-    }
     const alive: Corpse[] = [];
     for (const corpse of this.corpses) {
+      corpse.ttl -= dt;
+      corpse.actor.time += dt;
+      this.applyFrame(corpse.actor, dt);
+      corpse.actor.sprite.setAlpha(Math.min(1, corpse.ttl / 0.5));
       if (corpse.ttl > 0) alive.push(corpse);
-      else corpse.sprite.destroy();
+      else corpse.actor.sprite.destroy();
     }
     this.corpses = alive;
   }
@@ -288,7 +298,7 @@ export class IsoArenaScene extends Phaser.Scene {
         const a = dir - half + (2 * half * i) / segments;
         points.push(toScreen(vec(swing.origin.x + Math.cos(a) * swing.radius, swing.origin.y + Math.sin(a) * swing.radius)));
       }
-      g.fillStyle(swing.isSkill ? 0xff9a3c : 0xdde4ff, (swing.ttl / SWING_TTL) * 0.4);
+      g.fillStyle(swing.isSkill ? 0xff9a3c : 0xdde4ff, (swing.ttl / SWING_TTL) * 0.5);
       g.fillPoints(points.map((p) => new Phaser.Math.Vector2(p.x, p.y)), true);
     }
   }

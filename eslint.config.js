@@ -18,9 +18,9 @@ export default tseslint.config(
       ],
       'no-restricted-globals': [
         'error',
-        ...['window', 'document', 'localStorage', 'sessionStorage', 'performance', 'requestAnimationFrame', 'navigator'].map((name) => ({
+        ...['window', 'document', 'localStorage', 'sessionStorage', 'performance', 'requestAnimationFrame', 'navigator', 'process', 'Buffer'].map((name) => ({
           name,
-          message: 'core/ must not use browser globals.',
+          message: 'core/ must not use browser or Node globals.',
         })),
       ],
       'no-restricted-properties': [
