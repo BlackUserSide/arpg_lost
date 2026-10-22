@@ -5,7 +5,7 @@ import { profileRules } from '../data/profile';
 import { getApp } from './app';
 import { BODY_FONT } from './fonts';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
-import { CLASS_LOOKS, loadSprites, ORIGIN_Y, textureKey } from './sprites';
+import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
 const SUGGESTED_NAMES: Record<string, readonly string[]> = {
@@ -115,7 +115,7 @@ export class CreateCharacterScene extends Phaser.Scene {
       this.root.add(makeCard(this, panelX, y, rowW, rowH, isSelected, () => this.select(look.classId)));
       const left = panelX - rowW / 2;
       const portrait = this.add
-        .sprite(left + rowH * 0.5, y + rowH / 2 - 6, textureKey(look.sprite, 'idle'), 6 * 4)
+        .sprite(left + rowH * 0.5, y + rowH / 2 - 6, textureKey(look.sprite, 'idle'), spriteFrame(look.sprite, 'idle', 6, 0))
         .setOrigin(0.5, ORIGIN_Y)
         .setScale((rowH - 10) / 66);
       portrait.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
