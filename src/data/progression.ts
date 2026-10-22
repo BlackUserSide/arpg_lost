@@ -8,5 +8,7 @@ export const progression: ProgressionRules = {
   mobXpGrowth: 0.15,
   lowAreaPenalty: { startDiff: 2, multipliers: [0.8, 0.6, 0.4, 0.2], floor: 0.1 },
   mapClearBonus: 0.07,
-  perLevel: { life: 4, mana: 1 },
+  // No +resource per level (PROPOSAL): the resource sets each class's rhythm, and a flat +1/level stretched Energy
+  // bursts by +48% at level 20 but Mana by +19% and only the Rage bank. Resource growth comes from gear and passives.
+  perLevel: { life: 4 },
 };

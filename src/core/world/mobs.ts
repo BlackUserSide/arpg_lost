@@ -8,6 +8,7 @@ import { counterAttack } from './actions';
 import { heroDeathExplosions } from './deathExplosions';
 import { gainKillXp } from './experience';
 import { decayStunBar, tickIgnite } from './statuses';
+import { resourceOnHeroHitTaken } from './resource';
 import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
@@ -115,6 +116,7 @@ export function hitPlayer(ctx: Ctx, mobDef: MobDef, meleeAttacker?: MobState): v
     events.push({ type: 'playerDeath' });
     return;
   }
+  resourceOnHeroHitTaken(classDef, player, result.shieldLost + result.lifeLost);
   if (meleeAttacker) counterAttack(ctx, meleeAttacker);
 }
 

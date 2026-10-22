@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
-import { createWorld, distanceDamageMore, getClass, getMob, PLAYER_ID, setLoadoutModifiers, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { createWorld, distanceDamageMore, getClass, getMob, maxResource, PLAYER_ID, setLoadoutModifiers, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
 import { unspentPoints } from '../core/passives/allocation';
 import { equippedWeapon } from '../core/items/equipment';
 import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
@@ -14,6 +14,7 @@ import { passiveTree } from '../data/passives';
 import { getApp } from './app';
 import { CombatFx, STUN_BAR_FLASH, statusLook } from './combatFx';
 import { Hud } from './hud';
+import { resourceNames } from './resourceText';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
@@ -915,7 +916,10 @@ export class IsoArenaScene extends Phaser.Scene {
     return this.add.container(0, 0, [this.add.image(0, 0, key), outside]).setDepth(5000);
   }
 
-  /** Golden burst around the hero, a banner and a pulse on the XP bar. Life and mana are refilled by the core. */
+  /**
+   * Golden burst around the hero, a banner and a pulse on the XP bar. The core refills life (and the resource only
+   * when ResourceDef.refillOnLevelUp: Rage is kept); the banner says what was restored.
+   */
   private showLevelUp(level: number): void {
     this.hud.levelUp();
     this.cameras.main.flash(180, 255, 230, 160);
@@ -929,7 +933,11 @@ export class IsoArenaScene extends Phaser.Scene {
 
     const { width, height } = this.scale;
     const banner = heading(this, width / 2, height * 0.28, 'Level Up', 44).setOrigin(0.5);
-    const sub = label(this, width / 2, height * 0.28 + 38, `Level ${level}  ·  life and mana restored`, UI.size.body, UI.goldBrightText, true).setOrigin(0.5);
+    const classDef = getClass(this.content, this.classId);
+    // Blood Magic: no resource to restore (max 0).
+    const refills = classDef.resource.refillOnLevelUp && maxResource(classDef, this.world.player) > 0;
+    const restored = refills ? `life and ${resourceNames(classDef.resource.id).en.toLowerCase()} restored` : 'life restored';
+    const sub = label(this, width / 2, height * 0.28 + 38, `Level ${level}  ·  ${restored}`, UI.size.body, UI.goldBrightText, true).setOrigin(0.5);
     for (const t of [banner, sub]) {
       pinToScreen(t, 15000);
       t.setAlpha(0);

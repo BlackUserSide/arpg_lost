@@ -27,9 +27,9 @@ const SMALL = {
   speed: 0.04,
   movementSpeed: 0.03,
   cooldownRecovery: 0.04,
-  mana: 10,
+  resource: 10,
   lifeRegen: 0.6,
-  manaRegen: 1,
+  resourceRegen: 1,
 } as const;
 
 /** Point cost by node type. Spec node costs are in spec points. */
@@ -163,10 +163,10 @@ const wheel: PassiveNodeDef[] = [
   notable('m_n1', 'Архімаг', Mp('n1'), [dmg(0.16, 'spell'), inc('castSpeed', 0.06)]),
   small('m_b1', 'Подих зими', Mp('b1'), [dmg(SMALL.taggedDamage, 'cold')]),
   small('m_b2', 'Жар', Mp('b2'), [dmg(SMALL.taggedDamage, 'fire')]),
-  small('m_c1', 'Глибокий колодязь', Mp('c1'), [flat('mana', SMALL.mana)]),
+  small('m_c1', 'Глибокий колодязь', Mp('c1'), [flat('resource', SMALL.resource)]),
   small('m_c2', 'Розряд', Mp('c2'), [dmg(SMALL.taggedDamage, 'lightning')]),
-  small('m_d1', 'Ясна думка', Mp('d1'), [flat('manaRegen', SMALL.manaRegen)]),
-  notable('m_n2', 'Тиха течія', Mp('n2'), [inc('energyShield', 0.16), flat('energyShieldRegen', 2), flat('manaRegen', 1.5)]),
+  small('m_d1', 'Ясна думка', Mp('d1'), [flat('resourceRegen', SMALL.resourceRegen)]),
+  notable('m_n2', 'Тиха течія', Mp('n2'), [inc('energyShield', 0.16), flat('energyShieldRegen', 2), flat('resourceRegen', 1.5)]),
 
   // Mage + Warrior hybrid (6 nodes, 7 points)
   small('mw_1', 'Розмах', MWp(1), [dmg(SMALL.taggedDamage, 'area')]),
@@ -201,7 +201,7 @@ const wheel: PassiveNodeDef[] = [
   small('i_mw', 'Життєва сила', at(ANGLE.mw, R.inner), [inc('life', SMALL.life)]),
 
   // Keystones (dead ends off the inner ring)
-  keystone('k_blood', 'Кров замість мани', at(ANGLE.mw, R.keystone), { mechanics: [{ kind: 'bloodMagic', lifePerMana: 1 }], exclusiveGroup: LIFE_POOL_GROUP }),
+  keystone('k_blood', 'Кровова жертва', at(ANGLE.mw, R.keystone), { mechanics: [{ kind: 'bloodMagic', lifePerResource: 1 }], exclusiveGroup: LIFE_POOL_GROUP }),
   keystone('k_precise', 'Точна рука', at(ANGLE.wr, R.keystone), { mechanics: [{ kind: 'alwaysCrit', critMultiplier: 1.3 }] }),
   keystone('k_crystal', 'Кришталевий панцир', at(ANGLE.rm, R.keystone), {
     mechanics: [{ kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true }],
@@ -313,7 +313,7 @@ const specDefs: SpecSpec[] = [
     side: 1,
     nodes: {
       entry: { name: 'Жага бою', modifiers: [dmg(0.15, 'melee'), inc('attackSpeed', 0.05)] },
-      key: { name: 'Лють', mechanics: [{ kind: 'moreDamagePerMissingLife', perMissingLife: 0.6, max: 0.45 }] },
+      key: { name: 'Безумство', mechanics: [{ kind: 'moreDamagePerMissingLife', perMissingLife: 0.6, max: 0.45 }] },
       a1: { name: 'Товста шкура', modifiers: [inc('life', 0.1), flat('lifeRegen', 1)] },
       a2: {
         name: 'Невгамовність',
@@ -479,7 +479,7 @@ const specDefs: SpecSpec[] = [
           },
         ],
       },
-      c1: { name: 'Іній', modifiers: [flat('mana', 15), flat('manaRegen', 1)] },
+      c1: { name: 'Іній', modifiers: [flat('resource', 15), flat('resourceRegen', 1)] },
     },
   },
 ];

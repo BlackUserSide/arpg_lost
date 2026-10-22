@@ -4,13 +4,25 @@ import { areaXpMultiplier, grantXp, levelModifiers, mobXp, type ProgressionRules
 import type { Modifier } from '../stats/types';
 import type { ClassDef, Content } from './content';
 import { syncCharges } from './charges';
+import { levelUpResource, spawnResource } from './resource';
 import { leechStats, lifeRecoveryPool } from './passiveEffects';
 import { deriveFromMechanics, getClass, playerStat, type Ctx, type PlayerState, type WorldState } from './state';
 
-export function refillPools(classDef: ClassDef, player: PlayerState): void {
+function refillLifePools(classDef: ClassDef, player: PlayerState): void {
   player.life = playerStat(classDef, player, 'life');
   player.energyShield = playerStat(classDef, player, 'energyShield');
-  player.mana = playerStat(classDef, player, 'mana');
+}
+
+/** Run start: full life and shield; the class resource starts at its startFraction (Rage empty). */
+export function spawnPools(classDef: ClassDef, player: PlayerState): void {
+  refillLifePools(classDef, player);
+  player.resource = spawnResource(classDef, player);
+}
+
+/** Level-up: full life and shield; the resource refills or keeps its amount (ResourceDef.refillOnLevelUp). */
+function levelUpPools(classDef: ClassDef, player: PlayerState): void {
+  refillLifePools(classDef, player);
+  player.resource = levelUpResource(classDef, player);
 }
 
 /** Permanent modifiers = loadout (gear, passives) + level stats. */
@@ -19,7 +31,7 @@ function rebuildModifiers(player: PlayerState, rules: ProgressionRules): void {
   player.modifiers = [...player.gearModifiers, ...player.levelModifiers];
 }
 
-type Pool = 'life' | 'energyShield' | 'mana';
+type Pool = 'life' | 'energyShield';
 
 /** Current fill of each pool as a fraction of its max, taken before a loadout / mechanic change. */
 interface PoolSnapshot {
@@ -29,7 +41,7 @@ interface PoolSnapshot {
   /** Under lifeToEnergyShield: (ES + life) / (maxES + maxLife); otherwise the life fraction. */
   readonly survivalFraction: number;
   readonly energyShield: number;
-  readonly mana: number;
+  readonly resource: number;
 }
 
 /** Fraction of a pool; a pool with max 0 counts as `ifEmpty` (it starts there and regenerates). */
@@ -41,7 +53,7 @@ function snapshotPools(classDef: ClassDef, player: PlayerState): PoolSnapshot {
   const main = lifeRecoveryPool(player.mechanics);
   const maxLife = playerStat(classDef, player, 'life');
   const maxShield = playerStat(classDef, player, 'energyShield');
-  const maxMana = playerStat(classDef, player, 'mana');
+  const maxResource = playerStat(classDef, player, 'resource');
   const lifeFraction = fraction(player.life, maxLife, 1);
   return {
     main,
@@ -49,7 +61,7 @@ function snapshotPools(classDef: ClassDef, player: PlayerState): PoolSnapshot {
     mainFraction: main === 'life' ? lifeFraction : fraction(player.energyShield, maxShield, 1),
     survivalFraction: main === 'life' ? lifeFraction : fraction(player.energyShield + player.life, maxShield + maxLife, 1),
     energyShield: fraction(player.energyShield, maxShield, 0),
-    mana: fraction(player.mana, maxMana, 0),
+    resource: fraction(player.resource, maxResource, 0),
   };
 }
 
@@ -60,13 +72,14 @@ function snapshotPools(classDef: ClassDef, player: PlayerState): PoolSnapshot {
  * - Leaving lifeToEnergyShield, the fixed life counts as part of the old pool: (ES + life) / (maxES + maxLife).
  *   Otherwise a hero alive at 0 ES / 1 life would get 0 life without dying.
  * - Under lifeToEnergyShield life is always at its fixed max.
- * - Secondary ES (no lifeToEnergyShield) and mana keep their own fractions. A pool whose old max was 0
- *   (no ES before; mana under bloodMagic) starts at 0 and regenerates, so a swap never refills a pool.
+ * - Secondary ES (no lifeToEnergyShield) and the class resource keep their own fractions (Rage too; designer decision
+ *   2026-10-22). A pool whose old max was 0
+ *   (no ES before; resource under bloodMagic) starts at 0 and regenerates, so a swap never refills a pool.
  */
 function restorePools(classDef: ClassDef, player: PlayerState, before: PoolSnapshot): void {
   const maxLife = playerStat(classDef, player, 'life');
   const maxShield = playerStat(classDef, player, 'energyShield');
-  const maxMana = playerStat(classDef, player, 'mana');
+  const maxResource = playerStat(classDef, player, 'resource');
   if (lifeRecoveryPool(player.mechanics) === 'energyShield') {
     player.life = maxLife;
     player.energyShield = before.mainFraction * maxShield;
@@ -74,10 +87,10 @@ function restorePools(classDef: ClassDef, player: PlayerState, before: PoolSnaps
     player.life = before.survivalFraction * maxLife;
     player.energyShield = before.energyShield * maxShield;
   }
-  player.mana = before.mana * maxMana;
+  player.resource = before.resource * maxResource;
 }
 
-/** Grants XP for a kill; each level-up rebuilds level stats and fully restores life, shield and mana. */
+/** Grants XP for a kill; each level-up rebuilds level stats, fully restores life and shield and applies the resource level-up rule. */
 export function gainKillXp(ctx: Ctx, baseXp: number): void {
   const { world, content, classDef, events } = ctx;
   const player = world.player;
@@ -87,15 +100,15 @@ export function gainKillXp(ctx: Ctx, baseXp: number): void {
   world.xpGained += amount;
   if (grantXp(player, amount, rules) === 0) return;
   rebuildModifiers(player, rules);
-  refillPools(classDef, player);
+  levelUpPools(classDef, player);
   events.push({ type: 'levelUp', level: player.level });
 }
 
 /**
  * Replaces the loadout mid-run (e.g. passives allocated while the tree is open in combat).
  * `mechanics` (passive tree mechanics, see heroMechanics) are replaced only when given.
- * Life / shield / mana keep their fill fractions of the new maximums (see restorePools); this never refills.
- * Level-ups do not go through here: they fully restore the pools (gainKillXp, docs/design/progression.md).
+ * Life / shield / resource keep their fill fractions of the new maximums (see restorePools); this never refills.
+ * Level-ups do not go through here: they restore the pools (levelUpPools) (gainKillXp, docs/design/progression.md).
  */
 export function setLoadoutModifiers(
   world: WorldState,
@@ -160,12 +173,4 @@ export function decayLeech(classDef: ClassDef, player: PlayerState, dt: number):
   const leech = leechStats(player.mechanics);
   const cap = leech ? leechCap(classDef, player, leech.maxPerSecond) : Infinity;
   player.leechRecent = cap === Infinity ? 0 : Math.max(0, player.leechRecent - cap * dt);
-}
-
-/** Restores mana (mana potions). Does nothing under bloodMagic (max mana is 0). Returns the amount restored. */
-export function recoverMana(classDef: ClassDef, player: PlayerState, amount: number): number {
-  if (player.dead || amount <= 0) return 0;
-  const before = player.mana;
-  player.mana = clamp(before + amount, 0, Math.max(before, playerStat(classDef, player, 'mana')));
-  return player.mana - before;
 }

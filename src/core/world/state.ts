@@ -43,7 +43,20 @@ export interface PlayerState {
   radius: number;
   life: number;
   energyShield: number;
-  mana: number;
+  /**
+   * Current class resource (ClassDef.resource: Rage / Energy / Mana); max = playerStat(…, 'resource').
+   * Skills spend it (resourceCost), or life under bloodMagic.
+   */
+  resource: number;
+  /**
+   * Seconds since the hero last dealt or took a hit (resource decay delay, ResourceDef.decay).
+   * Direct damage hits count both ways; ignite ticks and death explosions do not. Starts at the decay delay
+   * (out of combat, see spawnCombatIdle) and never grows past it (combatIdleCap); inCombat() tells whether the hero
+   * is in combat.
+   */
+  combatIdle: number;
+  /** Hits that granted resource during the current use of a counting action (ResourceHitGain.maxHitsPerUse). */
+  resourceHits: number;
   /** Time until the next basic attack or skill can start. */
   actionTimer: number;
   /**

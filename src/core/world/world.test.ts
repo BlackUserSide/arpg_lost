@@ -29,20 +29,20 @@ const shooter: MobDef = {
 const strike: ActionDef = {
   id: 'strike',
   tags: ['attack', 'melee'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'arc', radius: 50, angleDeg: 90, maxTargets: 1 },
 };
 
-const skill = (def: Omit<ActionDef, 'manaCost' | 'cooldown' | 'tags'> & Partial<ActionDef>): ActionDef => ({
-  manaCost: 0,
+const skill = (def: Omit<ActionDef, 'resourceCost' | 'cooldown' | 'tags'> & Partial<ActionDef>): ActionDef => ({
+  resourceCost: 0,
   cooldown: 0,
   tags: [],
   ...def,
 });
 
-const sweep = skill({ id: 'sweep', tags: ['attack', 'melee', 'area'], manaCost: 8, damage: { source: 'weapon', effectiveness: 1 }, delivery: { kind: 'arc', radius: 50, angleDeg: 180 } });
+const sweep = skill({ id: 'sweep', tags: ['attack', 'melee', 'area'], resourceCost: 8, damage: { source: 'weapon', effectiveness: 1 }, delivery: { kind: 'arc', radius: 50, angleDeg: 180 } });
 const slam = skill({ id: 'slam', tags: ['attack', 'area'], cooldown: 5, damage: { source: 'weapon', effectiveness: 2 }, delivery: { kind: 'arc', radius: 50, angleDeg: 360 } });
 
 function hero(skills: ActionDef[], baseStats: ClassDef['baseStats'] = {}): ClassDef {
@@ -50,7 +50,8 @@ function hero(skills: ActionDef[], baseStats: ClassDef['baseStats'] = {}): Class
     id: 'hero',
     radius: 10,
     weaponType: 'sword',
-    baseStats: { life: 50, mana: 20, manaRegen: 0, movementSpeed: 100, ...baseStats },
+    baseStats: { life: 50, resource: 20, resourceRegen: 0, movementSpeed: 100, ...baseStats },
+    resource: { id: 'mana', startFraction: 1, refillOnLevelUp: true },
     weapon: { damage: { physical: { min: 10, max: 10 } }, attacksPerSecond: 2, critChance: 0 },
     basicAttack: strike,
     skills,
@@ -114,7 +115,7 @@ describe('world: player basics', () => {
     expect(behind.life).toBe(100);
   });
 
-  it('area skill hits everything in the arc and spends mana', () => {
+  it('area skill hits everything in the arc and spends resource', () => {
     const content = makeContent();
     const world = createWorld(content, 'hero', 1);
     const a = addMob(world, 530, 500);
@@ -124,13 +125,13 @@ describe('world: player basics', () => {
     expect(a.life).toBe(90);
     expect(b.life).toBe(90);
     expect(behind.life).toBe(100);
-    expect(world.player.mana).toBe(12);
+    expect(world.player.resource).toBe(12);
   });
 
   it('falls back to basic attack when the skill is unaffordable', () => {
     const content = makeContent();
     const world = createWorld(content, 'hero', 1);
-    world.player.mana = 0;
+    world.player.resource = 0;
     const mob = addMob(world, 530, 500);
     const events = step(world, { ...idle, basicAttack: true, skills: [true] }, content, DT);
     expect(events.find((e) => e.type === 'action')).toMatchObject({ actionId: 'strike' });

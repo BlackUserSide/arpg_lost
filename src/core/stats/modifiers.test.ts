@@ -21,7 +21,7 @@ describe('computeStat', () => {
 
   it('ignores modifiers of other stats', () => {
     const mods: Modifier[] = [{ stat: 'life', kind: 'flat', value: 100 }];
-    expect(computeStat(10, mods, 'mana')).toBe(10);
+    expect(computeStat(10, mods, 'resource')).toBe(10);
   });
 
   it('applies tagged modifiers only when context has all their tags', () => {

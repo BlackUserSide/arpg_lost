@@ -3,9 +3,10 @@ import { xpToNextLevel, type ProgressionRules } from '../core/progression/levels
 import type { ActionDef, ClassDef } from '../core/world/content';
 import { actionCost, canAfford, chargeInfo, lifeRecoveryPool, playerStat, type ActionSet, type WorldState } from '../core/world/world';
 import { skillIcon } from './hudIcons';
+import { resourceNames } from './resourceText';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
-// In-run HUD: Diablo-style life/mana orbs, skill bar with cooldown shutters, XP bar, run info, buffs.
+// In-run HUD: Diablo-style life / class-resource orbs, skill bar with cooldown shutters, XP bar, run info, buffs.
 // Render-only: reads world state every frame.
 
 const DEPTH = 10000;
@@ -13,6 +14,31 @@ const SLOT_KEYS = ['LMB', 'RMB', 'Q', 'E'];
 /** Energy shield colours, used when the shield fills the life orb. */
 const SHIELD_DEEP = 0x1d4f7a;
 const SHIELD_BRIGHT = 0x9fd8ff;
+
+/** Look of the resource orb per ClassDef.resource.id (visual only). */
+interface ResourceLook {
+  /** Liquid body. */
+  readonly deep: number;
+  /** Liquid surface and glow. */
+  readonly bright: number;
+  /** Name caption colour. */
+  readonly text: string;
+  /** Tint of a skill icon the hero cannot afford. */
+  readonly unaffordable: number;
+}
+
+const RESOURCE_LOOKS: Readonly<Record<string, ResourceLook>> = {
+  // Burnt orange / amber: hot, but clearly apart from the crimson life orb.
+  rage: { deep: 0x7a3206, bright: 0xffa230, text: '#ffb45a', unaffordable: 0xb8845a },
+  energy: { deep: 0x5a6a08, bright: 0xe2f04a, text: '#e6f07a', unaffordable: 0xa8b46a },
+  mana: { deep: 0x0d1f6a, bright: 0x3a72e0, text: '#8fb3ff', unaffordable: 0x6a7ab8 },
+};
+/** Unknown resource ids (a future class without a look yet): neutral violet. */
+const FALLBACK_LOOK: ResourceLook = { deep: 0x3a1a5a, bright: 0xa070e0, text: '#c8a8f0', unaffordable: 0x8a6ab8 };
+/** Seconds the resource orb glows after a gain (Rage from hits). */
+const GAIN_GLOW = 0.35;
+/** Smallest jump (resource points) that counts as a gain for the glow. */
+const GAIN_GLOW_MIN = 0.5;
 
 interface Orb {
   ring: Phaser.GameObjects.Image;
@@ -99,7 +125,15 @@ export class Hud {
   private xpRect = { x: 0, y: 0, w: 0, h: 0 };
   private levelPulse = 0;
   private readonly life: Orb;
-  private readonly mana: Orb;
+  private readonly resource: Orb;
+  private readonly resourceLook: ResourceLook;
+  /** Resource name above its orb ("Rage"). */
+  private readonly resourceName: Phaser.GameObjects.Text;
+  /** Resource last frame, to glow on gains; NaN before the first frame. */
+  private lastResource = Number.NaN;
+  private resourceGlow = 0;
+  /** Whether the resource number is drawn in the "empty" colour. */
+  private resourceEmptyShown = false;
   private readonly slots: Slot[];
   private readonly info: Phaser.GameObjects.Text;
   private infoFrame: Phaser.GameObjects.Image;
@@ -109,8 +143,8 @@ export class Hud {
   private costsFor: unknown;
   /** Action set the slots were bound to (the world replaces it when the loadout changes). */
   private actionsFor: ActionSet | undefined;
-  /** Caption on the mana orb when skills cost life instead (max mana 0). */
-  private readonly manaNote: Phaser.GameObjects.Text;
+  /** Caption on the resource orb when skills cost life instead (max resource 0). */
+  private readonly resourceNote: Phaser.GameObjects.Text;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -123,7 +157,13 @@ export class Hud {
     this.levelText = label(scene, 0, 0, '', 15, UI.goldBrightText, true).setOrigin(1, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
     this.levelText.setStroke('#000', 4);
     this.life = this.createOrb(0x6a0d0d, 0xd23a2a);
-    this.mana = this.createOrb(0x0d1f6a, 0x3a72e0);
+    this.resourceLook = RESOURCE_LOOKS[classDef.resource.id] ?? FALLBACK_LOOK;
+    this.resource = this.createOrb(this.resourceLook.deep, this.resourceLook.bright);
+    this.resourceName = label(scene, 0, 0, resourceNames(classDef.resource.id).en.toUpperCase(), 12, this.resourceLook.text, true)
+      .setOrigin(0.5, 1)
+      .setScrollFactor(0)
+      .setDepth(DEPTH + 2);
+    this.resourceName.setStroke('#000', 3).setLetterSpacing(1);
     this.slots = [classDef.basicAttack, ...classDef.skills].map((action, i) => {
       const frame = makeFrame(scene, 0, 0, 56, 56, 'secondary').setScrollFactor(0).setDepth(DEPTH);
       const icon = scene.add.image(0, 0, skillIcon(scene, action.id)).setScrollFactor(0).setDepth(DEPTH + 1);
@@ -140,8 +180,8 @@ export class Hud {
     });
     this.infoFrame = makeFrame(scene, 0, 0, 240, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
     this.info = label(scene, 0, 0, '', 15, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
-    this.manaNote = label(scene, 0, 0, 'скіли за\nжиття', 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
-    this.manaNote.setStroke('#000', 3);
+    this.resourceNote = label(scene, 0, 0, 'скіли за\nжиття', 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
+    this.resourceNote.setStroke('#000', 3);
   }
 
   layout(width: number, height: number): void {
@@ -149,7 +189,9 @@ export class Hud {
     const r = compact ? 38 : 54;
     const margin = compact ? 12 : 22;
     this.placeOrb(this.life, margin + r + 6, height - margin - r - 6, r);
-    this.placeOrb(this.mana, width - margin - r - 6, height - margin - r - 6, r);
+    this.placeOrb(this.resource, width - margin - r - 6, height - margin - r - 6, r);
+    // Name just above the orb's metal ring.
+    this.resourceName.setPosition(this.resource.x, this.resource.y - r - (compact ? 8 : 10)).setFontSize(compact ? 11 : 12);
 
     const size = compact ? 48 : 60;
     const gap = compact ? 6 : 10;
@@ -170,7 +212,7 @@ export class Hud {
       slot.chargeBadge.setPosition(bx, by).setRadius(br);
       slot.chargeText.setPosition(bx, by).setFontSize(compact ? 12 : 14);
     });
-    this.manaNote.setPosition(this.mana.x, this.mana.y);
+    this.resourceNote.setPosition(this.resource.x, this.resource.y);
     // XP bar spans the skill bar, just above it; level number to its left.
     const barH = compact ? 6 : 8;
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - size - (compact ? 10 : 14) - barH, w: total, h: barH };
@@ -186,7 +228,7 @@ export class Hud {
     this.time += dt;
     const p = world.player;
     const maxLife = playerStat(this.classDef, p, 'life');
-    const maxMana = playerStat(this.classDef, p, 'mana');
+    const maxResource = playerStat(this.classDef, p, 'resource');
     const maxShield = playerStat(this.classDef, p, 'energyShield');
 
     const g = this.liquid.clear();
@@ -194,13 +236,20 @@ export class Hud {
     const shieldIsPool = lifeRecoveryPool(p.mechanics) === 'energyShield' && maxShield > 0;
     if (shieldIsPool) this.drawOrb(g, this.life, p.energyShield / maxShield, SHIELD_DEEP, SHIELD_BRIGHT);
     else this.drawOrb(g, this.life, maxLife > 0 ? p.life / maxLife : 0);
-    // Blood Magic: no mana at all; the orb greys out and says skills cost life.
-    const noMana = maxMana <= 0;
-    if (noMana) g.fillStyle(0x1a1719, 1).fillCircle(this.mana.x, this.mana.y, this.mana.r);
-    else this.drawOrb(g, this.mana, p.mana / maxMana);
-    this.mana.ring.setAlpha(noMana ? 0.45 : 1);
-    this.mana.text.setVisible(!noMana);
-    this.manaNote.setVisible(noMana);
+    // Blood Magic: no resource at all; the orb greys out and says skills cost life.
+    const noResource = maxResource <= 0;
+    // Glow on discrete gains (Rage per hit, potions), not on steady regeneration: the jump must beat a generous
+    // regen allowance (a frame can cover a couple of fixed core steps).
+    const regenAllowance = playerStat(this.classDef, p, 'resourceRegen') * Math.max(dt, 1 / 30) * 2 + GAIN_GLOW_MIN;
+    if (p.resource - this.lastResource > regenAllowance) this.resourceGlow = GAIN_GLOW;
+    this.lastResource = p.resource;
+    this.resourceGlow = Math.max(0, this.resourceGlow - dt);
+    if (noResource) g.fillStyle(0x1a1719, 1).fillCircle(this.resource.x, this.resource.y, this.resource.r);
+    else this.drawResourceOrb(g, p.resource / maxResource);
+    this.resource.ring.setAlpha(noResource ? 0.45 : 1);
+    this.resource.text.setVisible(!noResource);
+    this.resourceName.setAlpha(noResource ? 0.4 : 1);
+    this.resourceNote.setVisible(noResource);
     if (!shieldIsPool && maxShield > 0 && p.energyShield > 0) {
       // Energy shield: a pale arc hugging the life orb.
       g.lineStyle(5, 0x9fd8ff, 0.95);
@@ -209,7 +258,7 @@ export class Hud {
       g.strokePath();
     }
     this.life.text.setText(shieldIsPool ? `${Math.ceil(p.energyShield)}` : `${Math.ceil(p.life)}`);
-    this.mana.text.setText(`${Math.floor(p.mana)}`);
+    this.resource.text.setText(`${Math.floor(p.resource)}`);
 
     if (this.actionsFor !== p.actions) {
       // Effective skills (cooldowns etc. after passives) are resolved by core; slot order = class order.
@@ -224,7 +273,7 @@ export class Hud {
       // Prices only change with the hero's mechanics, not every frame.
       this.costsFor = p.mechanics;
       for (const slot of this.slots) {
-        const cost = actionCost(p.mechanics, slot.action.manaCost);
+        const cost = actionCost(p.mechanics, slot.action.resourceCost);
         slot.lifeCost = cost.pool === 'life';
         slot.costText.setText(slot.lifeCost && cost.amount > 0 ? `♥${Math.round(cost.amount)}` : '');
       }
@@ -238,7 +287,7 @@ export class Hud {
       const blocked = multi ? info.charges <= 0 : cd > 0.05;
       const unaffordable = !canAfford(p, slot.action);
       slot.icon.setAlpha(blocked || unaffordable ? 0.45 : 1);
-      if (unaffordable) slot.icon.setTint(slot.lifeCost ? 0xb86a6a : 0x6a7ab8);
+      if (unaffordable) slot.icon.setTint(slot.lifeCost ? 0xb86a6a : this.resourceLook.unaffordable);
       else slot.icon.clearTint();
       const shown = multi ? info.charges : -1;
       if (shown !== slot.shownCharges) {
@@ -323,6 +372,32 @@ export class Hud {
     orb.r = r;
     orb.ring.setTexture(orbRingTexture(this.scene, r)).setPosition(x, y);
     orb.text.setPosition(x, y + r * 0.15).setFontSize(r > 45 ? 18 : 14);
+  }
+
+  /**
+   * The resource orb. An empty pool (Rage at run start) reads as an empty vessel, not a broken one: a faint tint of
+   * the resource colour on the glass and a dim rim; a gain makes the orb glow briefly.
+   */
+  private drawResourceOrb(g: Phaser.GameObjects.Graphics, frac: number): void {
+    const orb = this.resource;
+    const look = this.resourceLook;
+    this.drawOrb(g, orb, frac);
+    if (frac < 1) {
+      // Tinted empty glass above the liquid line.
+      g.fillStyle(look.deep, 0.22).fillCircle(orb.x, orb.y, orb.r);
+      g.lineStyle(2, look.bright, 0.4).strokeCircle(orb.x, orb.y, orb.r - 3);
+    }
+    const empty = frac <= 0;
+    if (empty !== this.resourceEmptyShown) {
+      // Only on change: setColor re-renders the text texture.
+      this.resourceEmptyShown = empty;
+      orb.text.setColor(empty ? look.text : UI.text);
+    }
+    if (this.resourceGlow > 0) {
+      const a = this.resourceGlow / GAIN_GLOW;
+      g.lineStyle(4, look.bright, 0.9 * a).strokeCircle(orb.x, orb.y, orb.r - 2);
+      g.fillStyle(look.bright, 0.2 * a).fillCircle(orb.x, orb.y, orb.r);
+    }
   }
 
   /** Liquid filled up to `frac`, with a gently moving surface. Colours default to the orb's own. */

@@ -30,15 +30,41 @@ describe('data validation', () => {
     for (const cls of Object.values(content.classes)) {
       expect(cls.weapon.attacksPerSecond).toBeGreaterThan(0);
       for (const range of Object.values(cls.weapon.damage)) expect(range.min).toBeLessThanOrEqual(range.max);
-      expect(cls.basicAttack.manaCost).toBe(0);
+      expect(cls.basicAttack.resourceCost).toBe(0);
       expect(cls.basicAttack.cooldown).toBe(0);
       expect(cls.basicAttack.tags).toContain('attack');
     }
   });
 
+  it('class resources are sane and every skill is affordable from the base pool', () => {
+    const ids = new Set<string>();
+    for (const cls of Object.values(content.classes)) {
+      const r = cls.resource;
+      const max = cls.baseStats.resource ?? 0;
+      expect(ids.has(r.id)).toBe(false);
+      ids.add(r.id);
+      expect(max).toBeGreaterThan(0);
+      expect(cls.baseStats.resourceRegen ?? 0).toBeGreaterThanOrEqual(0);
+      expect(r.startFraction).toBeGreaterThanOrEqual(0);
+      expect(r.startFraction).toBeLessThanOrEqual(1);
+      for (const skill of cls.skills) expect(skill.resourceCost, `${cls.id}/${skill.id}`).toBeLessThanOrEqual(max);
+      if (r.onHit) {
+        expect(r.onHit.amount).toBeGreaterThan(0);
+        expect(r.onHit.maxHitsPerUse).toBeGreaterThanOrEqual(1);
+      }
+      if (r.onDamageTaken) expect(r.onDamageTaken.perPoolFraction).toBeGreaterThan(0);
+      if (r.decay) {
+        expect(r.decay.delay).toBeGreaterThanOrEqual(0);
+        expect(r.decay.perSecond).toBeGreaterThan(0);
+      }
+      // A class without regeneration must have a way to gain its resource, or its skills are unusable.
+      if ((cls.baseStats.resourceRegen ?? 0) <= 0) expect(r.onHit ?? r.onDamageTaken).toBeDefined();
+    }
+  });
+
   it('actions are consistent', () => {
     for (const action of allActions()) {
-      expect(action.manaCost).toBeGreaterThanOrEqual(0);
+      expect(action.resourceCost).toBeGreaterThanOrEqual(0);
       expect(action.cooldown).toBeGreaterThanOrEqual(0);
       // Non-attacks need an explicit use time; attacks use weapon speed.
       if (!action.tags.includes('attack')) expect(action.castTime).toBeDefined();

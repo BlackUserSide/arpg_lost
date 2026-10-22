@@ -53,8 +53,10 @@ const affixList: AffixDef[] = [
   affix('crit_chance', 'suffix', ['weapon', 'amulet', 'ring'], 500, { stat: 'critChance', kind: 'increased' }, pct([0.1, 0.19], [0.2, 0.29], [0.3, 0.39], [0.4, 0.49], [0.5, 0.6])),
   affix('crit_multiplier', 'suffix', ['weapon', 'amulet'], 400, { stat: 'critMultiplier', kind: 'flat' }, pct([0.1, 0.14], [0.15, 0.19], [0.2, 0.24], [0.25, 0.29], [0.3, 0.35])),
   affix('life_regen', 'suffix', ['armour', 'amulet', 'ring'], 500, { stat: 'lifeRegen', kind: 'flat' }, dec([0.5, 1], [1.1, 2], [2.1, 3], [3.1, 4.5], [4.6, 6])),
-  affix('mana_regen', 'suffix', ['helmet', 'amulet', 'ring'], 500, { stat: 'manaRegen', kind: 'flat' }, dec([0.5, 1], [1.1, 2], [2.1, 3], [3.1, 4.5], [4.6, 6])),
-  affix('mana_flat', 'suffix', ['helmet', 'ring', 'amulet'], 500, { stat: 'mana', kind: 'flat' }, int([5, 9], [10, 15], [16, 22], [23, 30], [31, 40])),
+  // PROPOSAL: resource regen tiers ×0.6 of life regen: 4 stacked best rolls at ilvl 20 (+10/s) made every class's skills free
+  // (sustain 94-100%, tools/sim/resource.sim.ts); now +6/s.
+  affix('resource_regen', 'suffix', ['helmet', 'amulet', 'ring'], 500, { stat: 'resourceRegen', kind: 'flat' }, dec([0.3, 0.6], [0.7, 1.2], [1.3, 1.8], [1.9, 2.7], [2.8, 3.6])),
+  affix('resource_flat', 'suffix', ['helmet', 'ring', 'amulet'], 500, { stat: 'resource', kind: 'flat' }, int([5, 9], [10, 15], [16, 22], [23, 30], [31, 40])),
   affix('cooldown_recovery', 'suffix', ['helmet', 'amulet', 'gloves'], 400, { stat: 'cooldownRecovery', kind: 'increased' }, pct([0.04, 0.06], [0.07, 0.09], [0.1, 0.12], [0.13, 0.15], [0.16, 0.18])),
 ];
 
@@ -72,13 +74,13 @@ const baseList: BaseDef[] = [
   { id: 'bone_wand', name: 'Bone Wand', slot: 'weapon', level: 10, weapon: { type: 'wand', damage: { lightning: { min: 6, max: 13 } }, attacksPerSecond: 1.5, critChance: 0.07 }, implicit: { stat: 'damage', kind: 'increased', tags: ['spell'], range: range(0.1, 0.14, 0.01) } },
   { id: 'runed_wand', name: 'Runed Wand', slot: 'weapon', level: 20, weapon: { type: 'wand', damage: { lightning: { min: 9, max: 18 } }, attacksPerSecond: 1.45, critChance: 0.07 }, implicit: { stat: 'damage', kind: 'increased', tags: ['spell'], range: range(0.14, 0.18, 0.01) } },
 
-  // Helmets: armour / energy shield / hybrid; implicit +mana.
-  { id: 'iron_cap', name: 'Iron Cap', slot: 'helmet', level: 1, armour: range(8, 12), implicit: { stat: 'mana', kind: 'flat', range: range(5, 8) } },
-  { id: 'hood', name: 'Hood', slot: 'helmet', level: 1, energyShield: range(6, 9), implicit: { stat: 'mana', kind: 'flat', range: range(5, 8) } },
-  { id: 'leather_helm', name: 'Leather Helm', slot: 'helmet', level: 1, armour: range(4, 6), energyShield: range(3, 5), implicit: { stat: 'mana', kind: 'flat', range: range(5, 8) } },
-  { id: 'great_helm', name: 'Great Helm', slot: 'helmet', level: 15, armour: range(25, 35), implicit: { stat: 'mana', kind: 'flat', range: range(9, 14) } },
-  { id: 'sage_hood', name: 'Sage Hood', slot: 'helmet', level: 15, energyShield: range(18, 26), implicit: { stat: 'mana', kind: 'flat', range: range(9, 14) } },
-  { id: 'warded_helm', name: 'Warded Helm', slot: 'helmet', level: 15, armour: range(12, 18), energyShield: range(9, 13), implicit: { stat: 'mana', kind: 'flat', range: range(9, 14) } },
+  // Helmets: armour / energy shield / hybrid; implicit +resource (max of the class resource).
+  { id: 'iron_cap', name: 'Iron Cap', slot: 'helmet', level: 1, armour: range(8, 12), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
+  { id: 'hood', name: 'Hood', slot: 'helmet', level: 1, energyShield: range(6, 9), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
+  { id: 'leather_helm', name: 'Leather Helm', slot: 'helmet', level: 1, armour: range(4, 6), energyShield: range(3, 5), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
+  { id: 'great_helm', name: 'Great Helm', slot: 'helmet', level: 15, armour: range(25, 35), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
+  { id: 'sage_hood', name: 'Sage Hood', slot: 'helmet', level: 15, energyShield: range(18, 26), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
+  { id: 'warded_helm', name: 'Warded Helm', slot: 'helmet', level: 15, armour: range(12, 18), energyShield: range(9, 13), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
 
   // Body armour; implicit +life.
   { id: 'chainmail', name: 'Chainmail', slot: 'armour', level: 1, armour: range(20, 30), implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
@@ -111,7 +113,7 @@ const baseList: BaseDef[] = [
   { id: 'topaz_ring', name: 'Topaz Ring', slot: 'ring', level: 1, implicit: { stat: 'lightningResistance', kind: 'flat', range: range(0.08, 0.12, 0.01) } },
   { id: 'amber_amulet', name: 'Amber Amulet', slot: 'amulet', level: 1, implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
   { id: 'jade_amulet', name: 'Jade Amulet', slot: 'amulet', level: 1, implicit: { stat: 'lifeRegen', kind: 'flat', range: range(0.5, 1, 0.1) } },
-  { id: 'lapis_amulet', name: 'Lapis Amulet', slot: 'amulet', level: 1, implicit: { stat: 'mana', kind: 'flat', range: range(10, 15) } },
+  { id: 'lapis_amulet', name: 'Lapis Amulet', slot: 'amulet', level: 1, implicit: { stat: 'resource', kind: 'flat', range: range(10, 15) } },
 ];
 
 const rules: LootRules = {

@@ -15,6 +15,7 @@ import { passiveTree } from '../data/passives';
 import { getApp, type App } from './app';
 import { itemIcon } from './itemIcons';
 import { describeItem } from './itemText';
+import { resourceNames } from './resourceText';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
@@ -48,7 +49,7 @@ const ERRORS: Record<InventoryError, string> = {
 const STAT_ROWS: ReadonlyArray<[StatId, string, 'int' | 'pct' | 'dec']> = [
   ['life', 'Life', 'int'],
   ['energyShield', 'Energy Shield', 'int'],
-  ['mana', 'Mana', 'int'],
+  ['resource', 'Resource', 'int'], // shown with the class's own resource name
   ['armour', 'Armour', 'int'],
   ['fireResistance', 'Fire Res', 'pct'],
   ['coldResistance', 'Cold Res', 'pct'],
@@ -236,7 +237,10 @@ export class InventoryScene extends Phaser.Scene {
     const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
     this.root.add(heading(this, x, y, 'Attributes', 18));
     const fmt = (v: number, kind: 'int' | 'pct' | 'dec'): string => (kind === 'pct' ? `${Math.round(v * 100)}%` : kind === 'dec' ? (Math.round(v * 10) / 10).toFixed(1) : String(Math.round(v)));
-    const rows: Array<[string, string]> = STAT_ROWS.map(([stat, name, kind]) => [name, fmt(deriveStat(source, stat), kind)]);
+    const rows: Array<[string, string]> = STAT_ROWS.map(([stat, name, kind]) => [
+      stat === 'resource' ? resourceNames(classDef.resource.id).en : name,
+      fmt(deriveStat(source, stat), kind),
+    ]);
     const dmg = Object.entries(weapon.damage).map(([type, r]) => `${r.min}–${r.max} ${type.slice(0, 4)}`).join(', ');
     rows.push(['Weapon', dmg]);
     rows.push(['Attacks/sec', computeStat(weapon.attacksPerSecond, mods, 'attackSpeed', ['attack']).toFixed(2)]);
@@ -289,7 +293,8 @@ export class InventoryScene extends Phaser.Scene {
       }
       return;
     }
-    const tooltip = describeItem(item, itemsData);
+    const owner = this.character;
+    const tooltip = describeItem(item, itemsData, owner ? getClass(content, owner.classId).resource.id : undefined);
     const pad = 16;
     const x = area.x + pad;
     let y = area.y + pad;

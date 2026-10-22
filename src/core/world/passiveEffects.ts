@@ -2,7 +2,7 @@
 // Pure functions over plain player data; the mechanics themselves are data (PassiveMechanic).
 //
 // Implemented here:
-// - bloodMagic: skills cost life, max mana / mana regen are 0.
+// - bloodMagic: skills cost life, max resource / resource regen are 0 (so no class gains resource, Rage included).
 // - alwaysCrit: hits always crit with a fixed multiplier (see critStats).
 // - lifeToEnergyShield: base life (class + levels) becomes flat ES, max life is fixed, life regen feeds ES.
 // - conditionalModifiers: movedWithin / stationaryFor / lifeBelow / targetHasStatus (stun, slow, ignite, freeze).
@@ -53,8 +53,8 @@ export function deriveStat(source: StatSource, stat: StatId, tags: readonly Tag[
   const blood = findMechanic(mechanics, 'bloodMagic');
   const crystal = findMechanic(mechanics, 'lifeToEnergyShield');
   switch (stat) {
-    case 'mana':
-    case 'manaRegen':
+    case 'resource':
+    case 'resourceRegen':
       if (blood) return 0;
       break;
     case 'life':
@@ -175,19 +175,19 @@ export function activeConditionalModifiers(
 
 /** Which pool pays for an action and how much. */
 export interface ActionCost {
-  readonly pool: 'mana' | 'life';
+  readonly pool: 'resource' | 'life';
   readonly amount: number;
 }
 
-export function actionCost(mechanics: readonly PassiveMechanic[], manaCost: number): ActionCost {
+export function actionCost(mechanics: readonly PassiveMechanic[], resourceCost: number): ActionCost {
   const blood = findMechanic(mechanics, 'bloodMagic');
-  if (blood) return { pool: 'life', amount: manaCost * blood.lifePerMana };
-  return { pool: 'mana', amount: manaCost };
+  if (blood) return { pool: 'life', amount: resourceCost * blood.lifePerResource };
+  return { pool: 'resource', amount: resourceCost };
 }
 
-/** Mana costs need enough mana; life costs need strictly more life than the cost (paying never kills). */
-export function canPay(pools: { readonly life: number; readonly mana: number }, cost: ActionCost): boolean {
-  return cost.pool === 'mana' ? pools.mana >= cost.amount : pools.life > cost.amount;
+/** Resource costs need enough resource; life costs need strictly more life than the cost (paying never kills). */
+export function canPay(pools: { readonly life: number; readonly resource: number }, cost: ActionCost): boolean {
+  return cost.pool === 'resource' ? pools.resource >= cost.amount : pools.life > cost.amount;
 }
 
 export interface CritStats {

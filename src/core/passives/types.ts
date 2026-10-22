@@ -40,8 +40,8 @@ export type { SkillParam, SkillParamChange } from '../skills/types';
  * until then it is carried as data and ignored by the stat pipeline (see passiveMechanics()).
  */
 export type PassiveMechanic =
-  /** Skills cost life instead of mana; max mana is 0 and mana stats do nothing. */
-  | { readonly kind: 'bloodMagic'; readonly lifePerMana: number }
+  /** Skills cost life instead of the class resource (lifePerResource life per point); max resource is 0, resource stats and gains do nothing. */
+  | { readonly kind: 'bloodMagic'; readonly lifePerResource: number }
   /** Every hit crits; the crit multiplier is fixed and multiplier bonuses are ignored. */
   | { readonly kind: 'alwaysCrit'; readonly critMultiplier: number }
   /** Base life (class + levels) becomes flat energy shield, max life is fixed, life regen goes to shield regen. */

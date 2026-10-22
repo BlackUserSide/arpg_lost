@@ -22,7 +22,7 @@ import {
   createWorld,
   playerStat,
   recoverLife,
-  recoverMana,
+  recoverResource,
   setLoadoutModifiers,
   step,
   type Loadout,
@@ -48,7 +48,7 @@ const dummy: MobDef = {
 const strike: ActionDef = {
   id: 'strike',
   tags: ['attack', 'melee'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'arc', radius: 50, angleDeg: 90, maxTargets: 1 },
@@ -56,16 +56,16 @@ const strike: ActionDef = {
 const sweep: ActionDef = {
   id: 'sweep',
   tags: ['attack', 'melee', 'area'],
-  manaCost: 8,
+  resourceCost: 8,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'arc', radius: 50, angleDeg: 180 },
 };
-const blink: ActionDef = { id: 'blink', tags: ['spell'], manaCost: 0, cooldown: 0, castTime: 0.1, delivery: { kind: 'teleport', range: 300 } };
+const blink: ActionDef = { id: 'blink', tags: ['spell'], resourceCost: 0, cooldown: 0, castTime: 0.1, delivery: { kind: 'teleport', range: 300 } };
 const charge: ActionDef = {
   id: 'charge',
   tags: ['attack', 'melee'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'dash', distance: 200, speed: 1000, hitRadius: 20 },
@@ -76,7 +76,8 @@ function makeContent(baseStats: ClassDef['baseStats'] = {}): Content {
     id: 'hero',
     radius: 10,
     weaponType: 'sword',
-    baseStats: { life: 50, mana: 20, manaRegen: 0, movementSpeed: 100, ...baseStats },
+    baseStats: { life: 50, resource: 20, resourceRegen: 0, movementSpeed: 100, ...baseStats },
+    resource: { id: 'mana', startFraction: 1, refillOnLevelUp: true },
     weapon: { damage: { physical: { min: 10, max: 10 } }, attacksPerSecond: 2, critChance: 0 },
     basicAttack: strike,
     skills: [sweep, blink, charge],
@@ -119,7 +120,7 @@ function hitOnce(world: WorldState, content: Content, mob: MobState, input: Play
   return before - mob.life;
 }
 
-const BLOOD: PassiveMechanic = { kind: 'bloodMagic', lifePerMana: 1 };
+const BLOOD: PassiveMechanic = { kind: 'bloodMagic', lifePerResource: 1 };
 const PRECISE: PassiveMechanic = { kind: 'alwaysCrit', critMultiplier: 1.3 };
 const CRYSTAL: PassiveMechanic = { kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true };
 const SWIFT: PassiveMechanic[] = [
@@ -135,17 +136,17 @@ function world(mechanics: readonly PassiveMechanic[], loadout: Loadout = {}, bas
 }
 
 describe('passiveEffects: pure rules', () => {
-  it('action cost goes to life under blood magic, scaled by lifePerMana', () => {
-    expect(actionCost([], 8)).toEqual({ pool: 'mana', amount: 8 });
+  it('action cost goes to life under blood magic, scaled by lifePerResource', () => {
+    expect(actionCost([], 8)).toEqual({ pool: 'resource', amount: 8 });
     expect(actionCost([BLOOD], 8)).toEqual({ pool: 'life', amount: 8 });
-    expect(actionCost([{ kind: 'bloodMagic', lifePerMana: 2 }], 8)).toEqual({ pool: 'life', amount: 16 });
+    expect(actionCost([{ kind: 'bloodMagic', lifePerResource: 2 }], 8)).toEqual({ pool: 'life', amount: 16 });
   });
 
-  it('mana costs need enough mana, life costs need strictly more life', () => {
-    expect(canPay({ life: 0, mana: 8 }, { pool: 'mana', amount: 8 })).toBe(true);
-    expect(canPay({ life: 0, mana: 7 }, { pool: 'mana', amount: 8 })).toBe(false);
-    expect(canPay({ life: 8, mana: 0 }, { pool: 'life', amount: 8 })).toBe(false);
-    expect(canPay({ life: 8.5, mana: 0 }, { pool: 'life', amount: 8 })).toBe(true);
+  it('resource costs need enough resource, life costs need strictly more life', () => {
+    expect(canPay({ life: 0, resource: 8 }, { pool: 'resource', amount: 8 })).toBe(true);
+    expect(canPay({ life: 0, resource: 7 }, { pool: 'resource', amount: 8 })).toBe(false);
+    expect(canPay({ life: 8, resource: 0 }, { pool: 'life', amount: 8 })).toBe(false);
+    expect(canPay({ life: 8.5, resource: 0 }, { pool: 'life', amount: 8 })).toBe(true);
   });
 
   it('alwaysCrit forces chance 1 and the fixed multiplier', () => {
@@ -187,11 +188,11 @@ describe('passiveEffects: pure rules', () => {
     expect(deriveStat(source, 'energyShieldRegen')).toBe(0);
   });
 
-  it('blood magic: max mana and mana regen are 0', () => {
-    const source = { baseStats: { mana: 20, manaRegen: 2 }, modifiers: [{ stat: 'mana', kind: 'flat', value: 30 } as const], levelModifiers: [], mechanics: [BLOOD] };
-    expect(deriveStat(source, 'mana')).toBe(0);
-    expect(deriveStat(source, 'manaRegen')).toBe(0);
-    expect(deriveStat({ ...source, mechanics: [] }, 'mana')).toBe(50);
+  it('blood magic: max resource and resource regen are 0', () => {
+    const source = { baseStats: { resource: 20, resourceRegen: 2 }, modifiers: [{ stat: 'resource', kind: 'flat', value: 30 } as const], levelModifiers: [], mechanics: [BLOOD] };
+    expect(deriveStat(source, 'resource')).toBe(0);
+    expect(deriveStat(source, 'resourceRegen')).toBe(0);
+    expect(deriveStat({ ...source, mechanics: [] }, 'resource')).toBe(50);
   });
 
   it('life recovery goes to ES under crystal shell', () => {
@@ -229,16 +230,16 @@ describe('passiveEffects: pure rules', () => {
 });
 
 describe('keystone: blood magic', () => {
-  it('max mana is 0 and skills spend life 1:1', () => {
+  it('max resource is 0 and skills spend life 1:1', () => {
     const { content, world: w } = world([BLOOD]);
-    expect(playerStat(content.classes.hero!, w.player, 'mana')).toBe(0);
-    expect(w.player.mana).toBe(0);
+    expect(playerStat(content.classes.hero!, w.player, 'resource')).toBe(0);
+    expect(w.player.resource).toBe(0);
     expect(w.player.life).toBe(50);
     const mob = addMob(w, 530, 500);
     step(w, { ...idle, skills: [true] }, content, DT);
     expect(mob.life).toBe(990);
     expect(w.player.life).toBe(42);
-    expect(w.player.mana).toBe(0);
+    expect(w.player.resource).toBe(0);
   });
 
   it('cannot cast when life <= cost; falls back to the basic attack', () => {
@@ -263,24 +264,24 @@ describe('keystone: blood magic', () => {
     expect(w.player.dead).toBe(false);
   });
 
-  it('lifePerMana scales the life cost', () => {
-    const { content, world: w } = world([{ kind: 'bloodMagic', lifePerMana: 2 }]);
+  it('lifePerResource scales the life cost', () => {
+    const { content, world: w } = world([{ kind: 'bloodMagic', lifePerResource: 2 }]);
     step(w, { ...idle, skills: [true] }, content, DT);
     expect(w.player.life).toBe(34);
   });
 
-  it('mana regen and mana recovery do nothing', () => {
-    const { content, world: w } = world([BLOOD], {}, { manaRegen: 5 });
+  it('resource regen and resource recovery do nothing', () => {
+    const { content, world: w } = world([BLOOD], {}, { resourceRegen: 5 });
     run(w, content, idle, 1);
-    expect(w.player.mana).toBe(0);
-    expect(recoverMana(content.classes.hero!, w.player, 50)).toBe(0);
-    expect(w.player.mana).toBe(0);
+    expect(w.player.resource).toBe(0);
+    expect(recoverResource(content.classes.hero!, w.player, 50)).toBe(0);
+    expect(w.player.resource).toBe(0);
   });
 
-  it('without blood magic skills still spend mana', () => {
+  it('without blood magic skills still spend resource', () => {
     const { content, world: w } = world([]);
     step(w, { ...idle, skills: [true] }, content, DT);
-    expect(w.player.mana).toBe(12);
+    expect(w.player.resource).toBe(12);
     expect(w.player.life).toBe(50);
   });
 });
@@ -432,7 +433,7 @@ describe('conditional modifiers on delayed hits are locked at cast time', () => 
   const arrow: ActionDef = {
     id: 'arrow',
     tags: ['attack', 'projectile'],
-    manaCost: 0,
+    resourceCost: 0,
     cooldown: 0,
     damage: { source: 'skill', base: { physical: { min: 10, max: 10 } }, critChance: 0 },
     delivery: { kind: 'projectile', count: 1, spreadDeg: 0, speed: 300, range: 1000, radius: 2, pierce: 0 },
@@ -440,7 +441,7 @@ describe('conditional modifiers on delayed hits are locked at cast time', () => 
   const mine: ActionDef = {
     id: 'mine',
     tags: ['attack', 'area'],
-    manaCost: 0,
+    resourceCost: 0,
     cooldown: 0,
     damage: { source: 'skill', base: { physical: { min: 10, max: 10 } }, critChance: 0 },
     delivery: { kind: 'trap', throwRange: 100, armTime: 0.8, triggerRadius: 20, explodeRadius: 30, lifetime: 5 },
@@ -620,7 +621,7 @@ describe('keystone: bloodsucker (life leech)', () => {
     const arrow: ActionDef = {
       id: 'arrow',
       tags: ['attack', 'projectile'],
-      manaCost: 0,
+      resourceCost: 0,
       cooldown: 0,
       damage: { source: 'skill', base: { physical: { min: 20, max: 20 } }, critChance: 0 },
       delivery: { kind: 'projectile', count: 1, spreadDeg: 0, speed: 300, range: 1000, radius: 2, pierce: 0 },
@@ -759,10 +760,10 @@ describe('mechanics in the loadout', () => {
     const { content, world: w } = world([]);
     const hero = content.classes.hero!;
     expect(w.player.life).toBe(50);
-    expect(w.player.mana).toBe(20);
+    expect(w.player.resource).toBe(20);
     setLoadoutModifiers(w, content, [], [BLOOD]);
     expect(w.player.mechanics).toEqual([BLOOD]);
-    expect(w.player.mana).toBe(0);
+    expect(w.player.resource).toBe(0);
     expect(w.player.life).toBe(50);
     // Taking Crystal Shell at 50% life: 50% ES, life at its fixed max.
     w.player.life = 25;
@@ -770,9 +771,9 @@ describe('mechanics in the loadout', () => {
     expect(w.player.life).toBe(1);
     expect(playerStat(hero, w.player, 'energyShield')).toBe(50);
     expect(w.player.energyShield).toBe(25);
-    // Mana max was 0 under blood magic: it starts at 0 and regenerates, it is not refilled.
-    expect(playerStat(hero, w.player, 'mana')).toBe(20);
-    expect(w.player.mana).toBe(0);
+    // Resource max was 0 under blood magic: it starts at 0 and regenerates, it is not refilled.
+    expect(playerStat(hero, w.player, 'resource')).toBe(20);
+    expect(w.player.resource).toBe(0);
     // Mechanics are kept when the argument is omitted; ES keeps its fraction of the new max.
     setLoadoutModifiers(w, content, [{ stat: 'energyShield', kind: 'flat', value: 10 }]);
     expect(w.player.mechanics).toEqual([CRYSTAL]);
@@ -793,19 +794,19 @@ describe('mechanics in the loadout', () => {
     expect(w.player.life).toBeGreaterThan(0);
   });
 
-  it('secondary ES and mana keep their fill fractions; a pool that had max 0 starts empty', () => {
+  it('secondary ES and resource keep their fill fractions; a pool that had max 0 starts empty', () => {
     const { content, world: w } = world([], { modifiers: [{ stat: 'energyShield', kind: 'flat', value: 20 }] });
     w.player.life = 40;
     w.player.energyShield = 5;
-    w.player.mana = 10;
+    w.player.resource = 10;
     setLoadoutModifiers(w, content, [
       { stat: 'energyShield', kind: 'flat', value: 40 },
-      { stat: 'mana', kind: 'flat', value: 20 },
+      { stat: 'resource', kind: 'flat', value: 20 },
       { stat: 'life', kind: 'flat', value: 50 },
     ]);
     expect(w.player.life).toBe(80);
     expect(w.player.energyShield).toBe(10);
-    expect(w.player.mana).toBe(20);
+    expect(w.player.resource).toBe(20);
     // No ES before: gaining ES mid-run does not grant a full shield.
     const fresh = world([]);
     setLoadoutModifiers(fresh.world, fresh.content, [{ stat: 'energyShield', kind: 'flat', value: 30 }]);

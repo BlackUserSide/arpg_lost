@@ -19,6 +19,7 @@ import { hasPendingMechanics } from '../core/passives/mechanics';
 import { changeSpec, refundNode, refundWheel, type RespecError } from '../core/passives/respec';
 import type { PassiveHero, PassiveNodeDef, PassiveNodeType } from '../core/passives/types';
 import { findCharacter, type CharacterRecord } from '../core/progression/profile';
+import { classes } from '../data/classes';
 import { passiveTree } from '../data/passives';
 import { getApp, type App } from './app';
 import { ALLOCATE_ERRORS, costLabel, describeNode, NODE_TYPE_LABEL, PENDING_EFFECT, plural, pointsWord, RESPEC_ERRORS, shardsWord } from './passiveText';
@@ -941,7 +942,7 @@ export class PassiveTreeScene extends Phaser.Scene {
     const cost = `${pointsWord(node.cost)} ${spec ? 'спеціалізації' : 'талантів'}`;
     add(`${NODE_TYPE_LABEL[node.type]} · ${cost}`, 12, UI.muted, false, spec ? 2 : 8);
     if (spec) add(`Гілка: ${spec.name}`, 12, UI.muted, false, 8);
-    for (const line of describeNode(node)) add(line, UI.size.small, '#8fb3ff', false, 3);
+    for (const line of describeNode(node, classes[hero.classId]?.resource.id)) add(line, UI.size.small, '#8fb3ff', false, 3);
     if (hasPendingMechanics(node)) add(PENDING_EFFECT, 12, '#c9a46a', true, 3);
     y += 6;
 

@@ -115,7 +115,8 @@ export interface ActionDef {
   /** Display name (Ukrainian). */
   readonly name?: string;
   readonly tags: readonly SkillTag[];
-  readonly manaCost: number;
+  /** Cost in the class resource (in life under bloodMagic, see actionCost). */
+  readonly resourceCost: number;
   /** Seconds; 0 = no cooldown. With charges > 1: seconds to recharge one charge. */
   readonly cooldown: number;
   /**
@@ -137,12 +138,60 @@ export interface WeaponDef {
   readonly critChance: number;
 }
 
+/**
+ * Gain per enemy hit dealt by the hero's own actions. Only damage hits count (not ignite ticks or death explosions).
+ * `maxHitsPerUse` caps the hits that grant resource per use of a counting action (one swing hitting 5 mobs with
+ * cap 3 grants 3 × amount). The count restarts whenever a counting action is used (counterAttack included).
+ */
+export interface ResourceHitGain {
+  /** Resource points per enemy hit. */
+  readonly amount: number;
+  /** Which hits count: only the hero's basic attack (counter-attacks included), or every action. */
+  readonly source: 'basicAttack' | 'anyAction';
+  readonly maxHitsPerUse: number;
+}
+
+/**
+ * The class resource that pays for skills (docs/design/classes.md, «Ресурс класу»): Rage / Energy / Mana.
+ * Max and passive regeneration are the stats `resource` / `resourceRegen` (class baseStats + gear, passives,
+ * levels), so every "+resource" source works for any class. The rules below give each class its rhythm; the
+ * optional ones can be mixed freely by a future class. Under bloodMagic max resource is 0, so nothing is gained.
+ */
+export interface ResourceDef {
+  /** Resource id ('rage' | 'energy' | 'mana' today, any string later); render maps it to a display name. */
+  readonly id: string;
+  /** Fill at run start as a fraction of max (0 = empty, 1 = full). */
+  readonly startFraction: number;
+  /** True: a level-up refills the pool to max (like life). False: it keeps the current amount (capped at max). */
+  readonly refillOnLevelUp: boolean;
+  /** Gain from hits the hero deals. */
+  readonly onHit?: ResourceHitGain;
+  /**
+   * Gain from damage the hero takes: (life + energy shield lost) / (max life + max energy shield) × perPoolFraction.
+   * E.g. 50 = +5 for losing 10% of the pool.
+   */
+  readonly onDamageTaken?: { readonly perPoolFraction: number };
+  /**
+   * Drain once the hero has neither dealt nor taken a hit for `delay` seconds (PlayerState.combatIdle):
+   * `perSecond` resource points per second until the next hit. Regeneration still applies while draining.
+   */
+  readonly decay?: { readonly delay: number; readonly perSecond: number };
+  /**
+   * True: resourceRegen applies only in combat (combatIdle below decay.delay); out of combat the pool only decays.
+   * Without `decay` the hero always counts as in combat, so this has no effect.
+   */
+  readonly regenOnlyInCombat?: boolean;
+}
+
 export interface ClassDef {
   readonly id: string;
   readonly radius: number;
   /** The only weapon type this class can equip. */
   readonly weaponType: WeaponType;
+  /** Base stats; `resource` / `resourceRegen` are the class resource's max and regeneration per second. */
   readonly baseStats: Readonly<Partial<Record<StatId, number>>>;
+  /** The resource skills cost (ActionDef.resourceCost). */
+  readonly resource: ResourceDef;
   readonly weapon: WeaponDef;
   readonly basicAttack: ActionDef;
   /** Bound to skill slots 1..3 (RMB / Q / E). */

@@ -34,7 +34,7 @@ const MOBS: Record<string, MobDef> = {
 const fireBolt: ActionDef = {
   id: 'fire_bolt',
   tags: ['spell', 'projectile'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   castTime: 0,
   damage: { source: 'skill', base: { fire: { min: 20, max: 20 } }, critChance: 0 },
@@ -43,7 +43,7 @@ const fireBolt: ActionDef = {
 const nova: ActionDef = {
   id: 'nova',
   tags: ['spell', 'area'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   castTime: 0,
   damage: { source: 'skill', base: { cold: { min: 10, max: 10 } }, critChance: 0 },
@@ -53,7 +53,7 @@ const nova: ActionDef = {
 const flame: ActionDef = {
   id: 'flame',
   tags: ['spell', 'area'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   castTime: 0,
   damage: { source: 'skill', base: { fire: { min: 20, max: 20 } }, critChance: 0 },
@@ -62,7 +62,7 @@ const flame: ActionDef = {
 const strike: ActionDef = {
   id: 'strike',
   tags: ['attack', 'melee'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'arc', radius: 100, angleDeg: 360 },
@@ -75,7 +75,8 @@ function makeContent(): Content {
     id: 'hero',
     radius: 10,
     weaponType: 'wand',
-    baseStats: { life: 50, mana: 50, manaRegen: 0, movementSpeed: 100 },
+    baseStats: { life: 50, resource: 50, resourceRegen: 0, movementSpeed: 100 },
+    resource: { id: 'mana', startFraction: 1, refillOnLevelUp: true },
     weapon: { damage: { physical: { min: 10, max: 10 } }, attacksPerSecond: 2, critChance: 0 },
     basicAttack: fireBolt,
     skills: [nova, flame, strike, blaze],
