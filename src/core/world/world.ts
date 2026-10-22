@@ -2,22 +2,46 @@ import { add, clamp, normalize, scale, sub, vec } from '../math';
 import { createRng } from '../rng';
 import { computeStat } from '../stats/modifiers';
 import { performAction, pickAction, updateMotion } from './actions';
+import type { PassiveMechanic } from '../passives/types';
 import type { Modifier } from '../stats/types';
 import { levelModifiers } from '../progression/levels';
 import type { Content, WeaponDef } from './content';
-import { refillPools } from './experience';
+import { decayLeech, refillPools } from './experience';
+import { syncCharges, tickCooldowns } from './charges';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
-import { allModifiers, clampToArena, getClass, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
+import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
+export { applyLeech, recoverLife, recoverMana, setLoadoutModifiers } from './experience';
+export { canAfford } from './actions';
+export { actionReady, availableCharges, chargeInfo, maxCharges, type ChargeInfo } from './charges';
+export {
+  actionCost,
+  deriveStat,
+  distanceDamageMore,
+  leechStats,
+  lifePotionMultiplier,
+  lifeRecoveryPool,
+  skillChangeSets,
+  stunBarStats,
+  stunDurationMultiplier,
+  type ActionCost,
+  type StatSource,
+} from './passiveEffects';
+export { resolveAction, resolveActions, skillMatches, type ActionSet } from '../skills/params';
 
-/** What the hero brings into the run: level, equipment (and later passives) as modifiers, plus the weapon. */
+/** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
+const TIME_EPSILON = 1e-9;
+
+/** What the hero brings into the run: level, equipment and passives as modifiers (see heroModifiers), plus the weapon. */
 export interface Loadout {
   readonly level?: number;
   readonly xp?: number;
   readonly modifiers?: readonly Modifier[];
   readonly weapon?: WeaponDef;
+  /** Passive tree mechanics (keystones, spec effects); see heroMechanics. */
+  readonly mechanics?: readonly PassiveMechanic[];
 }
 
 /** `areaLevel` defaults to the hero's level. */
@@ -25,6 +49,8 @@ export function createWorld(content: Content, classId: string, seed: number, loa
   const classDef = getClass(content, classId);
   const level = loadout.level ?? 1;
   const gearModifiers = [...(loadout.modifiers ?? [])];
+  const levelMods = levelModifiers(level, content.progression);
+  const mechanics = [...(loadout.mechanics ?? [])];
   const player: PlayerState = {
     id: PLAYER_ID,
     classId,
@@ -36,10 +62,17 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     mana: 0,
     actionTimer: 0,
     cooldowns: {},
+    charges: {},
     level,
     xp: loadout.xp ?? 0,
     gearModifiers,
-    modifiers: [...gearModifiers, ...levelModifiers(level, content.progression)],
+    modifiers: [...gearModifiers, ...levelMods],
+    levelModifiers: levelMods,
+    mechanics,
+    ...deriveFromMechanics(classDef, mechanics),
+    stillTime: 0,
+    leechRecent: 0,
+    counterCooldown: 0,
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
@@ -47,6 +80,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     dead: false,
   };
   refillPools(classDef, player);
+  syncCharges(player, true);
   return {
     time: 0,
     rngState: seed >>> 0,
@@ -88,6 +122,9 @@ function updatePlayer(ctx: Ctx, dt: number): void {
 
   player.buffs = player.buffs.filter((b) => (b.remaining -= dt) > 0);
   player.invulnerable = Math.max(0, player.invulnerable - dt);
+  player.stillTime += dt;
+  // Snap float leftovers (1 − 60 × 1/60) so a 1 s internal cooldown ends after exactly 60 steps.
+  player.counterCooldown = player.counterCooldown - dt > TIME_EPSILON ? player.counterCooldown - dt : 0;
 
   const maxLife = playerStat(classDef, player, 'life');
   const maxShield = playerStat(classDef, player, 'energyShield');
@@ -95,18 +132,17 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   player.life = clamp(player.life + playerStat(classDef, player, 'lifeRegen') * dt, 0, maxLife);
   player.energyShield = clamp(player.energyShield + playerStat(classDef, player, 'energyShieldRegen') * dt, 0, maxShield);
   player.mana = clamp(player.mana + playerStat(classDef, player, 'manaRegen') * dt, 0, maxMana);
+  decayLeech(classDef, player, dt);
 
   player.actionTimer = Math.max(0, player.actionTimer - dt);
-  const recovery = computeStat(1, allModifiers(player), 'cooldownRecovery');
-  for (const id of Object.keys(player.cooldowns)) {
-    player.cooldowns[id] = Math.max(0, (player.cooldowns[id] ?? 0) - dt * recovery);
-  }
+  const recovery = computeStat(1, allModifiers(classDef, player), 'cooldownRecovery');
+  tickCooldowns(player, dt, recovery);
 
   if (updateMotion(ctx, dt)) return;
 
   const move = normalize(input.move);
   const speed = playerStat(classDef, player, 'movementSpeed');
-  player.pos = clampToArena(add(player.pos, scale(move, speed * dt)), player.radius, content);
+  movePlayer(player, clampToArena(add(player.pos, scale(move, speed * dt)), player.radius, content));
 
   const aimDir = normalize(sub(input.aim, player.pos));
   if (aimDir.x !== 0 || aimDir.y !== 0) player.facing = aimDir;

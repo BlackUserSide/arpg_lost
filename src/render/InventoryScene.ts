@@ -1,17 +1,21 @@
 import * as Phaser from 'phaser';
-import { equippedWeapon, equipmentModifiers } from '../core/items/equipment';
+import { equippedWeapon } from '../core/items/equipment';
 import { equipFromStash, salvageFromStash, SALVAGE_CURRENCY, unequipToStash, type InventoryError } from '../core/items/inventory';
 import type { EquipSlot, Item } from '../core/items/types';
+import { heroMechanics, heroModifiers } from '../core/progression/hero';
+import { critStats, leechStats } from '../core/world/passiveEffects';
 import { levelModifiers, xpToNextLevel } from '../core/progression/levels';
 import { findCharacter, type CharacterRecord } from '../core/progression/profile';
 import { computeStat } from '../core/stats/modifiers';
 import type { StatId } from '../core/stats/types';
-import { getClass } from '../core/world/world';
+import { deriveStat, getClass, type StatSource } from '../core/world/world';
 import { content } from '../data';
 import { itemsData } from '../data/items';
+import { passiveTree } from '../data/passives';
 import { getApp, type App } from './app';
 import { itemIcon } from './itemIcons';
 import { describeItem } from './itemText';
+import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
@@ -130,6 +134,12 @@ export class InventoryScene extends Phaser.Scene {
     this.root.add(title);
     this.root.add(label(this, title.x + title.width + 16, title.y + title.height - (compact ? 20 : 26), levelLine(character), UI.size.small, UI.goldBrightText));
     this.root.add(makeButton(this, width - m - 60, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, 'Back', () => this.back()));
+    this.root.add(
+      makeButton(this, width - m - 60 - 120, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, 'Таланти', () => {
+        const data: PassiveTreeSceneData = { characterId: character.id, returnTo: 'inventory' };
+        this.scene.start('passive-tree', data);
+      }),
+    );
 
     const top = titleH + (compact ? 0 : 6);
     const avail = height - top - m;
@@ -218,16 +228,32 @@ export class InventoryScene extends Phaser.Scene {
 
   private buildStats(character: CharacterRecord, x: number, y: number, w: number): void {
     const classDef = getClass(content, character.classId);
-    const mods = [...equipmentModifiers(character.equipment, itemsData), ...levelModifiers(character.level, content.progression)];
+    const levelMods = levelModifiers(character.level, content.progression);
+    const mods = [...heroModifiers(character, itemsData, passiveTree), ...levelMods];
+    const mechanics = heroMechanics(character, passiveTree);
+    // Keystones (Blood Magic, Crystal Shell, ...) change derived stats; core owns that math.
+    const source: StatSource = { baseStats: classDef.baseStats, modifiers: mods, levelModifiers: levelMods, mechanics };
     const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
     this.root.add(heading(this, x, y, 'Attributes', 18));
     const fmt = (v: number, kind: 'int' | 'pct' | 'dec'): string => (kind === 'pct' ? `${Math.round(v * 100)}%` : kind === 'dec' ? (Math.round(v * 10) / 10).toFixed(1) : String(Math.round(v)));
-    const rows: Array<[string, string]> = STAT_ROWS.map(([stat, name, kind]) => [name, fmt(computeStat(classDef.baseStats[stat] ?? 0, mods, stat), kind)]);
+    const rows: Array<[string, string]> = STAT_ROWS.map(([stat, name, kind]) => [name, fmt(deriveStat(source, stat), kind)]);
     const dmg = Object.entries(weapon.damage).map(([type, r]) => `${r.min}–${r.max} ${type.slice(0, 4)}`).join(', ');
     rows.push(['Weapon', dmg]);
     rows.push(['Attacks/sec', computeStat(weapon.attacksPerSecond, mods, 'attackSpeed', ['attack']).toFixed(2)]);
-    rows.push(['Crit chance', `${(computeStat(weapon.critChance, mods, 'critChance', ['attack']) * 100).toFixed(1)}%`]);
-    rows.push(['Move speed', String(Math.round(computeStat(classDef.baseStats.movementSpeed ?? 0, mods, 'movementSpeed')))]);
+    const crit = critStats(mechanics, {
+      critChance: computeStat(weapon.critChance, mods, 'critChance', ['attack']),
+      critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', ['attack']),
+    });
+    rows.push(['Crit chance', `${(crit.critChance * 100).toFixed(1)}% ×${crit.critMultiplier.toFixed(2)}`]);
+    rows.push(['Move speed', String(Math.round(deriveStat(source, 'movementSpeed')))]);
+    // Keystone-only stats: shown only when they differ from the default.
+    const leech = leechStats(mechanics);
+    if (leech) {
+      const cap = Number.isFinite(leech.maxPerSecond) ? ` (max ${fmt(leech.maxPerSecond, 'pct')}/s)` : '';
+      rows.push(['Life leech', `${fmt(leech.fraction, 'pct')}${cap}`]);
+    }
+    const taken = computeStat(1, mods, 'damageTaken');
+    if (taken !== 1) rows.push(['Damage taken', `×${taken.toFixed(2)}`]);
     rows.forEach(([name, value], i) => {
       this.root.add(label(this, x, y + 30 + i * 20, name, UI.size.small, UI.muted));
       this.root.add(label(this, x + w, y + 30 + i * 20, value, UI.size.small, UI.text, true).setOrigin(1, 0));

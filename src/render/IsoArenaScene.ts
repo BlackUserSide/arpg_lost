@@ -1,15 +1,22 @@
 import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
-import { createWorld, getClass, getMob, PLAYER_ID, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
-import { equippedWeapon, equipmentModifiers } from '../core/items/equipment';
+import { createWorld, distanceDamageMore, getClass, getMob, PLAYER_ID, setLoadoutModifiers, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { unspentPoints } from '../core/passives/allocation';
+import { equippedWeapon } from '../core/items/equipment';
 import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
+import { heroMechanics, heroModifiers } from '../core/progression/hero';
 import { applyRunResult, findCharacter } from '../core/progression/profile';
 import { createRng } from '../core/rng';
 import { itemsData } from '../data/items';
 import { content } from '../data';
+import { passiveTree } from '../data/passives';
 import { getApp } from './app';
+import { CombatFx, STUN_BAR_FLASH, statusLook } from './combatFx';
 import { Hud } from './hud';
+import { PointsBanner } from './passiveBanner';
+import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
+import { SOLO_MODE, type RunMode } from './runMode';
 import { fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
 import { screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
@@ -37,6 +44,10 @@ const SNAP_DISTANCE = 80;
 const MOB_SMOOTHING = 22;
 /** Below this speed (world units/s) an actor is considered standing. */
 const MOVING_SPEED = 8;
+/** How fast the displayed stun bar catches up with the core fill (1/s, exponential). */
+const STUN_BAR_SMOOTHING = 18;
+/** Ignite damage is summed per mob and shown as one number this often (seconds). */
+const DOT_NUMBER_INTERVAL = 0.5;
 
 const PLAIN_FLOORS = [0, 1, 2, 3, 20, 21, 22, 23];
 const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
@@ -45,6 +56,20 @@ const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
 const AREA_COLORS: Record<string, number> = { cleave: 0xff9a3c, fireball: 0xff6a1a, explosive_trap: 0xff8a2a, frost_nova: 0x8fd3ff };
 const PROJECTILE_COLORS: Record<string, number> = { ranger_bolt: 0xe8e2cf, volley: 0xe8e2cf, wand_bolt: 0xb58cff, fireball: 0xff7a1a };
 const MOB_PROJECTILE_COLOR = 0xff4b4b;
+/** Area tint of a trap explosion set off by another trap. */
+const CHAIN_AREA_COLOR = 0xffd23a;
+/** Far Shot (distanceDamage) glow around bolts. */
+const FAR_SHOT_GLOW = 0xfff0a0;
+
+type Mechanics = Parameters<typeof distanceDamageMore>[0];
+type Tags = Parameters<typeof distanceDamageMore>[1];
+
+/** 0..1: share of the full distanceDamage bonus a projectile has built up (0 when the hero has none). Read from core. */
+function farShotGlow(mechanics: Mechanics, tags: Tags, travelled: number): number {
+  if (!mechanics.some((m) => m.kind === 'distanceDamage')) return 0;
+  const full = distanceDamageMore(mechanics, tags, Number.POSITIVE_INFINITY);
+  return full > 0 ? Math.min(1, distanceDamageMore(mechanics, tags, travelled) / full) : 0;
+}
 
 interface Actor {
   sprite: Phaser.GameObjects.Sprite;
@@ -60,6 +85,12 @@ interface Actor {
   moving: boolean;
   /** One-shot animation playing on top of idle/run. */
   oneShot: { anim: string; elapsed: number } | undefined;
+  /** Frozen as of the last synced frame (mobs only): holds its pose, no hit reaction. */
+  frozen: boolean;
+  /** Displayed stun bar fill (mobs only), easing towards MobState.stunBar. */
+  stunBarShown: number;
+  /** Remaining full-bar flash after the stun bar stunned this mob (seconds, visual only). */
+  stunBarFlash: number;
 }
 
 interface Corpse {
@@ -76,7 +107,28 @@ interface AreaFx {
   ttl: number;
 }
 
-type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'ESC', Phaser.Input.Keyboard.Key>;
+/** Ignite damage dealt to one mob since its last damage number. */
+interface DotTally {
+  amount: number;
+  timer: number;
+  pos: Vec2;
+}
+
+type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot';
+
+/** Visual-only damage number looks. */
+const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: number; rise: number; duration: number }> = {
+  hit: { color: '#ffffff', size: 18, rise: 30, duration: 600 },
+  crit: { color: '#ffd23f', size: 26, rise: 30, duration: 600 },
+  player: { color: '#ff5050', size: 18, rise: 30, duration: 600 },
+  dot: { color: '#ff9a3c', size: 14, rise: 20, duration: 700 },
+};
+
+type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'P' | 'ESC', Phaser.Input.Keyboard.Key>;
+
+const NO_MOVE = vec(0, 0);
+const NO_SKILLS: readonly boolean[] = [false, false, false];
+const HUD_UI_DEPTH = 10010;
 
 export class IsoArenaScene extends Phaser.Scene {
   private readonly content: Content = content;
@@ -100,15 +152,30 @@ export class IsoArenaScene extends Phaser.Scene {
   private overlay: Phaser.GameObjects.GameObject[] | undefined;
   private paused = false;
   private textPool: Phaser.GameObjects.Text[] = [];
+  private combatFx!: CombatFx;
+  private dotTallies = new Map<number, DotTally>();
   private skillWasDown: boolean[] = [];
   private skillBuffer: number[] = [];
+  private mode: RunMode = SOLO_MODE;
+  /** The passive tree is open over the run (the run keeps going only if the mode does not pause on menus). */
+  private treeOpen = false;
+  /** The tab lost focus or was hidden while the tree was open. */
+  private pauseAfterTree = false;
+  private treeButton: Phaser.GameObjects.Container | undefined;
+  private banner!: PointsBanner;
+  /** The current mouse/touch press started on a HUD control, so it must not attack. */
+  private uiPress = false;
+  /** The hero's counter-attack animation and the direction it faces while it plays (core keeps the hero's facing). */
+  private counterShot: Actor['oneShot'];
+  private counterFacing: Vec2 = vec(1, 0);
 
   constructor() {
     super('iso-arena');
   }
 
-  init(data: { characterId?: string }): void {
+  init(data: { characterId?: string; mode?: RunMode }): void {
     if (data.characterId) this.characterId = data.characterId;
+    this.mode = data.mode ?? SOLO_MODE;
     this.classId = findCharacter(getApp(this).profile, this.characterId)?.classId ?? 'warrior';
     this.runRecorded = false;
   }
@@ -121,12 +188,13 @@ export class IsoArenaScene extends Phaser.Scene {
   create(): void {
     const character = findCharacter(getApp(this).profile, this.characterId);
     const classDef = getClass(this.content, this.classId);
-    // Equipment enters the run as modifiers plus the equipped weapon.
+    // Equipment and passives enter the run as modifiers, plus the equipped weapon.
     const loadout = character
       ? {
           level: character.level,
           xp: character.xp,
-          modifiers: equipmentModifiers(character.equipment, itemsData),
+          modifiers: heroModifiers(character, itemsData, passiveTree),
+          mechanics: heroMechanics(character, passiveTree),
           weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon),
         }
       : {};
@@ -142,19 +210,24 @@ export class IsoArenaScene extends Phaser.Scene {
     this.corpses = [];
     this.areas = [];
     this.textPool = [];
+    this.dotTallies.clear();
     this.skillWasDown = [];
     this.skillBuffer = [];
+    this.counterShot = undefined;
 
     for (const [set, anims] of Object.entries(SPRITE_SETS)) {
       for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
     }
 
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,ESC') as Keys;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,P,ESC') as Keys;
+    this.input.on('pointerdown', (_p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => (this.uiPress = over.length > 0));
+    this.input.on('pointerup', () => (this.uiPress = false));
 
     this.buildFloor();
     this.fx = this.add.graphics().setDepth(-1000);
     this.fxTop = this.add.graphics().setDepth(4000);
+    this.combatFx = new CombatFx(this);
     const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
     this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
     this.light = this.createLight();
@@ -170,17 +243,32 @@ export class IsoArenaScene extends Phaser.Scene {
     this.hud.layout(this.scale.width, this.scale.height);
     this.overlay = undefined;
     this.paused = false;
+    this.treeOpen = false;
+    this.pauseAfterTree = false;
+    this.uiPress = false;
+    this.treeButton = undefined;
+    this.banner = new PointsBanner(this, () => this.openTree(), { depth: HUD_UI_DEPTH, pinned: true });
+    this.layoutTreeUi();
+    this.refreshBanner();
     const relayout = (): void => {
       this.hud.layout(this.scale.width, this.scale.height);
+      this.layoutTreeUi();
       if (this.overlay) this.showOverlay(this.paused ? 'pause' : 'death');
     };
     this.scale.on('resize', relayout);
     // Leaving the tab pauses the run (and tells the portal gameplay stopped).
     const autoPause = (): void => {
-      if (!this.paused && !this.world.player.dead) this.setPaused(true);
+      // With the tree open, remember it: closing the tree must not resume a run nobody is watching.
+      if (this.treeOpen) this.pauseAfterTree = true;
+      else if (!this.paused && !this.world.player.dead) this.setPaused(true);
+    };
+    const back = (): void => {
+      this.pauseAfterTree = false;
     };
     this.game.events.on(Phaser.Core.Events.BLUR, autoPause);
     this.game.events.on(Phaser.Core.Events.HIDDEN, autoPause);
+    this.game.events.on(Phaser.Core.Events.FOCUS, back);
+    this.game.events.on(Phaser.Core.Events.VISIBLE, back);
 
     getApp(this).platform.gameplayStart();
     fadeIn(this);
@@ -188,8 +276,90 @@ export class IsoArenaScene extends Phaser.Scene {
       this.scale.off('resize', relayout);
       this.game.events.off(Phaser.Core.Events.BLUR, autoPause);
       this.game.events.off(Phaser.Core.Events.HIDDEN, autoPause);
+      this.game.events.off(Phaser.Core.Events.FOCUS, back);
+      this.game.events.off(Phaser.Core.Events.VISIBLE, back);
+      if (this.treeOpen) this.scene.stop('passive-tree');
+      this.treeOpen = false;
       this.endRun();
     });
+  }
+
+  /** Talents button (top right) and the unspent points banner under the run info. */
+  private layoutTreeUi(): void {
+    const { width, height } = this.scale;
+    const compact = width < 820 || height < 520;
+    const margin = compact ? 12 : 22;
+    this.treeButton?.destroy();
+    this.treeButton = undefined;
+    if (!findCharacter(getApp(this).profile, this.characterId)) return;
+    const w = compact ? 96 : 150;
+    const h = compact ? 34 : 40;
+    this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? 'Таланти' : 'Таланти (P)', () => this.openTree()), HUD_UI_DEPTH);
+    const bh = compact ? 34 : 40;
+    this.banner.setPosition(width / 2, margin + 36 + 10 + bh / 2, bh);
+  }
+
+  private refreshBanner(): void {
+    const character = findCharacter(getApp(this).profile, this.characterId);
+    if (!character) return;
+    const hero = { classId: character.classId, level: this.world.player.level, passives: character.passives };
+    const { points, specPoints } = unspentPoints(passiveTree, hero);
+    this.banner.setPoints(points, specPoints);
+  }
+
+  /** Opens the passive tree over the run; whether the run pauses is the mode's rule. */
+  private openTree(): void {
+    if (this.treeOpen || this.paused || this.world.player.dead) return;
+    const app = getApp(this);
+    if (!findCharacter(app.profile, this.characterId)) return;
+    this.treeOpen = true;
+    const run: RunTreeHooks = {
+      level: () => this.world.player.level,
+      changed: () => this.applyPassives(true),
+      closed: () => this.closeTree(),
+    };
+    if (this.mode.pauseOnMenus) {
+      app.platform.gameplayStop();
+      this.scene.pause();
+    }
+    const data: PassiveTreeSceneData = { characterId: this.characterId, run };
+    this.scene.launch('passive-tree', data);
+  }
+
+  /** Feeds the changed allocation into the running world (stats update at once) and optionally saves. */
+  private applyPassives(save: boolean): void {
+    const app = getApp(this);
+    const character = findCharacter(app.profile, this.characterId);
+    if (!character) return;
+    // Points spent mid-run come from levels gained in this run: store that progress with them,
+    // otherwise the saved allocation would exceed the saved level and be reset on the next load.
+    character.level = this.world.player.level;
+    character.xp = this.world.player.xp;
+    setLoadoutModifiers(this.world, this.content, heroModifiers(character, itemsData, passiveTree), heroMechanics(character, passiveTree));
+    this.refreshBanner();
+    if (save) app.save();
+  }
+
+  private closeTree(): void {
+    this.treeOpen = false;
+    this.applyPassives(false);
+    const away = this.pauseAfterTree || document.hidden;
+    this.pauseAfterTree = false;
+    if (this.mode.pauseOnMenus) this.scene.resume();
+    if (away && !this.world.player.dead) {
+      // Back to the pause menu instead of live play; gameplay stays stopped for the portal.
+      this.paused = true;
+      if (!this.mode.pauseOnMenus) getApp(this).platform.gameplayStop();
+      this.showOverlay('pause');
+    } else if (this.mode.pauseOnMenus) {
+      getApp(this).platform.gameplayStart();
+    }
+    // Keys and buttons held when the tree opened must not fire now.
+    this.input.keyboard?.resetKeys();
+    this.skillBuffer = [];
+    this.skillWasDown = [];
+    this.uiPress = false;
+    this.accumulator = 0;
   }
 
   private setPaused(paused: boolean): void {
@@ -267,7 +437,7 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   private restartRun(): void {
-    this.scene.restart({ characterId: this.characterId });
+    this.scene.restart({ characterId: this.characterId, mode: this.mode });
   }
 
   private leaveToMenu(): void {
@@ -297,14 +467,21 @@ export class IsoArenaScene extends Phaser.Scene {
 
   override update(_time: number, deltaMs: number): void {
     const dead = this.world.player.dead;
-    if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-      if (dead) this.leaveToMenu();
-      else this.setPaused(!this.paused);
-      return;
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R) && dead) {
-      this.restartRun();
-      return;
+    // While the tree is open (modes that do not pause), its screen owns the keys.
+    if (!this.treeOpen) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
+        if (dead) this.leaveToMenu();
+        else this.setPaused(!this.paused);
+        return;
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.keys.R) && dead) {
+        this.restartRun();
+        return;
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.keys.P) && !this.paused && !dead) {
+        this.openTree();
+        return;
+      }
     }
     if (this.paused) return;
 
@@ -332,6 +509,7 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   private readInput(): PlayerInput {
+    if (this.treeOpen) return { move: NO_MOVE, aim: this.world.player.pos, basicAttack: false, skills: NO_SKILLS };
     const k = this.keys;
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
@@ -348,7 +526,7 @@ export class IsoArenaScene extends Phaser.Scene {
       move: screenDirToWorld(screenMove),
       // Aim at ground level under the cursor; sprites stand on their feet.
       aim: toWorld(vec(aim.x, aim.y)),
-      basicAttack: pointer.leftButtonDown(),
+      basicAttack: pointer.leftButtonDown() && !this.uiPress,
       skills,
     };
   }
@@ -357,15 +535,60 @@ export class IsoArenaScene extends Phaser.Scene {
     switch (event.type) {
       case 'action': {
         // Consume the buffered press so a tap fires the skill once.
-        const slot = getClass(this.content, this.classId).skills.findIndex((s) => s.id === event.actionId);
+        const slot = this.world.player.actions.skills.findIndex((s) => s.id === event.actionId);
         if (slot >= 0) this.skillBuffer[slot] = 0;
         this.hero.facing = event.facing;
         this.playOneShot(this.hero, ACTION_ANIMS[event.actionId] ?? 'attack');
         break;
       }
-      case 'area':
-        this.areas.push({ ...event, color: AREA_COLORS[event.actionId] ?? 0xdde4ff, ttl: AREA_TTL });
+      case 'counter': {
+        // Free retaliation: the basic attack animation toward the attacker plus a golden slash and shield pop.
+        this.counterFacing = event.facing;
+        this.counterShot = this.playOneShot(this.hero, ACTION_ANIMS[event.actionId] ?? 'attack');
+        const from = toScreen(this.world.player.pos);
+        const toward = toScreen(vec(this.world.player.pos.x + event.facing.x, this.world.player.pos.y + event.facing.y));
+        this.combatFx.counter(from.x, from.y, toward.x - from.x, toward.y - from.y);
         break;
+      }
+      case 'status':
+        if (event.source === 'stunBar') {
+          const actor = this.mobs.get(event.targetId);
+          if (actor) {
+            actor.stunBarFlash = STUN_BAR_FLASH;
+            actor.stunBarShown = 0;
+            this.combatFx.stunBarBurst(actor.sprite.x, actor.sprite.y);
+          }
+        }
+        break;
+      case 'area':
+        if (event.source === 'deathExplosion') {
+          const s = toScreen(event.origin);
+          this.combatFx.deathExplosion(event.damageType === 'cold' ? 'ice' : 'fire', s.x, s.y, event.radius);
+        } else {
+          // Chain detonations: a golden tint plus a shock ring, so a chain reads apart from a triggered trap.
+          const color = event.chain ? CHAIN_AREA_COLOR : (AREA_COLORS[event.actionId] ?? 0xdde4ff);
+          this.areas.push({ ...event, color, ttl: AREA_TTL });
+          if (event.chain) {
+            const s = toScreen(event.origin);
+            this.combatFx.chainBurst(s.x, s.y, event.radius);
+          }
+        }
+        break;
+      case 'trapRemoved': {
+        const s = toScreen(event.pos);
+        this.combatFx.trapFizzle(s.x, s.y);
+        break;
+      }
+      case 'dot': {
+        let tally = this.dotTallies.get(event.targetId);
+        if (!tally) {
+          tally = { amount: 0, timer: DOT_NUMBER_INTERVAL, pos: event.pos };
+          this.dotTallies.set(event.targetId, tally);
+        }
+        tally.amount += event.amount;
+        tally.pos = event.pos;
+        break;
+      }
       case 'teleport':
         this.areas.push({ origin: event.from, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
         this.areas.push({ origin: event.to, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
@@ -378,11 +601,13 @@ export class IsoArenaScene extends Phaser.Scene {
       case 'hit': {
         const actor = event.targetId === PLAYER_ID ? this.hero : this.mobs.get(event.targetId);
         // Hit reaction only interrupts idle/run, never an attack or skill.
-        if (actor && !actor.oneShot) this.playOneShot(actor, 'hit');
-        this.spawnDamageNumber(event.pos, event.amount, event.isCrit, event.targetId === PLAYER_ID);
+        // A frozen mob holds its pose.
+        if (actor && !actor.oneShot && !actor.frozen) this.playOneShot(actor, 'hit');
+        this.spawnDamageNumber(event.pos, event.amount, event.isCrit ? 'crit' : event.targetId === PLAYER_ID ? 'player' : 'hit');
         break;
       }
       case 'death': {
+        this.flushDotTally(event.id);
         const actor = this.mobs.get(event.id);
         if (actor) {
           this.playOneShot(actor, 'death');
@@ -395,6 +620,7 @@ export class IsoArenaScene extends Phaser.Scene {
       }
       case 'levelUp':
         this.showLevelUp(event.level);
+        this.refreshBanner();
         break;
       case 'playerDeath':
         this.playOneShot(this.hero, 'death');
@@ -409,7 +635,7 @@ export class IsoArenaScene extends Phaser.Scene {
 
   private createActor(set: string, pos: Vec2): Actor {
     const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y);
-    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined };
+    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0 };
   }
 
   /** Remembers where everything was before a sim step, for interpolation. */
@@ -436,15 +662,17 @@ export class IsoArenaScene extends Phaser.Scene {
     return d > SNAP_DISTANCE ? 0 : d / DT;
   }
 
-  private playOneShot(actor: Actor, anim: string): void {
-    if (actor.oneShot?.anim === 'death') return;
+  private playOneShot(actor: Actor, anim: string): Actor['oneShot'] {
+    if (actor.oneShot?.anim === 'death') return undefined;
     actor.oneShot = { anim, elapsed: 0 };
+    return actor.oneShot;
   }
 
   private syncActors(dt: number): void {
     const player = this.world.player;
     const classDef = getClass(this.content, this.classId);
-    if (!player.dead) this.hero.facing = player.motion ? player.motion.dir : player.facing;
+    if (this.counterShot && this.hero.oneShot !== this.counterShot) this.counterShot = undefined;
+    if (!player.dead) this.hero.facing = this.counterShot ? this.counterFacing : player.motion ? player.motion.dir : player.facing;
     this.hero.display = this.interpolated(PLAYER_ID, player.pos);
     this.updateActor(this.hero, dt, this.speedOf(PLAYER_ID, player.pos), classDef.baseStats.movementSpeed ?? 200);
     this.hero.sprite.setAlpha(player.invulnerable > 0 ? 0.55 : 1);
@@ -462,14 +690,56 @@ export class IsoArenaScene extends Phaser.Scene {
         const k = 1 - Math.exp(-MOB_SMOOTHING * dt);
         actor.display = vec(actor.display.x + (target.x - actor.display.x) * k, actor.display.y + (target.y - actor.display.y) * k);
       }
-      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), getMob(this.content, mob.defId).moveSpeed);
-      if (mob.stun > 0) actor.sprite.setTint(0xfff27a);
-      else if (mob.slow > 0) actor.sprite.setTint(0x8fd3ff);
-      else actor.sprite.clearTint();
+      const def = getMob(this.content, mob.defId);
+      // A frozen mob holds its pose; a boss under freeze (freezeSlow) only looks frozen and keeps moving.
+      actor.frozen = mob.freeze > 0;
+      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), def.moveSpeed, actor.frozen);
+      // Likewise a boss under an ordinary stun (stunSlow) looks stunned but keeps moving.
+      const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
+      const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, Math.max(mob.slow, mob.auraSlow), this.world.time, mob.id);
+      if (look === undefined) actor.sprite.clearTint();
+      else actor.sprite.setTint(look.color).setTintMode(look.mode);
+    }
+    this.updateDotNumbers(dt);
+  }
+
+  /** Pops a damage number for each mob's ignite damage every DOT_NUMBER_INTERVAL, and once more when it ends. */
+  private updateDotNumbers(dt: number): void {
+    if (this.dotTallies.size === 0) return;
+    for (const mob of this.world.mobs) {
+      const tally = this.dotTallies.get(mob.id);
+      if (!tally) continue;
+      tally.timer -= dt;
+      if (mob.ignite <= 0) this.flushDotTally(mob.id);
+      else if (tally.timer <= 0) {
+        // Still burning: show the sum and keep counting in the same tally.
+        this.showDotTally(tally);
+        tally.amount = 0;
+        tally.timer = DOT_NUMBER_INTERVAL;
+      }
     }
   }
 
-  private updateActor(actor: Actor, dt: number, speed: number, referenceSpeed: number): void {
+  /** Shows the accumulated ignite damage of one mob (if any) and forgets the tally until the next dot event. */
+  private flushDotTally(id: number): void {
+    const tally = this.dotTallies.get(id);
+    if (!tally) return;
+    this.showDotTally(tally);
+    this.dotTallies.delete(id);
+  }
+
+  private showDotTally(tally: DotTally): void {
+    if (tally.amount >= 0.5) this.spawnDamageNumber(tally.pos, tally.amount, 'dot');
+  }
+
+  private updateActor(actor: Actor, dt: number, speed: number, referenceSpeed: number, frozen = false): void {
+    if (frozen) {
+      // Frozen: keep the current frame and row; only follow position and depth.
+      const screen = toScreen(actor.display);
+      actor.sprite.setPosition(screen.x, screen.y);
+      actor.sprite.setDepth(screen.y);
+      return;
+    }
     // Moving state comes from sim velocity, not from per-frame deltas (which are zero on frames
     // without a sim step at high refresh rates and made run/idle flicker).
     actor.moving = speed > MOVING_SPEED;
@@ -535,11 +805,20 @@ export class IsoArenaScene extends Phaser.Scene {
     g.lineStyle(2, player.buffs.length > 0 ? 0xff9a3c : 0xe8c15a, 0.9).strokeEllipse(hero.x, hero.y, 46, 23);
 
     for (const trap of this.world.traps) {
+      // Slow auras first, under every trigger ring; only while armed (that is when core applies them).
+      if (!trap.aura || trap.armTimer > 0) continue;
+      const p = toScreen(trap.pos);
+      this.combatFx.drawTrapAura(g, p.x, p.y, trap.aura.radius, this.world.time, trap.id);
+    }
+    for (const trap of this.world.traps) {
       const p = toScreen(trap.pos);
       const armed = trap.armTimer <= 0;
       const pulse = armed ? 0.6 + 0.4 * Math.sin(this.world.time * 10) : 0.4;
+      // Trigger zone (radius locked on the trap when thrown); a world circle of radius r is a 2r x r ellipse on screen.
+      g.lineStyle(1, armed ? 0xff7a3a : 0x888888, armed ? 0.25 + 0.3 * pulse : 0.25).strokeEllipse(p.x, p.y, trap.triggerRadius * 2, trap.triggerRadius);
       g.fillStyle(armed ? 0xff5a1a : 0x777777, pulse).fillEllipse(p.x, p.y, 22, 11);
       g.lineStyle(1, 0x000000, 0.8).strokeEllipse(p.x, p.y, 22, 11);
+      if (trap.chainTimer !== null) this.combatFx.drawTrapFuse(top, p.x, p.y, this.world.time, dt);
     }
 
     for (const area of this.areas) area.ttl -= dt;
@@ -558,6 +837,22 @@ export class IsoArenaScene extends Phaser.Scene {
       g.fillPoints(points.map((p) => new Phaser.Math.Vector2(p.x, p.y)), true);
     }
 
+    // Status marks on living mobs (ice patch, stun dots, embers) and death explosion bursts.
+    for (const mob of this.world.mobs) {
+      const actor = this.mobs.get(mob.id);
+      if (!actor) continue;
+      const radius = getMob(this.content, mob.defId).radius;
+      const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
+      this.combatFx.drawMobStatus(g, top, actor.sprite.x, actor.sprite.y, radius, frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, this.world.time, dt, mob.id);
+      // Stun bar (stunBar mechanic): eases up to the core fill, snaps down on reset; flashes full after a stun.
+      actor.stunBarFlash = Math.max(0, actor.stunBarFlash - dt);
+      if (mob.stunBar < actor.stunBarShown) actor.stunBarShown = mob.stunBar;
+      else actor.stunBarShown += (mob.stunBar - actor.stunBarShown) * (1 - Math.exp(-STUN_BAR_SMOOTHING * dt));
+      if (actor.stunBarShown < 0.002 && mob.stunBar <= 0) actor.stunBarShown = 0;
+      this.combatFx.drawStunBar(top, actor.sprite.x, actor.sprite.y, actor.stunBarShown, actor.stunBarFlash);
+    }
+    this.combatFx.drawBursts(g, top, dt);
+
     for (const p of this.world.projectiles) {
       const pos = this.interpolated(p.id, p.pos);
       const s = toScreen(pos);
@@ -568,6 +863,9 @@ export class IsoArenaScene extends Phaser.Scene {
         top.fillStyle(color, 0.35).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 2.2);
         top.fillStyle(color, 1).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 1.2);
       } else {
+        // Far Shot: the bolt glows brighter as its distance bonus builds up.
+        const glow = p.action ? farShotGlow(player.mechanics, p.action.tags, p.travelled) : 0;
+        if (glow > 0) top.lineStyle(3 + 5 * glow, FAR_SHOT_GLOW, 0.15 + 0.45 * glow).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
         top.lineStyle(3, color, 1).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
       }
     }
@@ -641,21 +939,24 @@ export class IsoArenaScene extends Phaser.Scene {
     this.tweens.add({ targets: banner, scale: 1, duration: 300, ease: 'Back.easeOut' });
   }
 
-  private spawnDamageNumber(pos: Vec2, amount: number, isCrit: boolean, onPlayer: boolean): void {
+  private spawnDamageNumber(pos: Vec2, amount: number, kind: DamageNumberKind): void {
+    const style = DAMAGE_NUMBER_STYLES[kind];
     const screen = toScreen(pos);
     const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
+    // Ignite numbers sit a bit lower and to the side so they do not cover hit numbers.
+    const dx = kind === 'dot' ? 14 + Math.random() * 10 : (Math.random() - 0.5) * 16;
     text
-      .setText(String(Math.round(amount)))
-      .setPosition(screen.x + (Math.random() - 0.5) * 16, screen.y - 70)
-      .setColor(onPlayer ? '#ff5050' : isCrit ? '#ffd23f' : '#ffffff')
-      .setFontSize(isCrit ? 26 : 18)
+      .setText(String(kind === 'dot' ? Math.max(1, Math.round(amount)) : Math.round(amount)))
+      .setPosition(screen.x + dx, screen.y - (kind === 'dot' ? 56 : 70))
+      .setColor(style.color)
+      .setFontSize(style.size)
       .setAlpha(1)
       .setVisible(true);
     this.tweens.add({
       targets: text,
-      y: text.y - 30,
+      y: text.y - style.rise,
       alpha: 0,
-      duration: 600,
+      duration: style.duration,
       onComplete: () => {
         text.setVisible(false);
         this.textPool.push(text);

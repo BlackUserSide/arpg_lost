@@ -6,7 +6,7 @@ import { computeDamage, rollBaseDamage, totalDamage } from './damage';
 import { applyDamage, resolveHit } from './hit';
 import { armourReduction, mitigate, resistanceMultiplier, type Defences } from './mitigation';
 
-const config: CombatConfig = { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9 };
+const config: CombatConfig = { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5, bossStunSlow: 0.5 };
 const noDefences: Defences = { armour: 0, resistances: { fire: 0, cold: 0, lightning: 0 } };
 
 describe('rollBaseDamage', () => {

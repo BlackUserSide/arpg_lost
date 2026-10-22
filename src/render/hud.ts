@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { xpToNextLevel, type ProgressionRules } from '../core/progression/levels';
 import type { ActionDef, ClassDef } from '../core/world/content';
-import { playerStat, type WorldState } from '../core/world/world';
+import { actionCost, canAfford, chargeInfo, lifeRecoveryPool, playerStat, type ActionSet, type WorldState } from '../core/world/world';
 import { skillIcon } from './hudIcons';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
@@ -10,6 +10,9 @@ import { frameTexture, label, makeFrame, UI } from './ui';
 
 const DEPTH = 10000;
 const SLOT_KEYS = ['LMB', 'RMB', 'Q', 'E'];
+/** Energy shield colours, used when the shield fills the life orb. */
+const SHIELD_DEEP = 0x1d4f7a;
+const SHIELD_BRIGHT = 0x9fd8ff;
 
 interface Orb {
   ring: Phaser.GameObjects.Image;
@@ -22,11 +25,21 @@ interface Orb {
 }
 
 interface Slot {
+  /** Effective action bound to the slot (world.player.actions; refreshed when the loadout changes). */
   action: ActionDef;
   frame: Phaser.GameObjects.Image;
   icon: Phaser.GameObjects.Image;
   key: Phaser.GameObjects.Text;
   cdText: Phaser.GameObjects.Text;
+  /** Life price shown when skills cost life (Blood Magic); empty otherwise. */
+  costText: Phaser.GameObjects.Text;
+  /** The action is paid with life. */
+  lifeCost: boolean;
+  /** Stored charges badge (top-right corner), only for multi-charge actions. */
+  chargeBadge: Phaser.GameObjects.Arc;
+  chargeText: Phaser.GameObjects.Text;
+  /** Charge count last drawn (avoids re-setting text every frame); -1 = hidden. */
+  shownCharges: number;
   x: number;
   y: number;
   size: number;
@@ -92,6 +105,12 @@ export class Hud {
   private infoFrame: Phaser.GameObjects.Image;
   private buffIcons: Phaser.GameObjects.GameObject[] = [];
   private time = 0;
+  /** Mechanics list the slot costs were computed for (the world replaces the array on change). */
+  private costsFor: unknown;
+  /** Action set the slots were bound to (the world replaces it when the loadout changes). */
+  private actionsFor: ActionSet | undefined;
+  /** Caption on the mana orb when skills cost life instead (max mana 0). */
+  private readonly manaNote: Phaser.GameObjects.Text;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -112,10 +131,17 @@ export class Hud {
       key.setStroke('#000', 3);
       const cdText = label(scene, 0, 0, '', 18, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 3);
       cdText.setStroke('#000', 4);
-      return { action, frame, icon, key, cdText, x: 0, y: 0, size: 56 };
+      const costText = label(scene, 0, 0, '', 12, '#ff8a7a', true).setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH + 3);
+      costText.setStroke('#000', 3);
+      const chargeBadge = scene.add.circle(0, 0, 10, 0x1a1408, 0.92).setStrokeStyle(2, 0xc89a3a, 1).setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
+      const chargeText = label(scene, 0, 0, '', 13, UI.goldBrightText, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 4).setVisible(false);
+      chargeText.setStroke('#000', 3);
+      return { action, frame, icon, key, cdText, costText, lifeCost: false, chargeBadge, chargeText, shownCharges: -1, x: 0, y: 0, size: 56 };
     });
     this.infoFrame = makeFrame(scene, 0, 0, 240, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
     this.info = label(scene, 0, 0, '', 15, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+    this.manaNote = label(scene, 0, 0, 'скіли за\nжиття', 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
+    this.manaNote.setStroke('#000', 3);
   }
 
   layout(width: number, height: number): void {
@@ -136,7 +162,15 @@ export class Hud {
       slot.icon.setPosition(slot.x, slot.y).setDisplaySize(size - 10, size - 10);
       slot.key.setPosition(slot.x, slot.y + size / 2 - 2);
       slot.cdText.setPosition(slot.x, slot.y);
+      slot.costText.setPosition(slot.x - size / 2 + 4, slot.y - size / 2 + 3);
+      // Charge badge on the frame's top-right corner (key caption is bottom-centre, life cost top-left).
+      const br = compact ? 10 : 11;
+      const bx = slot.x + size / 2 - br + 3;
+      const by = slot.y - size / 2 + br - 3;
+      slot.chargeBadge.setPosition(bx, by).setRadius(br);
+      slot.chargeText.setPosition(bx, by).setFontSize(compact ? 12 : 14);
     });
+    this.manaNote.setPosition(this.mana.x, this.mana.y);
     // XP bar spans the skill bar, just above it; level number to its left.
     const barH = compact ? 6 : 8;
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - size - (compact ? 10 : 14) - barH, w: total, h: barH };
@@ -156,31 +190,72 @@ export class Hud {
     const maxShield = playerStat(this.classDef, p, 'energyShield');
 
     const g = this.liquid.clear();
-    this.drawOrb(g, this.life, maxLife > 0 ? p.life / maxLife : 0);
-    this.drawOrb(g, this.mana, maxMana > 0 ? p.mana / maxMana : 0);
-    if (maxShield > 0 && p.energyShield > 0) {
+    // Crystal Shell leaves 1 life: energy shield is the real pool, so it fills the life orb.
+    const shieldIsPool = lifeRecoveryPool(p.mechanics) === 'energyShield' && maxShield > 0;
+    if (shieldIsPool) this.drawOrb(g, this.life, p.energyShield / maxShield, SHIELD_DEEP, SHIELD_BRIGHT);
+    else this.drawOrb(g, this.life, maxLife > 0 ? p.life / maxLife : 0);
+    // Blood Magic: no mana at all; the orb greys out and says skills cost life.
+    const noMana = maxMana <= 0;
+    if (noMana) g.fillStyle(0x1a1719, 1).fillCircle(this.mana.x, this.mana.y, this.mana.r);
+    else this.drawOrb(g, this.mana, p.mana / maxMana);
+    this.mana.ring.setAlpha(noMana ? 0.45 : 1);
+    this.mana.text.setVisible(!noMana);
+    this.manaNote.setVisible(noMana);
+    if (!shieldIsPool && maxShield > 0 && p.energyShield > 0) {
       // Energy shield: a pale arc hugging the life orb.
       g.lineStyle(5, 0x9fd8ff, 0.95);
       g.beginPath();
       g.arc(this.life.x, this.life.y, this.life.r - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (p.energyShield / maxShield));
       g.strokePath();
     }
-    this.life.text.setText(`${Math.ceil(p.life)}`);
+    this.life.text.setText(shieldIsPool ? `${Math.ceil(p.energyShield)}` : `${Math.ceil(p.life)}`);
     this.mana.text.setText(`${Math.floor(p.mana)}`);
 
+    if (this.actionsFor !== p.actions) {
+      // Effective skills (cooldowns etc. after passives) are resolved by core; slot order = class order.
+      this.actionsFor = p.actions;
+      const actions = [p.actions.basicAttack, ...p.actions.skills];
+      this.slots.forEach((slot, i) => {
+        slot.action = actions[i] ?? slot.action;
+      });
+      this.costsFor = undefined;
+    }
+    if (this.costsFor !== p.mechanics) {
+      // Prices only change with the hero's mechanics, not every frame.
+      this.costsFor = p.mechanics;
+      for (const slot of this.slots) {
+        const cost = actionCost(p.mechanics, slot.action.manaCost);
+        slot.lifeCost = cost.pool === 'life';
+        slot.costText.setText(slot.lifeCost && cost.amount > 0 ? `♥${Math.round(cost.amount)}` : '');
+      }
+    }
     const s = this.shutters.clear();
     for (const slot of this.slots) {
-      const cd = p.cooldowns[slot.action.id] ?? 0;
-      const noMana = p.mana < slot.action.manaCost;
-      slot.icon.setAlpha(cd > 0.05 || noMana ? 0.45 : 1);
-      if (noMana) slot.icon.setTint(0x6a7ab8);
+      // Multi-charge actions stay usable while any charge is stored; the shutter shows the next charge's recharge.
+      const info = chargeInfo(p, slot.action);
+      const multi = info.max > 1;
+      const cd = info.recharge;
+      const blocked = multi ? info.charges <= 0 : cd > 0.05;
+      const unaffordable = !canAfford(p, slot.action);
+      slot.icon.setAlpha(blocked || unaffordable ? 0.45 : 1);
+      if (unaffordable) slot.icon.setTint(slot.lifeCost ? 0xb86a6a : 0x6a7ab8);
       else slot.icon.clearTint();
-      if (cd > 0.05 && slot.action.cooldown > 0) {
-        const frac = Math.min(1, cd / slot.action.cooldown);
-        s.fillStyle(0x000000, 0.6);
+      const shown = multi ? info.charges : -1;
+      if (shown !== slot.shownCharges) {
+        slot.shownCharges = shown;
+        const empty = multi && info.charges === 0;
+        slot.chargeBadge.setVisible(multi).setStrokeStyle(2, empty ? 0x6a5a3a : 0xc89a3a, 1);
+        slot.chargeText.setVisible(multi).setText(multi ? String(info.charges) : '').setColor(empty ? '#8a8070' : UI.goldBrightText);
+      }
+      if (cd > 0.05) {
+        // A mid-run swap can shorten the cooldown below what is still running: never divide by less than the remainder.
+        const frac = Math.min(1, cd / Math.max(slot.action.cooldown, cd));
+        // Charges still stored: a lighter shutter, the skill stays usable.
+        s.fillStyle(0x000000, blocked ? 0.6 : 0.28);
         s.slice(slot.x, slot.y, (slot.size - 10) / 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac, false);
         s.fillPath();
-        slot.cdText.setText(cd >= 1 ? String(Math.ceil(cd)) : cd.toFixed(1));
+        // Countdown only while blocked; with charges left a big number would read as "not ready".
+        slot.cdText.setText(blocked ? (cd >= 1 ? String(Math.ceil(cd)) : cd.toFixed(1)) : '');
       } else {
         slot.cdText.setText('');
       }
@@ -225,7 +300,7 @@ export class Hud {
     if (!first) return;
     const size = 30;
     buffs.forEach((buff, i) => {
-      const source = this.classDef.skills.find((a) => a.selfEffects?.some((e) => e.kind === 'buff' && e.id === buff.id));
+      const source = world.player.actions.skills.find((a) => a.selfEffects?.some((e) => e.kind === 'buff' && e.id === buff.id));
       const x = first.x - first.size / 2 + size / 2 + i * (size + 6);
       const y = first.y - first.size / 2 - size / 2 - 28; // above the XP bar
       const icon = this.scene.add.image(x, y, skillIcon(this.scene, source?.id ?? buff.id)).setDisplaySize(size, size).setScrollFactor(0).setDepth(DEPTH);
@@ -250,8 +325,8 @@ export class Hud {
     orb.text.setPosition(x, y + r * 0.15).setFontSize(r > 45 ? 18 : 14);
   }
 
-  /** Liquid filled up to `frac`, with a gently moving surface. */
-  private drawOrb(g: Phaser.GameObjects.Graphics, orb: Orb, frac: number): void {
+  /** Liquid filled up to `frac`, with a gently moving surface. Colours default to the orb's own. */
+  private drawOrb(g: Phaser.GameObjects.Graphics, orb: Orb, frac: number, deep = orb.deep, bright = orb.bright): void {
     const { x, y, r } = orb;
     g.fillStyle(0x07060a, 1).fillCircle(x, y, r);
     const f = Phaser.Math.Clamp(frac, 0, 1);
@@ -269,10 +344,10 @@ export class Hud {
       const dx = -r + (2 * r * i) / steps;
       points.push(new Phaser.Math.Vector2(x + dx, y + Math.sqrt(Math.max(0, r * r - dx * dx))));
     }
-    g.fillStyle(orb.deep, 1).fillPoints(points, true);
+    g.fillStyle(deep, 1).fillPoints(points, true);
     // Bright surface line.
-    if (f < 1) g.lineStyle(2, orb.bright, 0.9).strokePoints(points.slice(0, steps + 1), false);
-    else g.fillStyle(orb.bright, 0.25).fillCircle(x, y + r * 0.3, r * 0.6);
+    if (f < 1) g.lineStyle(2, bright, 0.9).strokePoints(points.slice(0, steps + 1), false);
+    else g.fillStyle(bright, 0.25).fillCircle(x, y + r * 0.3, r * 0.6);
   }
 }
 

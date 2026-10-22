@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { vec } from '../core/math';
+import { softDotTexture, sparkTexture } from './fxTextures';
 import { toScreen } from './iso';
 import { spriteFrame, textureKey } from './sprites';
 
@@ -12,36 +13,6 @@ const PLAIN_FLOORS = [0, 1, 2, 3, 20, 21, 22, 23];
 
 export function preloadBackdrop(scene: Phaser.Scene): void {
   if (!scene.textures.exists('floor')) scene.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
-}
-
-function softDotTexture(scene: Phaser.Scene): string {
-  const key = 'fx:soft-dot';
-  if (scene.textures.exists(key)) return key;
-  const size = 64;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.35, 'rgba(255,255,255,0.55)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  scene.textures.addCanvas(key, canvas);
-  return key;
-}
-
-function sparkTexture(scene: Phaser.Scene): string {
-  const key = 'fx:spark';
-  if (scene.textures.exists(key)) return key;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 6;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(2, 0, 2, 6);
-  ctx.fillRect(0, 2, 6, 2);
-  scene.textures.addCanvas(key, canvas);
-  return key;
 }
 
 /** Full-screen radial darkness: transparent around the fire, black at the edges. */

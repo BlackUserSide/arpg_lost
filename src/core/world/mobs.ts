@@ -1,23 +1,35 @@
-import { rollBaseDamage } from '../combat/damage';
+import { applyDamageTaken, rollBaseDamage, totalDamage } from '../combat/damage';
 import { applyDamage, resolveHit } from '../combat/hit';
 import type { Defences } from '../combat/mitigation';
 import { add, distance, normalize, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { Content, MobDef } from './content';
+import { counterAttack } from './actions';
+import { heroDeathExplosions } from './deathExplosions';
 import { gainKillXp } from './experience';
-import { clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
+import { decayStunBar, tickIgnite } from './statuses';
+import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
   const { world, content, events } = ctx;
   const player = world.player;
+  const barStats = player.stunBarStats;
   for (const mob of world.mobs) {
+    // Mobs killed earlier this step neither act nor tick: their statuses at death stay as they were.
+    if (mob.life <= 0) continue;
+    tickIgnite(ctx, mob, dt);
+    if (mob.life <= 0) continue;
     const def = getMob(content, mob.defId);
     mob.slow = Math.max(0, mob.slow - dt);
-    if (mob.stun > 0) {
-      mob.stun = Math.max(0, mob.stun - dt);
-      continue;
-    }
-    const speedFactor = mob.slow > 0 ? Math.max(0, 1 - mob.slowMagnitude) : 1;
+    mob.freezeSlow = Math.max(0, mob.freezeSlow - dt);
+    mob.stunSlow = Math.max(0, mob.stunSlow - dt);
+    if (barStats) decayStunBar(mob, barStats, dt);
+    const speedFactor = 1 - slowFraction(mob, content);
+    // Stunned or frozen: cannot move or attack (the attack timer does not run either).
+    const disabled = mob.stun > 0 || mob.freeze > 0;
+    mob.stun = Math.max(0, mob.stun - dt);
+    mob.freeze = Math.max(0, mob.freeze - dt);
+    if (disabled) continue;
     mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor);
 
     const toPlayer = normalize(sub(player.pos, mob.pos));
@@ -46,19 +58,33 @@ export function updateMobs(ctx: Ctx, dt: number): void {
           speed: def.attack.projectile.speed,
           radius: def.attack.projectile.radius,
           remaining: def.attack.range + player.radius + def.radius,
+          travelled: 0,
           pierceLeft: 0,
           explodeRadius: 0,
           hitIds: [],
+          castModifiers: [],
         });
       } else {
-        hitPlayer(ctx, def);
+        hitPlayer(ctx, def, mob);
       }
     }
   }
   separateMobs(world, content);
 }
 
-export function hitPlayer(ctx: Ctx, mobDef: MobDef): void {
+/** Fraction of speed removed now: the strongest of the active slow, the trap aura slow and the boss freeze- / stun-slows (0..1). */
+export function slowFraction(mob: MobState, content: Content): number {
+  const slow = mob.slow > 0 ? mob.slowMagnitude : 0;
+  const freezeSlow = mob.freezeSlow > 0 ? content.combat.bossFreezeSlow : 0;
+  const stunSlow = mob.stunSlow > 0 ? content.combat.bossStunSlow : 0;
+  return Math.min(1, Math.max(0, slow, mob.auraSlow, freezeSlow, stunSlow));
+}
+
+/**
+ * A mob attack lands on the hero. `meleeAttacker`: the attacking mob, for melee hits only (mob projectiles pass
+ * nothing); a melee hit that the hero survives may trigger counterAttack against it.
+ */
+export function hitPlayer(ctx: Ctx, mobDef: MobDef, meleeAttacker?: MobState): void {
   const { world, content, classDef, rng, events } = ctx;
   const player = world.player;
   if (player.dead || player.invulnerable > 0) return;
@@ -77,15 +103,19 @@ export function hitPlayer(ctx: Ctx, mobDef: MobDef): void {
     defences,
     content.combat,
   );
-  const result = applyDamage({ life: player.life, energyShield: player.energyShield }, hit.total);
+  // Damage taken modifiers (e.g. Glass Cannon) apply after mitigation, before the ES / life split.
+  const taken = totalDamage(applyDamageTaken(hit.damage, allModifiers(classDef, player)));
+  const result = applyDamage({ life: player.life, energyShield: player.energyShield }, taken);
   player.life = result.pools.life;
   player.energyShield = result.pools.energyShield;
-  events.push({ type: 'hit', targetId: player.id, pos: player.pos, amount: hit.total, isCrit: hit.isCrit });
+  events.push({ type: 'hit', targetId: player.id, pos: player.pos, amount: taken, isCrit: hit.isCrit });
   if (result.isDead) {
     player.dead = true;
     player.motion = undefined;
     events.push({ type: 'playerDeath' });
+    return;
   }
+  if (meleeAttacker) counterAttack(ctx, meleeAttacker);
 }
 
 /** Pushes overlapping mobs apart and out of the player, so crowds surround instead of stacking. */
@@ -114,19 +144,22 @@ function separateMobs(world: WorldState, content: Content): void {
   }
 }
 
+/**
+ * Removes dead mobs: kill count, death event, XP, then death explosions. Mobs killed by an explosion are queued
+ * and processed in the same call (their own explosions included); every mob dies once, so chains terminate.
+ */
 export function removeDeadMobs(ctx: Ctx): void {
   const { world, events } = ctx;
-  const alive: MobState[] = [];
-  for (const mob of world.mobs) {
-    if (mob.life > 0) {
-      alive.push(mob);
-      continue;
-    }
+  const queue = world.mobs.filter((mob) => mob.life <= 0);
+  if (queue.length === 0) return;
+  for (let i = 0; i < queue.length; i++) {
+    const mob = queue[i]!;
     world.kills++;
     events.push({ type: 'death', id: mob.id, pos: mob.pos });
     gainKillXp(ctx, getMob(ctx.content, mob.defId).xp);
+    queue.push(...heroDeathExplosions(ctx, mob));
   }
-  world.mobs = alive;
+  world.mobs = world.mobs.filter((mob) => mob.life > 0);
 }
 
 export function updateSpawner(ctx: Ctx, dt: number): void {
@@ -147,10 +180,19 @@ export function updateSpawner(ctx: Ctx, dt: number): void {
       pos: randomEdgePoint(rng, def.radius, content),
       facing: vec(0, 1),
       life: def.life,
+      maxLife: def.life,
       attackTimer: 0,
       stun: 0,
       slow: 0,
       slowMagnitude: 0,
+      ignite: 0,
+      igniteDps: 0,
+      freeze: 0,
+      freezeSlow: 0,
+      stunSlow: 0,
+      stunBar: 0,
+      stunBarIdle: 0,
+      auraSlow: 0,
     };
     world.mobs.push(mob);
     events.push({ type: 'spawn', id: mob.id });

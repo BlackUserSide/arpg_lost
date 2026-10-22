@@ -1,8 +1,19 @@
 import { clamp, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
-import { computeStat } from '../stats/modifiers';
-import type { Modifier, StatId, Tag } from '../stats/types';
-import type { ClassDef, Content, MobDef, WeaponDef } from './content';
+import type { PassiveMechanic } from '../passives/types';
+import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
+import type { ActionDef, ClassDef, Content, MobDef, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
+import { resolveActions, type ActionSet } from '../skills/params';
+import {
+  activeConditionalModifiers,
+  deriveStat,
+  hasStateMechanics,
+  skillChangeSets,
+  stunBarStats,
+  type ConditionState,
+  type ConditionTarget,
+  type StunBarStats,
+} from './passiveEffects';
 
 export const PLAYER_ID = 0;
 
@@ -15,6 +26,8 @@ export interface Buff {
 /** Forced movement from a dash-like action. */
 export interface Motion {
   readonly actionId: string;
+  /** The effective action as it was when the dash started; its hits use this (see Projectile.action). */
+  readonly action: ActionDef;
   readonly dir: Vec2;
   readonly speed: number;
   readonly hitRadius: number;
@@ -33,14 +46,45 @@ export interface PlayerState {
   mana: number;
   /** Time until the next basic attack or skill can start. */
   actionTimer: number;
+  /**
+   * Per action id: seconds until the action is ready again. For actions with charges > 1 (see `charges`): seconds
+   * until the next charge is restored (0 while all charges are stored).
+   */
   cooldowns: Record<string, number>;
+  /**
+   * Stored charges per action id, only for actions with charges > 1 (ActionDef.charges after skill changes);
+   * full at spawn. HUD: available = charges[id], max = actions' charges, next charge in cooldowns[id]
+   * (see chargeInfo in charges.ts).
+   */
+  charges: Record<string, number>;
   level: number;
   /** XP towards the next level. */
   xp: number;
-  /** Modifiers brought into the run (items, later passives); level stats are added on top. */
-  readonly gearModifiers: readonly Modifier[];
+  /** Modifiers brought into the run (items, passives); level stats are added on top. */
+  gearModifiers: readonly Modifier[];
   /** Permanent modifiers: gear + level. Rebuilt on level-up. */
   modifiers: Modifier[];
+  /** Level stats only (a subset of `modifiers`); "base life" for lifeToEnergyShield. */
+  levelModifiers: Modifier[];
+  /** Passive tree mechanics brought into the run (keystones, spec effects); see passiveEffects.ts. */
+  mechanics: readonly PassiveMechanic[];
+  /**
+   * Effective basic attack and skills: class data with the skill changes of `mechanics` applied
+   * (core/skills/params). Derived plain data, rebuilt whenever the mechanics change (createWorld,
+   * setLoadoutModifiers). The simulation reads actions from here, never from the class data.
+   */
+  actions: ActionSet;
+  /** Stun bar rules of `mechanics` (stunBarStats), cached with `actions`; undefined without a stunBar mechanic. */
+  stunBarStats: StunBarStats | undefined;
+  /** Seconds since the player last changed position (walk, dash, teleport). 0 at spawn. */
+  stillTime: number;
+  /**
+   * Leech restored "recently" for the lifeLeech per-second cap: grows by each leech, drains by the cap per
+   * second. Leech is allowed while it is below one second's worth of cap. 0 at spawn.
+   */
+  leechRecent: number;
+  /** Seconds until counterAttack can trigger again (its internal cooldown); 0 = ready. */
+  counterCooldown: number;
   /** Equipped weapon, or the class default. */
   weapon: WeaponDef;
   buffs: Buff[];
@@ -55,10 +99,42 @@ export interface MobState {
   pos: Vec2;
   facing: Vec2;
   life: number;
+  /** Max life, set at spawn (= MobDef.life today; elite / map scaling later). Death explosions use it. */
+  readonly maxLife: number;
   attackTimer: number;
+  /** Remaining seconds of each status (0 = none); see STATUS_IDS. */
   stun: number;
   slow: number;
   slowMagnitude: number;
+  ignite: number;
+  /** Fire damage per second of the current ignite, after the mob's fire resistance (0 when not ignited). */
+  igniteDps: number;
+  freeze: number;
+  /**
+   * Bosses only: the short strong slow that replaces a freeze (CombatConfig.bossFreezeSlow). A separate slot,
+   * so it never overwrites a longer, weaker `slow`; the stronger of the two active slows applies.
+   * While it runs the boss counts as frozen (and as slowed).
+   */
+  freezeSlow: number;
+  /**
+   * Bosses only: the strong slow that replaces an ordinary stun (CombatConfig.bossStunSlow), own slot like
+   * `freezeSlow`. While it runs the boss counts as stunned (and as slowed). The stun bar's stun is a real stun.
+   */
+  stunSlow: number;
+  /**
+   * Stun bar fill (stunBar mechanic), 0..1 where 1 = full; a full bar stuns and resets to 0. Decays after
+   * stunBarIdle reaches the mechanic's decayDelay (no events while decaying). Render may read it directly (max is 1).
+   */
+  stunBar: number;
+  /** Seconds since the last hero hit that filled the stun bar (stunBar decay delay). */
+  stunBarIdle: number;
+  /**
+   * Slow from armed trap auras (TrapAura), as a magnitude (0 = none). Recomputed every step by updateTraps from the
+   * traps around the mob, so it lasts exactly while the mob stays in range (applied to movement on the next
+   * step's mob update). Own slot like freezeSlow: never merges into `slow`; the strongest active slow applies,
+   * and while it is > 0 the mob counts as slowed (conditions, freeze-if-slowed). Render may read it directly.
+   */
+  auraSlow: number;
 }
 
 export interface Projectile {
@@ -66,22 +142,48 @@ export interface Projectile {
   readonly owner: 'player' | 'mob';
   /** Action id (player) or mob def id (mob). */
   readonly sourceId: string;
+  /**
+   * Player projectiles: the effective action (plain data) as it was when fired. Its hits use this snapshot, so
+   * damage, tags, crit and on-hit statuses (incl. durations) come from cast time even if the loadout changes
+   * mid-flight. Omitted for mob projectiles.
+   */
+  readonly action?: ActionDef;
   pos: Vec2;
   readonly dir: Vec2;
   readonly speed: number;
   readonly radius: number;
   remaining: number;
+  /** Distance flown since it was fired (distanceDamage); keeps growing through pierced targets. */
+  travelled: number;
   pierceLeft: number;
   readonly explodeRadius: number;
   hitIds: number[];
+  /**
+   * Hero-wide conditional modifiers (moving / standing / low life) locked when the action fired; used for
+   * its hits instead of re-evaluating at impact. Empty for mob projectiles. See heroConditionalModifiers.
+   */
+  readonly castModifiers: readonly Modifier[];
 }
 
 export interface Trap {
   readonly id: number;
   readonly actionId: string;
+  /** The effective action as it was when thrown (see Projectile.action). */
+  readonly action: ActionDef;
   readonly pos: Vec2;
   armTimer: number;
   lifetime: number;
+  /** Trigger and explosion radii locked when the trap was thrown (effective skill params at that moment). */
+  readonly triggerRadius: number;
+  readonly explodeRadius: number;
+  /** Chain detonation rules locked when thrown (trap Delivery.chain), or null. */
+  readonly chain: TrapChain | null;
+  /** Slow aura locked when thrown (trap Delivery.aura), or null; active only while armed. Render: aura.radius. */
+  readonly aura: TrapAura | null;
+  /** Seconds until a chain detonation set off by another trap explodes this one; null when not chained. */
+  chainTimer: number | null;
+  /** Hero-wide conditional modifiers locked when the trap was thrown (see Projectile.castModifiers). */
+  readonly castModifiers: readonly Modifier[];
 }
 
 export interface WorldState {
@@ -112,8 +214,36 @@ export interface PlayerInput {
 
 export type WorldEvent =
   | { type: 'action'; actionId: string; facing: Vec2 }
-  /** A damage zone resolved this tick (arc swing, nova, explosion) — for visuals. */
-  | { type: 'area'; actionId: string; origin: Vec2; facing: Vec2; radius: number; angleDeg: number }
+  /**
+   * A damage zone resolved this tick (arc swing, nova, explosion) — for visuals. Death explosions have
+   * actionId 'deathExplosion', `source` 'deathExplosion', their damage type and the id of the mob that exploded.
+   */
+  | {
+      type: 'area';
+      actionId: string;
+      origin: Vec2;
+      facing: Vec2;
+      radius: number;
+      angleDeg: number;
+      source?: 'deathExplosion';
+      damageType?: DamageType;
+      sourceMobId?: number;
+      /** A trap set off by another trap's explosion (chain detonation). */
+      chain?: true;
+    }
+  /** A hero trap vanished without exploding: the oldest one, removed because the active-trap cap was reached. */
+  | { type: 'trapRemoved'; trapId: number; pos: Vec2; reason: 'limit' }
+  /**
+   * A status was applied to (or refreshed on) a living mob; `duration` is its new remaining time. `source`
+   * 'stunBar': the stun of a full stun bar (omitted for statuses from hits).
+   */
+  | { type: 'status'; targetId: number; pos: Vec2; status: StatusId; duration: number; source?: 'stunBar' }
+  /** A hero hit changed a living mob's stun bar; `value` is the new fill (0..1; 0 after a full bar stunned and reset). */
+  | { type: 'stunBar'; targetId: number; value: number }
+  /** The hero retaliated (counterAttack) with `actionId` (the basic attack) at `targetId`; `facing` points at it. */
+  | { type: 'counter'; actionId: string; targetId: number; facing: Vec2 }
+  /** Damage over time dealt this step (one event per mob per step; aggregate for damage numbers). */
+  | { type: 'dot'; targetId: number; pos: Vec2; amount: number; status: StatusId }
   | { type: 'teleport'; from: Vec2; to: Vec2 }
   | { type: 'mobAttack'; id: number }
   | { type: 'hit'; targetId: number; pos: Vec2; amount: number; isCrit: boolean }
@@ -144,13 +274,79 @@ export function getMob(content: Content, id: string): MobDef {
   return def;
 }
 
-export function allModifiers(player: PlayerState): readonly Modifier[] {
+/** What the hero's passive mechanics derive once per loadout (PlayerState.actions, PlayerState.stunBarStats). */
+export function deriveFromMechanics(classDef: ClassDef, mechanics: readonly PassiveMechanic[]): Pick<PlayerState, 'actions' | 'stunBarStats'> {
+  return { actions: resolveActions(classDef, skillChangeSets(mechanics)), stunBarStats: stunBarStats(mechanics) };
+}
+
+/** Permanent modifiers and buffs, without conditional (passive mechanic) modifiers. */
+export function baseModifiers(player: PlayerState): readonly Modifier[] {
   if (player.buffs.length === 0) return player.modifiers;
   return [...player.modifiers, ...player.buffs.flatMap((b) => b.modifiers)];
 }
 
+function hasConditionalMechanics(player: PlayerState): boolean {
+  return hasStateMechanics(player.mechanics);
+}
+
+/** Hero state for conditions; pool maximums (full stat derivations) are computed only if a mechanic asks. */
+function conditionState(classDef: ClassDef, player: PlayerState, base: readonly Modifier[]): ConditionState {
+  const source = { baseStats: classDef.baseStats, modifiers: base, levelModifiers: player.levelModifiers, mechanics: player.mechanics };
+  return {
+    stillTime: player.stillTime,
+    life: player.life,
+    energyShield: player.energyShield,
+    get maxLife(): number {
+      return deriveStat(source, 'life');
+    },
+    get maxEnergyShield(): number {
+      return deriveStat(source, 'energyShield');
+    },
+  };
+}
+
+/**
+ * Conditional modifiers whose hero-wide condition (moving, standing, low life) holds right now.
+ * Delayed hits (projectiles, traps) snapshot this when the action fires (Projectile.castModifiers).
+ */
+export function heroConditionalModifiers(classDef: ClassDef, player: PlayerState): Modifier[] {
+  if (!hasConditionalMechanics(player)) return [];
+  return activeConditionalModifiers(player.mechanics, conditionState(classDef, player, baseModifiers(player)));
+}
+
+/**
+ * Every modifier that applies to the player right now: permanent, buffs and conditional modifiers whose
+ * hero condition holds (moving, standing, low life). With `target`, per-hit target conditions are added too.
+ * `castModifiers` replaces the live hero conditions with a snapshot taken at cast time (delayed hits);
+ * target conditions are still evaluated now, against the target being hit.
+ */
+export function allModifiers(
+  classDef: ClassDef,
+  player: PlayerState,
+  target?: ConditionTarget,
+  castModifiers?: readonly Modifier[],
+): readonly Modifier[] {
+  const base = baseModifiers(player);
+  if (!hasConditionalMechanics(player)) return castModifiers && castModifiers.length > 0 ? [...base, ...castModifiers] : base;
+  const state = conditionState(classDef, player, base);
+  const extra = castModifiers ? [...castModifiers] : activeConditionalModifiers(player.mechanics, state);
+  if (target) extra.push(...activeConditionalModifiers(player.mechanics, state, target));
+  return extra.length === 0 ? base : [...base, ...extra];
+}
+
+/** A player stat with all modifiers and pool mechanics (blood magic, crystal shell) applied. */
 export function playerStat(classDef: ClassDef, player: PlayerState, stat: StatId, tags: readonly Tag[] = []): number {
-  return computeStat(classDef.baseStats[stat] ?? 0, allModifiers(player), stat, tags);
+  return deriveStat(
+    { baseStats: classDef.baseStats, modifiers: allModifiers(classDef, player), levelModifiers: player.levelModifiers, mechanics: player.mechanics },
+    stat,
+    tags,
+  );
+}
+
+/** Moves the player; any actual change of position counts as movement for movement conditions. */
+export function movePlayer(player: PlayerState, pos: Vec2): void {
+  if (pos.x !== player.pos.x || pos.y !== player.pos.y) player.stillTime = 0;
+  player.pos = pos;
 }
 
 export function clampToArena(pos: Vec2, radius: number, content: Content): Vec2 {

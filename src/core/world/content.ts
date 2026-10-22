@@ -2,22 +2,66 @@ import type { CombatConfig } from '../combat/config';
 import type { BaseDamage } from '../combat/damage';
 import type { WeaponType } from '../items/types';
 import type { ProgressionRules } from '../progression/levels';
-import type { ElementalType, Modifier, SkillTag, StatId } from '../stats/types';
+import type { DamageType, ElementalType, Modifier, SkillTag, StatId } from '../stats/types';
 
 /** Where the action's damage comes from. Attacks scale weapon damage; spells have their own base damage. */
 export type DamageSpec =
   | { readonly source: 'weapon'; readonly effectiveness: number }
   | { readonly source: 'skill'; readonly base: BaseDamage; readonly critChance: number };
 
-export type StatusId = 'stun' | 'slow';
+/**
+ * Statuses combat implements (on MobState):
+ * - stun / freeze: the mob cannot move or attack. Bosses are never frozen (see CombatConfig.bossFreezeSlow) and
+ *   ordinary stuns only slow them (CombatConfig.bossStunSlow); only a full stun bar stuns a boss.
+ * - slow: speed (movement and attack timer) reduced by its magnitude.
+ * - ignite: fire damage over time; does not stack, the strongest (highest damage per second) applies.
+ */
+export const STATUS_IDS = ['stun', 'slow', 'ignite', 'freeze'] as const;
+export type StatusId = (typeof STATUS_IDS)[number];
 
 export interface StatusEffect {
   readonly status: StatusId;
   readonly duration: number;
-  /** Slow: fraction of speed removed (0.4 = 40% slower). */
+  /**
+   * Slow: fraction of speed removed (0.4 = 40% slower).
+   * Ignite: fraction of the hit's damage (after crit, before the target's defences) dealt as fire over the
+   * duration; scaled by igniteDamage, then reduced by the target's fire resistance.
+   */
   readonly magnitude?: number;
-  /** Omit for a guaranteed status. */
+  /** Omit for a guaranteed status. Ignite chance is scaled by the igniteChance stat. */
   readonly chance?: number;
+  /** Applies only if the target already had this status before the hit (freeze: "already slowed"). */
+  readonly requiresStatus?: StatusId;
+  /** Applies only if the hit dealt damage of this type (ignite: "fire hits"). */
+  readonly requiresDamageType?: DamageType;
+  /** Freeze on a boss: duration of the slow that replaces the freeze; defaults to `duration`. */
+  readonly bossDuration?: number;
+}
+
+/**
+ * An explosion when a mob dies: lifeFraction × the dead mob's max life as `damageType` damage to the enemies
+ * around it (mitigated by their defences; no crit, not scaled by hero damage modifiers). Used by passive
+ * death explosions (Pyre, Shatter). The elite «Вибуховий» (0.4) will need a hostile-side target (the hero) and
+ * an ignite strength owned by the def; not supported yet.
+ */
+export interface DeathExplosionDef {
+  readonly radius: number;
+  readonly lifeFraction: number;
+  readonly damageType: DamageType;
+  /** Guaranteed status on everyone hit; its strength comes from the hero's source of that status (ignite only). */
+  readonly applyStatus?: StatusId;
+}
+
+/** Chain detonation of a trap: other hero traps within `radius` of its explosion explode after `delay` seconds. */
+export interface TrapChain {
+  readonly delay: number;
+  readonly radius: number;
+}
+
+/** Slow aura of an armed trap: enemies within `radius` (+ their radius) are slowed by `slow` (fraction of speed removed). */
+export interface TrapAura {
+  readonly radius: number;
+  readonly slow: number;
 }
 
 /** How the action reaches its targets. */
@@ -39,7 +83,14 @@ export type Delivery =
   | { readonly kind: 'dash'; readonly distance: number; readonly speed: number; readonly hitRadius: number }
   /** Instantly moves to the aim point, at most `range` away. */
   | { readonly kind: 'teleport'; readonly range: number }
-  /** Thrown towards the aim point; arms, then explodes when an enemy steps into triggerRadius or lifetime ends. */
+  /**
+   * Thrown towards the aim point; arms, then explodes when an enemy steps into triggerRadius or lifetime ends.
+   * Optional rules (usually granted by passives / supports through the skill resolver, see SkillGrants):
+   * - maxActive: cap on the hero's active traps of every source; throwing past it removes the oldest one
+   *   without exploding (placeTrap, actions.ts).
+   * - chain: when this trap explodes, the hero's other traps within `radius` explode `delay` seconds later.
+   * - aura: while armed, enemies within `radius` (+ their radius) are slowed by `slow` (MobState.auraSlow).
+   */
   | {
       readonly kind: 'trap';
       readonly throwRange: number;
@@ -47,6 +98,9 @@ export type Delivery =
       readonly triggerRadius: number;
       readonly explodeRadius: number;
       readonly lifetime: number;
+      readonly maxActive?: number;
+      readonly chain?: TrapChain;
+      readonly aura?: TrapAura;
     }
   /** No targets; only self effects. */
   | { readonly kind: 'self' };
@@ -58,10 +112,17 @@ export type SelfEffect =
 /** Basic attack or skill. */
 export interface ActionDef {
   readonly id: string;
+  /** Display name (Ukrainian). */
+  readonly name?: string;
   readonly tags: readonly SkillTag[];
   readonly manaCost: number;
-  /** Seconds; 0 = no cooldown. */
+  /** Seconds; 0 = no cooldown. With charges > 1: seconds to recharge one charge. */
   readonly cooldown: number;
+  /**
+   * Uses stored up to this many (default 1). Each use spends a charge; while not full, charges recharge one at a
+   * time, each over `cooldown` (PlayerState.charges / cooldowns). Ignored for actions without a cooldown.
+   */
+  readonly charges?: number;
   /** Base seconds per use for non-attacks (spells scale it by cast speed). Attacks use weapon attack speed. */
   readonly castTime?: number;
   readonly damage?: DamageSpec;
@@ -99,6 +160,11 @@ export interface MobDef {
   readonly moveSpeed: number;
   /** Ranged mobs try to stay at this distance from the player. */
   readonly preferredRange?: number;
+  /**
+   * Bosses are not frozen or stunned (each becomes a strong slow; while it runs the boss counts as frozen /
+   * stunned for conditions). Exception: a full stun bar stuns a boss (bossFillFactor, bossStunDuration).
+   */
+  readonly boss?: boolean;
   readonly attack: {
     readonly damage: BaseDamage;
     /** Reach beyond touching distance (melee) or max shooting distance (ranged). */

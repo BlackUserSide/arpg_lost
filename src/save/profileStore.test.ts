@@ -74,5 +74,81 @@ describe('profile store migrations', () => {
     expect(profile.characters[0]!.stats.kills).toBe(9);
     expect(profile.stash.items).toEqual([]);
     expect(profile.nextItemId).toBe(1);
+    expect(profile.characters[0]!.passives).toEqual({ nodes: [], spec: null, specNodes: [] });
+  });
+
+  it('upgrades v2 saves: characters get an empty passive allocation, other fields kept', () => {
+    const storage = memoryStorage();
+    const v2 = {
+      version: 2,
+      profile: {
+        characters: [{ id: 'c1', name: 'Aria', classId: 'mage', level: 7, xp: 40, stats: { runs: 2, deaths: 1, kills: 9, longestRun: 30 }, equipment: {} }],
+        stash: { items: [] },
+        currency: { shards: 12 },
+        records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 9 },
+        nextCharacterId: 2,
+        nextItemId: 5,
+      },
+    };
+    storage.setItem(SAVE_KEY, JSON.stringify(v2));
+    const { profile, backupKey } = loadProfile(storage);
+    expect(backupKey).toBeUndefined();
+    expect(profile.characters[0]!.passives).toEqual({ nodes: [], spec: null, specNodes: [] });
+    expect(profile.characters[0]!.level).toBe(7);
+    expect(profile.currency).toEqual({ shards: 12 });
+    expect(profile.nextItemId).toBe(5);
+  });
+
+  it('fills partial passives and resets invalid allocations for free, keeping valid ones', () => {
+    const storage = memoryStorage();
+    const character = (id: string, passives: unknown): Record<string, unknown> => ({
+      id,
+      name: id,
+      classId: 'warrior',
+      level: 20,
+      xp: 0,
+      stats: { runs: 0, deaths: 0, kills: 0, longestRun: 0 },
+      equipment: {},
+      passives,
+    });
+    const v3 = {
+      version: 3,
+      profile: {
+        characters: [
+          character('valid', { nodes: ['w_a1', 'w_a2'], spec: 'berserker', specNodes: ['bz_entry'] }),
+          character('partial', { nodes: ['w_a1'] }),
+          character('disconnected', { nodes: ['w_a2'], spec: null, specNodes: [] }),
+          character('foreign', { nodes: ['w_a1'], spec: 'sniper', specNodes: ['sn_entry'] }),
+          character('garbage', 'nope'),
+        ],
+        stash: { items: [] },
+        currency: { shards: 3 },
+        records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 0 },
+        nextCharacterId: 6,
+        nextItemId: 1,
+      },
+    };
+    storage.setItem(SAVE_KEY, JSON.stringify(v3));
+    const { profile, backupKey } = loadProfile(storage);
+    expect(backupKey).toBeUndefined();
+    expect(profile.characters.map((c) => c.passives)).toEqual([
+      { nodes: ['w_a1', 'w_a2'], spec: 'berserker', specNodes: ['bz_entry'] },
+      { nodes: ['w_a1'], spec: null, specNodes: [] },
+      { nodes: [], spec: null, specNodes: [] },
+      { nodes: [], spec: null, specNodes: [] },
+      { nodes: [], spec: null, specNodes: [] },
+    ]);
+    expect(profile.currency).toEqual({ shards: 3 });
+  });
+
+  it('round-trips a passive allocation', () => {
+    const storage = memoryStorage();
+    const profile = createProfile();
+    const result = createCharacter(profile, { name: 'Aria', classId: 'mage' }, rules, ['mage']);
+    if (!result.ok) throw new Error('create failed');
+    result.character.level = 6;
+    result.character.passives = { nodes: ['m_a1', 'm_a2'], spec: 'pyromancer', specNodes: ['py_entry'] };
+    saveProfile(storage, profile);
+    expect(loadProfile(storage).profile.characters[0]!.passives).toEqual({ nodes: ['m_a1', 'm_a2'], spec: 'pyromancer', specNodes: ['py_entry'] });
   });
 });
