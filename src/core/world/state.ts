@@ -48,6 +48,11 @@ export interface PlayerState {
   mechanics: readonly PassiveMechanic[];
   /** Seconds since the player last changed position (walk, dash, teleport). 0 at spawn. */
   stillTime: number;
+  /**
+   * Leech restored "recently" for the lifeLeech per-second cap: grows by each leech, drains by the cap per
+   * second. Leech is allowed while it is below one second's worth of cap. 0 at spawn.
+   */
+  leechRecent: number;
   /** Equipped weapon, or the class default. */
   weapon: WeaponDef;
   buffs: Buff[];

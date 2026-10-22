@@ -6,15 +6,15 @@ import type { PassiveMechanic } from '../passives/types';
 import type { Modifier } from '../stats/types';
 import { levelModifiers } from '../progression/levels';
 import type { Content, WeaponDef } from './content';
-import { refillPools } from './experience';
+import { decayLeech, refillPools } from './experience';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { allModifiers, clampToArena, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
-export { recoverLife, recoverMana, setLoadoutModifiers } from './experience';
+export { applyLeech, recoverLife, recoverMana, setLoadoutModifiers } from './experience';
 export { canAfford } from './actions';
-export { actionCost, deriveStat, lifeRecoveryPool, type ActionCost, type StatSource } from './passiveEffects';
+export { actionCost, deriveStat, leechStats, lifePotionMultiplier, lifeRecoveryPool, type ActionCost, type StatSource } from './passiveEffects';
 
 /** What the hero brings into the run: level, equipment and passives as modifiers (see heroModifiers), plus the weapon. */
 export interface Loadout {
@@ -50,6 +50,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     levelModifiers: levelMods,
     mechanics: [...(loadout.mechanics ?? [])],
     stillTime: 0,
+    leechRecent: 0,
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
@@ -106,6 +107,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   player.life = clamp(player.life + playerStat(classDef, player, 'lifeRegen') * dt, 0, maxLife);
   player.energyShield = clamp(player.energyShield + playerStat(classDef, player, 'energyShieldRegen') * dt, 0, maxShield);
   player.mana = clamp(player.mana + playerStat(classDef, player, 'manaRegen') * dt, 0, maxMana);
+  decayLeech(classDef, player, dt);
 
   player.actionTimer = Math.max(0, player.actionTimer - dt);
   const recovery = computeStat(1, allModifiers(classDef, player), 'cooldownRecovery');

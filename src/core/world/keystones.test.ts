@@ -11,8 +11,11 @@ import {
   conditionHolds,
   critStats,
   deriveStat,
+  leechStats,
+  lifePotionMultiplier,
   lifeRecoveryPool,
 } from './passiveEffects';
+import { applyDamageTaken } from '../combat/damage';
 import {
   canAfford,
   createWorld,
@@ -526,7 +529,231 @@ describe('conditional modifiers: life and target status', () => {
   });
 });
 
+/** Bloodsucker as in src/data/passives.ts (k_leech). */
+const LEECH: PassiveMechanic = { kind: 'lifeLeech', fraction: 0.05, maxPerSecond: 0.2 };
+const NO_LIFE_REGEN: Modifier = { stat: 'lifeRegen', kind: 'more', value: -1 };
+/** Glass Cannon as in src/data/passives.ts (k_glass). */
+const GLASS: Modifier[] = [
+  { stat: 'damage', kind: 'more', value: 0.4 },
+  { stat: 'damageTaken', kind: 'more', value: 0.4 },
+];
+
+describe('keystone: bloodsucker (life leech)', () => {
+  it('leechStats adds fractions and caps; lifePotionMultiplier multiplies', () => {
+    expect(leechStats([])).toBeUndefined();
+    expect(leechStats([LEECH])).toEqual({ fraction: 0.05, maxPerSecond: 0.2 });
+    expect(leechStats([LEECH, { kind: 'lifeLeech', fraction: 0.03, maxPerSecond: 0.1 }])).toEqual({ fraction: 0.08, maxPerSecond: 0.2 + 0.1 });
+    expect(leechStats([{ kind: 'lifeLeech', fraction: 0.1 }])).toEqual({ fraction: 0.1, maxPerSecond: Infinity });
+    expect(lifePotionMultiplier([])).toBe(1);
+    expect(lifePotionMultiplier([{ kind: 'lifePotionEffectiveness', multiplier: 0.5 }])).toBe(0.5);
+    expect(lifePotionMultiplier([{ kind: 'lifePotionEffectiveness', multiplier: 0.5 }, { kind: 'lifePotionEffectiveness', multiplier: 0.5 }])).toBe(0.25);
+  });
+
+  it('a hit restores 5% of its damage as life', () => {
+    const { content, world: w } = world([LEECH]);
+    const mob = addMob(w, 530, 500);
+    w.player.life = 20;
+    expect(hitOnce(w, content, mob)).toBe(10);
+    expect(w.player.life).toBe(20.5);
+    expect(w.player.leechRecent).toBe(0.5);
+  });
+
+  it('overkill does not leech: only the life actually removed counts', () => {
+    const { content, world: w } = world([LEECH], { modifiers: [{ stat: 'damage', kind: 'more', value: 29 }] });
+    const mob = addMob(w, 530, 500, 20);
+    w.player.life = 10;
+    expect(hitOnce(w, content, mob)).toBe(300);
+    // 5% of 20 (the mob's remaining life), not of 300.
+    expect(w.player.life).toBe(11);
+    expect(w.player.leechRecent).toBe(1);
+  });
+
+  it('a "more" below −100% zeroes regen instead of draining life', () => {
+    const { content, world: w } = world([LEECH], { modifiers: [{ stat: 'lifeRegen', kind: 'flat', value: 3 }, { stat: 'lifeRegen', kind: 'more', value: -1.5 }] });
+    expect(playerStat(content.classes.hero!, w.player, 'lifeRegen')).toBe(0);
+    w.player.life = 20;
+    run(w, content, idle, 1);
+    expect(w.player.life).toBe(20);
+  });
+
+  it('no leech without the mechanic', () => {
+    const { content, world: w } = world([]);
+    const mob = addMob(w, 530, 500);
+    w.player.life = 20;
+    hitOnce(w, content, mob);
+    expect(w.player.life).toBe(20);
+  });
+
+  it('a big hit restores at most 20% of max life; the cap refills at 20% per second', () => {
+    // 400 damage × 5% = 20, capped at 20% of 50 max life = 10.
+    const big: Modifier = { stat: 'damage', kind: 'more', value: 39 };
+    const { content, world: w } = world([LEECH], { modifiers: [FAST, big] });
+    const mob = addMob(w, 530, 500, 1e6);
+    w.player.life = 10;
+    expect(hitOnce(w, content, mob)).toBe(400);
+    expect(w.player.life).toBe(20);
+    expect(w.player.leechRecent).toBe(10);
+    // 30 idle ticks drain 5; the next hit's tick drains 1/6 more before it lands.
+    run(w, content, idle, 0.5);
+    expect(w.player.leechRecent).toBeCloseTo(5, 9);
+    hitOnce(w, content, mob);
+    expect(w.player.life).toBeCloseTo(25 + 1 / 6, 9);
+    expect(w.player.leechRecent).toBeCloseTo(10, 9);
+    // A second without leeching empties the window: the full cap is available again.
+    run(w, content, idle, 1.1);
+    expect(w.player.leechRecent).toBe(0);
+    w.player.life = 10;
+    hitOnce(w, content, mob);
+    expect(w.player.life).toBe(20);
+  });
+
+  it('leech at full life is wasted and does not use the cap', () => {
+    const { content, world: w } = world([LEECH]);
+    const mob = addMob(w, 530, 500);
+    hitOnce(w, content, mob);
+    expect(w.player.life).toBe(50);
+    expect(w.player.leechRecent).toBe(0);
+  });
+
+  it('projectile hits leech too', () => {
+    const arrow: ActionDef = {
+      id: 'arrow',
+      tags: ['attack', 'projectile'],
+      manaCost: 0,
+      cooldown: 0,
+      damage: { source: 'skill', base: { physical: { min: 20, max: 20 } }, critChance: 0 },
+      delivery: { kind: 'projectile', count: 1, spreadDeg: 0, speed: 300, range: 1000, radius: 2, pierce: 0 },
+    };
+    const base = makeContent();
+    const content: Content = { ...base, classes: { hero: { ...base.classes.hero!, skills: [arrow] } } };
+    const w = createWorld(content, 'hero', 1, { mechanics: [LEECH] });
+    const mob = addMob(w, 700, 500);
+    w.player.life = 20;
+    step(w, { ...idle, skills: [true] }, content, DT);
+    run(w, content, idle, 1);
+    expect(mob.life).toBe(980);
+    expect(w.player.life).toBe(21);
+  });
+
+  it('under Crystal Shell leech restores ES (cap from max ES); life stays 1', () => {
+    const { content, world: w } = world([CRYSTAL, LEECH], { modifiers: [{ stat: 'damage', kind: 'more', value: 9 }] });
+    const hero = content.classes.hero!;
+    expect(playerStat(hero, w.player, 'energyShield')).toBe(50);
+    const mob = addMob(w, 530, 500);
+    w.player.energyShield = 10;
+    hitOnce(w, content, mob);
+    expect(w.player.energyShield).toBe(15);
+    expect(w.player.life).toBe(1);
+  });
+
+  it('no life regen under Bloodsucker, also not as ES regen under Crystal Shell', () => {
+    const regen: Modifier[] = [
+      { stat: 'lifeRegen', kind: 'flat', value: 3 },
+      { stat: 'energyShieldRegen', kind: 'flat', value: 2 },
+      NO_LIFE_REGEN,
+    ];
+    const { content, world: w } = world([LEECH], { modifiers: regen });
+    const hero = content.classes.hero!;
+    expect(playerStat(hero, w.player, 'lifeRegen')).toBe(0);
+    w.player.life = 20;
+    run(w, content, idle, 1);
+    expect(w.player.life).toBe(20);
+    const crystal = world([CRYSTAL, LEECH], { modifiers: regen });
+    expect(playerStat(hero, crystal.world.player, 'energyShieldRegen')).toBe(2);
+  });
+});
+
+describe('keystone: glass cannon', () => {
+  it('applyDamageTaken scales each damage portion by its own damageTaken modifiers', () => {
+    const mods: Modifier[] = [...GLASS, { stat: 'damageTaken', kind: 'increased', value: 0.5, tags: ['fire'] }];
+    const taken = applyDamageTaken({ physical: 10, fire: 10 }, mods);
+    expect(Object.keys(taken).sort()).toEqual(['fire', 'physical']);
+    expect(taken.physical).toBeCloseTo(14, 9);
+    expect(taken.fire).toBeCloseTo(21, 9);
+    expect(applyDamageTaken({ cold: 10 }, [])).toEqual({ cold: 10 });
+  });
+
+  it('damage taken never goes negative: below-zero multipliers give 0 per portion', () => {
+    const mods: Modifier[] = [
+      { stat: 'damageTaken', kind: 'more', value: -1.5, tags: ['fire'] },
+      { stat: 'damageTaken', kind: 'flat', value: -2, tags: ['cold'] },
+      { stat: 'damageTaken', kind: 'increased', value: -3, tags: ['lightning'] },
+    ];
+    expect(applyDamageTaken({ physical: 10, fire: 10, cold: 10, lightning: 10 }, mods)).toEqual({ physical: 10, fire: 0, cold: 0, lightning: 0 });
+  });
+
+  it('deals 40% more damage', () => {
+    const { content, world: w } = world([], { modifiers: GLASS });
+    const mob = addMob(w, 530, 500);
+    expect(hitOnce(w, content, mob)).toBeCloseTo(14, 9);
+  });
+
+  it('takes 40% more damage, applied before the ES / life split', () => {
+    const { content, world: w } = world([], { modifiers: [...GLASS, { stat: 'energyShield', kind: 'flat', value: 10 }] });
+    expect(w.player.energyShield).toBe(10);
+    const mob = addMob(w, 521, 500);
+    mob.attackTimer = 0;
+    const events = run(w, content, idle, 0.1);
+    expect(events.find((e) => e.type === 'hit' && e.targetId === 0)).toMatchObject({ amount: 14 });
+    expect(w.player.energyShield).toBe(0);
+    expect(w.player.life).toBeCloseTo(46, 9);
+  });
+
+  it('without the keystone the same hit deals 10', () => {
+    const { content, world: w } = world([]);
+    const mob = addMob(w, 521, 500);
+    mob.attackTimer = 0;
+    run(w, content, idle, 0.1);
+    expect(w.player.life).toBe(40);
+  });
+});
+
 describe('mechanics in the loadout', () => {
+  it('Bloodsucker and Glass Cannon swap mid-run keeping pool fractions; leech follows the main pool', () => {
+    const { content, world: w } = world([]);
+    const hero = content.classes.hero!;
+    w.player.life = 25;
+    setLoadoutModifiers(w, content, [NO_LIFE_REGEN], [LEECH]);
+    expect(w.player.life).toBe(25);
+    setLoadoutModifiers(w, content, [NO_LIFE_REGEN, ...GLASS], [LEECH]);
+    expect(w.player.life).toBe(25);
+    const mob = addMob(w, 530, 500);
+    expect(hitOnce(w, content, mob)).toBeCloseTo(14, 9);
+    expect(w.player.life).toBeCloseTo(25.7, 9);
+    // Taking Crystal Shell: ES gets the life fraction, leech now restores ES.
+    run(w, content, idle, 1);
+    setLoadoutModifiers(w, content, [NO_LIFE_REGEN, ...GLASS], [CRYSTAL, LEECH]);
+    expect(w.player.life).toBe(1);
+    expect(playerStat(hero, w.player, 'energyShield')).toBe(50);
+    expect(w.player.energyShield).toBeCloseTo(25.7, 9);
+    hitOnce(w, content, mob);
+    expect(w.player.energyShield).toBeCloseTo(26.4, 9);
+    expect(w.player.life).toBe(1);
+  });
+
+  it('max life dropping below leechRecent blocks leech until the window drains under the new cap', () => {
+    // Cap 20% × 50 = 10; fill the window, then halve max life (cap 5): no leech until leechRecent < 5.
+    const { content, world: w } = world([LEECH], { modifiers: [FAST, { stat: 'damage', kind: 'more', value: 39 }] });
+    const mob = addMob(w, 530, 500, 1e6);
+    w.player.life = 10;
+    hitOnce(w, content, mob);
+    expect(w.player.leechRecent).toBe(10);
+    setLoadoutModifiers(w, content, [FAST, { stat: 'damage', kind: 'more', value: 39 }, { stat: 'life', kind: 'more', value: -0.5 }]);
+    expect(playerStat(content.classes.hero!, w.player, 'life')).toBe(25);
+    // 20 / 50 life before the swap -> 10 / 25 after.
+    expect(w.player.life).toBe(10);
+    // Drains at the new cap (5/s): 0.5 s idle + the hit's tick leaves 10 − 31 × 5/60 > 5, so nothing is restored.
+    run(w, content, idle, 0.5);
+    hitOnce(w, content, mob);
+    expect(w.player.life).toBe(10);
+    expect(w.player.leechRecent).toBeCloseTo(10 - 31 * (5 / 60), 9);
+    // After the window drains below the new cap, leech is allowed up to the room left (5 per burst at most).
+    run(w, content, idle, 2.1);
+    expect(w.player.leechRecent).toBe(0);
+    hitOnce(w, content, mob);
+    expect(w.player.life).toBe(15);
+  });
+
   it('setLoadoutModifiers swaps mechanics mid-run, keeping the main pool fill fraction', () => {
     const { content, world: w } = world([]);
     const hero = content.classes.hero!;
@@ -586,7 +813,7 @@ describe('mechanics in the loadout', () => {
 
   it('runs with mechanics stay deterministic and JSON-serializable', () => {
     const play = (): WorldState => {
-      const { content, world: w } = world([BLOOD, PRECISE, ...SWIFT], { modifiers: [FAST] });
+      const { content, world: w } = world([BLOOD, PRECISE, ...SWIFT, LEECH], { modifiers: [FAST, ...GLASS] });
       addMob(w, 530, 500);
       for (let i = 0; i < 300; i++) step(w, { ...idle, move: vec(i % 40 < 20 ? 1 : 0, 0), basicAttack: true, skills: [i % 7 === 0] }, content, DT);
       return w;

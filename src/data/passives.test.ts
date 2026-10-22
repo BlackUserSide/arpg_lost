@@ -36,13 +36,13 @@ describe('passive tree data', () => {
     for (const n of nodes) expect(n.name.length, n.id).toBeGreaterThan(0);
   });
 
-  it('wheel has 61 nodes (48 small, 9 notable, 4 keystones) costing 78, plus 3 starts', () => {
-    expect(wheel).toHaveLength(61);
+  it('wheel has 63 nodes (48 small, 9 notable, 6 keystones) costing 84, plus 3 starts', () => {
+    expect(wheel).toHaveLength(63);
     expect(wheel.filter((n) => n.type === 'small')).toHaveLength(48);
     expect(wheel.filter((n) => n.type === 'notable')).toHaveLength(9);
-    expect(wheel.filter((n) => n.type === 'keystone')).toHaveLength(4);
+    expect(wheel.filter((n) => n.type === 'keystone')).toHaveLength(6);
     for (const n of wheel) expect(n.cost).toBe({ small: 1, notable: 2, keystone: 3 }[n.type as string]);
-    expect(wheel.reduce((s, n) => s + n.cost, 0)).toBe(78);
+    expect(wheel.reduce((s, n) => s + n.cost, 0)).toBe(84);
     expect(starts.map((s) => s.classId).sort()).toEqual([...CLASSES].sort());
     for (const s of starts) expect(s.cost).toBe(0);
   });
@@ -104,6 +104,40 @@ describe('passive tree data', () => {
     }
   });
 
+  it('the six central keystones sit 60° apart at one radius, each a dead end off the inner node at its angle', () => {
+    const keystones = wheel.filter((n) => n.type === 'keystone');
+    expect(keystones.map((k) => k.pos.angleDeg).sort((a, b) => a - b)).toEqual([30, 90, 150, 210, 270, 330]);
+    expect(new Set(keystones.map((k) => k.pos.radius))).toEqual(new Set([75]));
+    for (const k of keystones) {
+      const [inner] = neighbors(tree, k.id);
+      expect(inner, k.id).toMatch(/^i_/);
+      expect(tree.nodes[inner!]!.pos.angleDeg, k.id).toBe(k.pos.angleDeg);
+    }
+    expect(neighbors(tree, 'k_leech')).toEqual(['i_w']);
+    expect(neighbors(tree, 'k_glass')).toEqual(['i_m']);
+  });
+
+  it('Bloodsucker and Glass Cannon data (PROPOSAL numbers)', () => {
+    expect(tree.nodes.k_leech).toMatchObject({
+      name: 'Кровопивець',
+      cost: 3,
+      modifiers: [{ stat: 'lifeRegen', kind: 'more', value: -1 }],
+      mechanics: [
+        { kind: 'lifeLeech', fraction: 0.05, maxPerSecond: 0.2 },
+        { kind: 'lifePotionEffectiveness', multiplier: 0.5 },
+      ],
+    });
+    expect(tree.nodes.k_glass).toMatchObject({
+      name: 'Скляна гармата',
+      cost: 3,
+      modifiers: [
+        { stat: 'damage', kind: 'more', value: 0.4 },
+        { stat: 'damageTaken', kind: 'more', value: 0.4 },
+      ],
+    });
+    expect(tree.nodes.k_glass!.mechanics).toBeUndefined();
+  });
+
   it('Blood Magic and Crystal Shell are mutually exclusive', () => {
     expect(tree.nodes.k_blood!.exclusiveGroup).toBeDefined();
     expect(tree.nodes.k_blood!.exclusiveGroup).toBe(tree.nodes.k_crystal!.exclusiveGroup);
@@ -134,7 +168,7 @@ describe('passive tree data', () => {
         expect(n.modifiers?.length, n.id).toBeGreaterThan(0);
         expect(n.mechanics, n.id).toBeUndefined();
       }
-      if (n.type === 'keystone' || n.type === 'specKeystone') expect(n.mechanics?.length, n.id).toBeGreaterThan(0);
+      if (n.type === 'keystone' || n.type === 'specKeystone') expect((n.mechanics?.length ?? 0) + (n.modifiers?.length ?? 0), n.id).toBeGreaterThan(0);
     }
   });
 
@@ -157,9 +191,9 @@ describe('passive tree data', () => {
   it('cheapest paths match the design table', () => {
     const cost = (cls: string, target: string): number => findPath(tree, freshHero(cls), target)!.cost;
     const table: Record<string, Record<string, number>> = {
-      warrior: { k_blood: 8, k_precise: 8, k_crystal: 10, k_swift: 9, w_n2: 4, w_n1: 5, mw_n: 8, wr_n: 8 },
-      ranger: { k_blood: 10, k_precise: 8, k_crystal: 8, k_swift: 7, r_n2: 4, r_n1: 5, wr_n: 8, rm_n: 8 },
-      mage: { k_blood: 8, k_precise: 10, k_crystal: 8, k_swift: 9, m_n2: 4, m_n1: 5, rm_n: 8, mw_n: 8 },
+      warrior: { k_blood: 8, k_precise: 8, k_crystal: 10, k_swift: 9, k_leech: 7, k_glass: 9, w_n2: 4, w_n1: 5, mw_n: 8, wr_n: 8 },
+      ranger: { k_blood: 10, k_precise: 8, k_crystal: 8, k_swift: 7, k_leech: 9, k_glass: 9, r_n2: 4, r_n1: 5, wr_n: 8, rm_n: 8 },
+      mage: { k_blood: 8, k_precise: 10, k_crystal: 8, k_swift: 9, k_leech: 9, k_glass: 7, m_n2: 4, m_n1: 5, rm_n: 8, mw_n: 8 },
     };
     for (const [cls, targets] of Object.entries(table)) {
       for (const [target, expected] of Object.entries(targets)) expect(cost(cls, target), `${cls} -> ${target}`).toBe(expected);

@@ -47,6 +47,20 @@ export function computeDamage(base: DamageByType, mods: readonly Modifier[], ski
   return result;
 }
 
+/**
+ * Damage the defender actually takes: each portion × `damageTaken` (base 1) computed with that portion's
+ * damage type as context. Applied after mitigation. The multiplier never goes below 0 (no healing from hits).
+ */
+export function applyDamageTaken(damage: DamageByType, defenderMods: readonly Modifier[]): DamageByType {
+  const result: DamageByType = {};
+  for (const type of DAMAGE_TYPES) {
+    const amount = damage[type];
+    if (amount === undefined) continue;
+    result[type] = amount * Math.max(0, applyTotals(1, collectModifiers(defenderMods, 'damageTaken', new Set<Tag>([type]))));
+  }
+  return result;
+}
+
 export function totalDamage(damage: DamageByType): number {
   let sum = 0;
   for (const type of DAMAGE_TYPES) sum += damage[type] ?? 0;

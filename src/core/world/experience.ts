@@ -3,7 +3,7 @@ import type { PassiveMechanic } from '../passives/types';
 import { areaXpMultiplier, grantXp, levelModifiers, mobXp, type ProgressionRules } from '../progression/levels';
 import type { Modifier } from '../stats/types';
 import type { ClassDef, Content } from './content';
-import { lifeRecoveryPool } from './passiveEffects';
+import { leechStats, lifeRecoveryPool } from './passiveEffects';
 import { getClass, playerStat, type Ctx, type PlayerState, type WorldState } from './state';
 
 export function refillPools(classDef: ClassDef, player: PlayerState): void {
@@ -122,6 +122,34 @@ export function recoverLife(classDef: ClassDef, player: PlayerState, amount: num
   const before = player[pool];
   player[pool] = clamp(before + amount, 0, Math.max(before, max));
   return player[pool] - before;
+}
+
+/** Leech cap in pool points per second (max of the recovery pool × maxPerSecond); Infinity if uncapped. */
+function leechCap(classDef: ClassDef, player: PlayerState, maxPerSecond: number): number {
+  if (maxPerSecond === Infinity) return Infinity;
+  return maxPerSecond * playerStat(classDef, player, lifeRecoveryPool(player.mechanics));
+}
+
+/**
+ * lifeLeech: restores a fraction of `damage` (a hit the hero dealt) to the life recovery pool (ES under
+ * lifeToEnergyShield), limited by the per-second cap (see PlayerState.leechRecent). Returns the amount restored.
+ * `damage` is the life actually removed from the target (no overkill; designer decision 2026-10-22).
+ */
+export function applyLeech(classDef: ClassDef, player: PlayerState, damage: number): number {
+  const leech = leechStats(player.mechanics);
+  if (!leech || player.dead || damage <= 0) return 0;
+  const room = Math.max(0, leechCap(classDef, player, leech.maxPerSecond) - player.leechRecent);
+  const restored = recoverLife(classDef, player, Math.min(damage * leech.fraction, room));
+  player.leechRecent += restored;
+  return restored;
+}
+
+/** Drains the leech cap window by one tick. */
+export function decayLeech(classDef: ClassDef, player: PlayerState, dt: number): void {
+  if (player.leechRecent <= 0) return;
+  const leech = leechStats(player.mechanics);
+  const cap = leech ? leechCap(classDef, player, leech.maxPerSecond) : Infinity;
+  player.leechRecent = cap === Infinity ? 0 : Math.max(0, player.leechRecent - cap * dt);
 }
 
 /** Restores mana (mana potions). Does nothing under bloodMagic (max mana is 0). Returns the amount restored. */

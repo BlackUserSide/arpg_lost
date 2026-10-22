@@ -3,6 +3,7 @@ import { resolveHit } from '../combat/hit';
 import { add, distance, dot, normalize, rotate, scale, sub, type Vec2 } from '../math';
 import { computeStat } from '../stats/modifiers';
 import type { ActionDef, StatusEffect } from './content';
+import { applyLeech } from './experience';
 import { actionCost, canPay, critStats } from './passiveEffects';
 import type { Modifier } from '../stats/types';
 import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState } from './state';
@@ -212,8 +213,11 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
     });
     const def = getMob(content, mob.defId);
     const hit = resolveHit(rng, { damage, critChance, critMultiplier }, { armour: def.armour, resistances: def.resistances }, content.combat);
+    // Leech counts only the life actually removed (overkill does not leech).
+    const removed = Math.max(0, Math.min(hit.total, mob.life));
     mob.life -= hit.total;
     events.push({ type: 'hit', targetId: mob.id, pos: mob.pos, amount: hit.total, isCrit: hit.isCrit });
+    applyLeech(classDef, world.player, removed);
   }
   for (const effect of action.onHit ?? []) applyStatus(ctx, mob, effect);
 }

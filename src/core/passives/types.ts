@@ -62,6 +62,17 @@ export type PassiveMechanic =
   | { readonly kind: 'alwaysCrit'; readonly critMultiplier: number }
   /** Base life (class + levels) becomes flat energy shield, max life is fixed, life regen goes to shield regen. */
   | { readonly kind: 'lifeToEnergyShield'; readonly maxLife: number; readonly lifeRegenToShield: boolean }
+  /**
+   * Every hit the hero deals restores `fraction` of its damage as life (instantly; the main recovery pool,
+   * i.e. ES under lifeToEnergyShield). `maxPerSecond`: cap as a fraction of the pool's max per second
+   * (a single burst restores at most one second's worth); omitted = uncapped. Several leeches add up.
+   */
+  | { readonly kind: 'lifeLeech'; readonly fraction: number; readonly maxPerSecond?: number }
+  /**
+   * Life potions restore `multiplier` × their normal amount (multipliers stack multiplicatively).
+   * Consumed when potions are implemented (0.4); see lifePotionMultiplier().
+   */
+  | { readonly kind: 'lifePotionEffectiveness'; readonly multiplier: number }
   /** Stat modifiers active only while the condition holds. */
   | { readonly kind: 'conditionalModifiers'; readonly condition: PassiveCondition; readonly modifiers: readonly Modifier[] }
   /** More damage per fraction of missing life: more = min(max, missingLifeFraction × perMissingLife). */

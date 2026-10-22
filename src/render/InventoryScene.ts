@@ -3,7 +3,7 @@ import { equippedWeapon } from '../core/items/equipment';
 import { equipFromStash, salvageFromStash, SALVAGE_CURRENCY, unequipToStash, type InventoryError } from '../core/items/inventory';
 import type { EquipSlot, Item } from '../core/items/types';
 import { heroMechanics, heroModifiers } from '../core/progression/hero';
-import { critStats } from '../core/world/passiveEffects';
+import { critStats, leechStats } from '../core/world/passiveEffects';
 import { levelModifiers, xpToNextLevel } from '../core/progression/levels';
 import { findCharacter, type CharacterRecord } from '../core/progression/profile';
 import { computeStat } from '../core/stats/modifiers';
@@ -246,6 +246,14 @@ export class InventoryScene extends Phaser.Scene {
     });
     rows.push(['Crit chance', `${(crit.critChance * 100).toFixed(1)}% ×${crit.critMultiplier.toFixed(2)}`]);
     rows.push(['Move speed', String(Math.round(deriveStat(source, 'movementSpeed')))]);
+    // Keystone-only stats: shown only when they differ from the default.
+    const leech = leechStats(mechanics);
+    if (leech) {
+      const cap = Number.isFinite(leech.maxPerSecond) ? ` (max ${fmt(leech.maxPerSecond, 'pct')}/s)` : '';
+      rows.push(['Life leech', `${fmt(leech.fraction, 'pct')}${cap}`]);
+    }
+    const taken = computeStat(1, mods, 'damageTaken');
+    if (taken !== 1) rows.push(['Damage taken', `×${taken.toFixed(2)}`]);
     rows.forEach(([name, value], i) => {
       this.root.add(label(this, x, y + 30 + i * 20, name, UI.size.small, UI.muted));
       this.root.add(label(this, x + w, y + 30 + i * 20, value, UI.size.small, UI.text, true).setOrigin(1, 0));

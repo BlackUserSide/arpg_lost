@@ -48,7 +48,8 @@ const COST: Record<PassiveNodeType, number> = {
 // hybrid zones between them, inner ring and keystones in the centre, spec branches outside the starts.
 
 const ANGLE = { warrior: 90, ranger: 330, mage: 210, wr: 30, rm: 270, mw: 150 } as const;
-const R = { keystone: 55, inner: 120, arm3: 190, arm2: 260, arm1: 330, outer: 400, spec1: 480, spec2: 560, spec3: 580, spec4: 640, spec5: 720 } as const;
+// Six central keystones, one per inner-ring node at the same angle (60° apart).
+const R = { keystone: 75, inner: 150, arm3: 210, arm2: 260, arm1: 330, outer: 400, spec1: 480, spec2: 560, spec3: 580, spec4: 640, spec5: 720 } as const;
 
 const at = (angleDeg: number, radius: number): PassiveNodePos => ({ angleDeg: ((angleDeg % 360) + 360) % 360, radius });
 
@@ -109,8 +110,13 @@ function node(id: string, name: string, type: PassiveNodeType, pos: PassiveNodeP
 }
 const small = (id: string, name: string, pos: PassiveNodePos, modifiers: Modifier[]): PassiveNodeDef => node(id, name, 'small', pos, modifiers);
 const notable = (id: string, name: string, pos: PassiveNodePos, modifiers: Modifier[]): PassiveNodeDef => node(id, name, 'notable', pos, modifiers);
-const keystone = (id: string, name: string, pos: PassiveNodePos, mechanics: PassiveMechanic[], exclusiveGroup?: string): PassiveNodeDef =>
-  node(id, name, 'keystone', pos, [], { mechanics, ...(exclusiveGroup ? { exclusiveGroup } : {}) });
+interface KeystoneSpec {
+  readonly mechanics?: PassiveMechanic[];
+  readonly modifiers?: Modifier[];
+  readonly exclusiveGroup?: string;
+}
+const keystone = (id: string, name: string, pos: PassiveNodePos, { mechanics, modifiers = [], exclusiveGroup }: KeystoneSpec): PassiveNodeDef =>
+  node(id, name, 'keystone', pos, modifiers, { ...(mechanics ? { mechanics } : {}), ...(exclusiveGroup ? { exclusiveGroup } : {}) });
 const start = (classId: string, name: string, pos: PassiveNodePos): PassiveNodeDef => node(`start_${classId}`, name, 'start', pos, [], { classId });
 
 /** Keystones that cannot be taken together: with 1 life the hero cannot pay skills in life. */
@@ -195,13 +201,31 @@ const wheel: PassiveNodeDef[] = [
   small('i_mw', 'Життєва сила', at(ANGLE.mw, R.inner), [inc('life', SMALL.life)]),
 
   // Keystones (dead ends off the inner ring)
-  keystone('k_blood', 'Кров замість мани', at(ANGLE.mw, R.keystone), [{ kind: 'bloodMagic', lifePerMana: 1 }], LIFE_POOL_GROUP),
-  keystone('k_precise', 'Точна рука', at(ANGLE.wr, R.keystone), [{ kind: 'alwaysCrit', critMultiplier: 1.3 }]),
-  keystone('k_crystal', 'Кришталевий панцир', at(ANGLE.rm, R.keystone), [{ kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true }], LIFE_POOL_GROUP),
-  keystone('k_swift', 'Швидкі ноги', at(ANGLE.ranger, R.keystone), [
-    { kind: 'conditionalModifiers', condition: { kind: 'movedWithin', seconds: 0.5 }, modifiers: [more('damage', 0.3)] },
-    { kind: 'conditionalModifiers', condition: { kind: 'stationaryFor', seconds: 0.5 }, modifiers: [more('damage', -0.3)] },
-  ]),
+  keystone('k_blood', 'Кров замість мани', at(ANGLE.mw, R.keystone), { mechanics: [{ kind: 'bloodMagic', lifePerMana: 1 }], exclusiveGroup: LIFE_POOL_GROUP }),
+  keystone('k_precise', 'Точна рука', at(ANGLE.wr, R.keystone), { mechanics: [{ kind: 'alwaysCrit', critMultiplier: 1.3 }] }),
+  keystone('k_crystal', 'Кришталевий панцир', at(ANGLE.rm, R.keystone), {
+    mechanics: [{ kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true }],
+    exclusiveGroup: LIFE_POOL_GROUP,
+  }),
+  keystone('k_swift', 'Швидкі ноги', at(ANGLE.ranger, R.keystone), {
+    mechanics: [
+      { kind: 'conditionalModifiers', condition: { kind: 'movedWithin', seconds: 0.5 }, modifiers: [more('damage', 0.3)] },
+      { kind: 'conditionalModifiers', condition: { kind: 'stationaryFor', seconds: 0.5 }, modifiers: [more('damage', -0.3)] },
+    ],
+  }),
+  // Keystones #5-6 (interview 2026-10-22). PROPOSAL numbers: balance-analyst to tune.
+  // Bloodsucker: leech 5% of all hit damage, capped at 20% of max life (ES under Crystal Shell) per second;
+  // no life regen (-100% more, also removes the life regen Crystal Shell turns into ES regen);
+  // life potions heal ×0.5 (consumed when potions are implemented, 0.4).
+  keystone('k_leech', 'Кровопивець', at(ANGLE.warrior, R.keystone), {
+    modifiers: [more('lifeRegen', -1)],
+    mechanics: [
+      { kind: 'lifeLeech', fraction: 0.05, maxPerSecond: 0.2 },
+      { kind: 'lifePotionEffectiveness', multiplier: 0.5 },
+    ],
+  }),
+  // Glass Cannon: +40% more damage dealt, +40% more damage taken.
+  keystone('k_glass', 'Скляна гармата', at(ANGLE.mage, R.keystone), { modifiers: [more('damage', 0.4), more('damageTaken', 0.4)] }),
 ];
 
 /** Standard class zone shape; `bHybrid` / `cHybrid` are the hybrid zones the b / c arms lead to. */
@@ -254,6 +278,8 @@ const wheelEdges: [string, string][] = [
   ['i_wr', 'k_precise'],
   ['i_r', 'k_swift'],
   ['i_rm', 'k_crystal'],
+  ['i_w', 'k_leech'],
+  ['i_m', 'k_glass'],
 ];
 
 // ---- Specialization branches -----------------------------------------------------------------------

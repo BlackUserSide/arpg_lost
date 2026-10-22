@@ -8,6 +8,7 @@ describe('passive text', () => {
     expect(formatModifier({ stat: 'critMultiplier', kind: 'flat', value: 0.25, tags: ['melee'] })).toBe('+0.25 множника криту для ближнього бою');
     expect(formatModifier({ stat: 'damage', kind: 'more', value: -0.3 })).toBe('30% менше урону (more)');
     expect(formatModifier({ stat: 'mana', kind: 'flat', value: 10 })).toBe('+10 мани');
+    expect(formatModifier({ stat: 'lifeRegen', kind: 'more', value: -1 })).toMatch(/^Немає регенерації життя/);
   });
 
   it('collapses equal resistances into one line', () => {

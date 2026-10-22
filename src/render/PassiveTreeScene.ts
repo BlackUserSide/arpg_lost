@@ -73,7 +73,7 @@ const MAX_ZOOM = 2.2;
 const READABLE_ZOOM = { mouse: 0.42, touch: 0.6 } as const;
 /** Node labels appear from this zoom on; the packed centre (keystones) needs more. */
 const LABEL_ZOOM = 0.55;
-const KEYSTONE_LABEL_ZOOM = 0.95;
+const KEYSTONE_LABEL_ZOOM = 1.1;
 /** When the whole tree does not fit, the view centres this far out along the class direction. */
 const FOCUS_RADIUS = 430;
 const WHEEL_ZOOM_SPEED = 0.0015;
@@ -93,6 +93,17 @@ const POS: ReadonlyMap<string, Point> = new Map(
 const MAX_RADIUS = Math.max(...Object.values(TREE.nodes).map((n) => n.pos.radius));
 /** Half-size of the area to fit: outermost nodes plus room for branch and class names. */
 const EXTENT = MAX_RADIUS + 140;
+
+/**
+ * Faint backdrop rings, derived from the layout so they follow data changes: the inner ring (the nodes
+ * the keystones hang off), the class starts, and one midway between them.
+ */
+const BACKDROP_RINGS: readonly number[] = (() => {
+  const nodes = Object.values(TREE.nodes);
+  const inner = Math.max(0, ...nodes.filter((n) => n.type === 'keystone').flatMap((n) => neighbors(TREE, n.id).map((id) => TREE.nodes[id]?.pos.radius ?? 0)));
+  const outer = Math.max(0, ...nodes.filter((n) => n.type === 'start').map((n) => n.pos.radius));
+  return inner > 0 && outer > inner ? [inner, (inner + outer) / 2, outer] : [outer];
+})();
 
 /** Class names sit outside the wheel beyond their spec branches (the start node is ringed by nodes). */
 const CLASS_LABEL_POS: ReadonlyMap<string, Point> = new Map(
@@ -668,7 +679,7 @@ export class PassiveTreeScene extends Phaser.Scene {
     const ox = this.sx(0);
     const oy = this.sy(0);
     g.lineStyle(1, 0x2a2228, 0.8);
-    for (const r of [120, 260, 400]) g.strokeCircle(ox, oy, r * z);
+    for (const r of BACKDROP_RINGS) g.strokeCircle(ox, oy, r * z);
     for (const node of START_NODES) {
       const p = POS.get(node.id)!;
       const color = CLASS_COLORS[node.classId ?? ''] ?? 0x888888;
@@ -714,7 +725,8 @@ export class PassiveTreeScene extends Phaser.Scene {
       const state = this.states.get(node.id) ?? 'locked';
       if (node.type === 'start') this.drawStart(g, node, x, y, r);
       else this.drawNode(g, node, x, y, r, state);
-      if (state === 'allocatable') pulse.lineStyle(3, EMBER, 1).strokeCircle(x, y, r + 5);
+      // Halo gap scales with zoom: a fixed 5 px ring swallows short edges (e.g. inner ring to keystone) in the overview.
+      if (state === 'allocatable') pulse.lineStyle(3, EMBER, 1).strokeCircle(x, y, r + Math.min(5, Math.max(2.5, 5 * z)));
       if (pathSet.has(node.id)) g.lineStyle(2, EMBER, 1).strokeCircle(x, y, r + 4);
       if (node.id === this.selected || node.id === this.hovered) g.lineStyle(2, 0xfff6d8, 1).strokeCircle(x, y, r + (node.id === this.selected ? 7 : 5));
     }

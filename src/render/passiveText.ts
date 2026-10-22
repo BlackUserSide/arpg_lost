@@ -36,6 +36,7 @@ const STAT: Record<StatId, string> = {
   castSpeed: 'швидкості касту',
   cooldownRecovery: 'відновлення кулдаунів',
   movementSpeed: 'швидкості руху',
+  damageTaken: 'отриманого урону',
 };
 
 /** "+8% <damage phrase>" for a single damage tag. */
@@ -107,6 +108,8 @@ function statPhrase(m: Modifier): string {
 }
 
 export function formatModifier(m: Modifier): string {
+  // "100% less" switches the stat off (Bloodsucker: no life regen).
+  if (m.kind === 'more' && m.value <= -1) return `Немає ${statPhrase(m)}`;
   if (m.kind === 'more') return `${pct(m.value)} ${m.value < 0 ? 'менше' : 'більше'} ${statPhrase(m)} (more)`;
   if (m.kind === 'increased') return `${signedPct(m.value)} ${statPhrase(m)}`;
   if (m.stat === 'damage' && m.damageType) return `${signed(m.value)} ${DAMAGE_TAG[m.damageType]}`;
@@ -172,6 +175,13 @@ export function formatMechanic(m: PassiveMechanic): string[] {
         ...(m.lifeRegenToShield ? ['Регенерація життя відновлює щит'] : []),
         `Максимум життя = ${num(m.maxLife)}`,
       ];
+    case 'lifeLeech':
+      return [
+        `${pct(m.fraction)} завданого урону відновлює життя (вампіризм)`,
+        ...(m.maxPerSecond !== undefined ? [`Не більше ${pct(m.maxPerSecond)} макс. життя за секунду`] : []),
+      ];
+    case 'lifePotionEffectiveness':
+      return [`Зілля здоров'я відновлюють ${pct(m.multiplier)} від звичайного`];
     case 'conditionalModifiers':
       return [`${conditionText(m.condition)}: ${formatModifiers(m.modifiers).join(', ')}`];
     case 'moreDamagePerMissingLife':

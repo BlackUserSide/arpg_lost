@@ -28,6 +28,11 @@ export const STAT_IDS = [
   'castSpeed',
   'cooldownRecovery',
   'movementSpeed',
+  /**
+   * Multiplier on damage the hero takes, base 1 (applied after armour / resistances, before the
+   * ES / life split). Tags: the damage type of each portion ("+20% fire damage taken").
+   */
+  'damageTaken',
 ] as const;
 export type StatId = (typeof STAT_IDS)[number];
 

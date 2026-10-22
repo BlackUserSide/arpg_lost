@@ -6,6 +6,9 @@
 // - alwaysCrit: hits always crit with a fixed multiplier (see critStats).
 // - lifeToEnergyShield: base life (class + levels) becomes flat ES, max life is fixed, life regen feeds ES.
 // - conditionalModifiers: movedWithin / stationaryFor / lifeBelow / targetHasStatus (stun, slow).
+// - lifeLeech: hits restore a fraction of damage dealt, capped per second (see leechStats, applyLeech).
+// - lifePotionEffectiveness: data only until potions exist (see lifePotionMultiplier).
+// Glass Cannon needs no mechanic: it is plain `more` damage / damageTaken modifiers.
 
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind } from '../passives/types';
 import { computeStat } from '../stats/modifiers';
@@ -161,4 +164,32 @@ export function critStats(mechanics: readonly PassiveMechanic[], computed: CritS
 /** Where life recovery (e.g. life potions) goes: energy shield under lifeToEnergyShield, otherwise life. */
 export function lifeRecoveryPool(mechanics: readonly PassiveMechanic[]): 'life' | 'energyShield' {
   return findMechanic(mechanics, 'lifeToEnergyShield') ? 'energyShield' : 'life';
+}
+
+export interface LeechStats {
+  /** Fraction of damage dealt restored. */
+  readonly fraction: number;
+  /** Cap per second as a fraction of the recovery pool's max; Infinity if uncapped. */
+  readonly maxPerSecond: number;
+}
+
+/** Combined lifeLeech mechanics (fractions and caps add up; a leech without a cap removes the cap), or undefined. */
+export function leechStats(mechanics: readonly PassiveMechanic[]): LeechStats | undefined {
+  let found = false;
+  let fraction = 0;
+  let maxPerSecond = 0;
+  for (const m of mechanics) {
+    if (m.kind !== 'lifeLeech') continue;
+    found = true;
+    fraction += m.fraction;
+    maxPerSecond += m.maxPerSecond ?? Infinity;
+  }
+  return found ? { fraction, maxPerSecond } : undefined;
+}
+
+/** Multiplier on life potion recovery (1 without lifePotionEffectiveness). For potions (0.4). */
+export function lifePotionMultiplier(mechanics: readonly PassiveMechanic[]): number {
+  let result = 1;
+  for (const m of mechanics) if (m.kind === 'lifePotionEffectiveness') result *= m.multiplier;
+  return Math.max(0, result);
 }

@@ -1,11 +1,11 @@
-import { rollBaseDamage } from '../combat/damage';
+import { applyDamageTaken, rollBaseDamage, totalDamage } from '../combat/damage';
 import { applyDamage, resolveHit } from '../combat/hit';
 import type { Defences } from '../combat/mitigation';
 import { add, distance, normalize, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { Content, MobDef } from './content';
 import { gainKillXp } from './experience';
-import { clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
+import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
   const { world, content, events } = ctx;
@@ -78,10 +78,12 @@ export function hitPlayer(ctx: Ctx, mobDef: MobDef): void {
     defences,
     content.combat,
   );
-  const result = applyDamage({ life: player.life, energyShield: player.energyShield }, hit.total);
+  // Damage taken modifiers (e.g. Glass Cannon) apply after mitigation, before the ES / life split.
+  const taken = totalDamage(applyDamageTaken(hit.damage, allModifiers(classDef, player)));
+  const result = applyDamage({ life: player.life, energyShield: player.energyShield }, taken);
   player.life = result.pools.life;
   player.energyShield = result.pools.energyShield;
-  events.push({ type: 'hit', targetId: player.id, pos: player.pos, amount: hit.total, isCrit: hit.isCrit });
+  events.push({ type: 'hit', targetId: player.id, pos: player.pos, amount: taken, isCrit: hit.isCrit });
   if (result.isDead) {
     player.dead = true;
     player.motion = undefined;

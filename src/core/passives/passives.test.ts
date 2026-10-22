@@ -394,9 +394,11 @@ describe('pending mechanics', () => {
     expect(hasPendingMechanics(node([{ kind: 'alwaysCrit', critMultiplier: 1.3 }, { kind: 'freezeDuration', increased: 0.5 }]))).toBe(true);
   });
 
-  it('the four wheel keystone mechanics are implemented', async () => {
+  it('the wheel keystone mechanics are implemented', async () => {
     const { isMechanicPending } = await import('./mechanics');
     const implemented: PassiveMechanic[] = [
+      { kind: 'lifeLeech', fraction: 0.05, maxPerSecond: 0.2 },
+      { kind: 'lifePotionEffectiveness', multiplier: 0.5 },
       { kind: 'bloodMagic', lifePerMana: 1 },
       { kind: 'alwaysCrit', critMultiplier: 1.3 },
       { kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true },

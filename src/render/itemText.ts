@@ -21,6 +21,7 @@ const STAT_LABEL: Record<StatId, string> = {
   castSpeed: 'Cast Speed',
   cooldownRecovery: 'Cooldown Recovery Speed',
   movementSpeed: 'Movement Speed',
+  damageTaken: 'Damage Taken',
 };
 
 /** Stats whose flat values are fractions shown as percentages. */
