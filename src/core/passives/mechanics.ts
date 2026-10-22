@@ -5,11 +5,7 @@
 
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveNodeDef } from './types';
 
-export const PENDING_MECHANICS: ReadonlySet<PassiveMechanicKind> = new Set<PassiveMechanicKind>([
-  'distanceDamage',
-  'trapCharges',
-  'trapAura',
-]);
+export const PENDING_MECHANICS: ReadonlySet<PassiveMechanicKind> = new Set<PassiveMechanicKind>([]);
 
 /** True if a condition refers to something combat does not have yet. Every status exists now, so always false. */
 export function isConditionPending(condition: PassiveCondition): boolean {

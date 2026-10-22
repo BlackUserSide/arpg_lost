@@ -3,9 +3,9 @@ import type { PassiveMechanic } from '../passives/types';
 import { areaXpMultiplier, grantXp, levelModifiers, mobXp, type ProgressionRules } from '../progression/levels';
 import type { Modifier } from '../stats/types';
 import type { ClassDef, Content } from './content';
-import { resolveActions } from '../skills/params';
-import { leechStats, lifeRecoveryPool, skillChangeSets } from './passiveEffects';
-import { getClass, playerStat, type Ctx, type PlayerState, type WorldState } from './state';
+import { syncCharges } from './charges';
+import { leechStats, lifeRecoveryPool } from './passiveEffects';
+import { deriveFromMechanics, getClass, playerStat, type Ctx, type PlayerState, type WorldState } from './state';
 
 export function refillPools(classDef: ClassDef, player: PlayerState): void {
   player.life = playerStat(classDef, player, 'life');
@@ -113,7 +113,9 @@ export function setLoadoutModifiers(
     // (designer decision 2026-10-22). Flying projectiles, thrown traps and a running dash keep the action
     // snapshot they were created with (geometry, tags, crit, on-hit statuses and their durations).
     // Stat modifiers (gear, passives) still apply live to their hits.
-    player.actions = resolveActions(classDef, skillChangeSets(player.mechanics));
+    // Charges follow too (syncCharges: stored charges are kept / capped, running recharges keep their time).
+    Object.assign(player, deriveFromMechanics(classDef, player.mechanics));
+    syncCharges(player, false);
   }
   rebuildModifiers(player, content.progression);
   if (!player.dead) restorePools(classDef, player, before);

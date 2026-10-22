@@ -52,6 +52,18 @@ export interface DeathExplosionDef {
   readonly applyStatus?: StatusId;
 }
 
+/** Chain detonation of a trap: other hero traps within `radius` of its explosion explode after `delay` seconds. */
+export interface TrapChain {
+  readonly delay: number;
+  readonly radius: number;
+}
+
+/** Slow aura of an armed trap: enemies within `radius` (+ their radius) are slowed by `slow` (fraction of speed removed). */
+export interface TrapAura {
+  readonly radius: number;
+  readonly slow: number;
+}
+
 /** How the action reaches its targets. */
 export type Delivery =
   /** Sector in front of the actor (360° = circle around the actor), closest first. */
@@ -71,7 +83,14 @@ export type Delivery =
   | { readonly kind: 'dash'; readonly distance: number; readonly speed: number; readonly hitRadius: number }
   /** Instantly moves to the aim point, at most `range` away. */
   | { readonly kind: 'teleport'; readonly range: number }
-  /** Thrown towards the aim point; arms, then explodes when an enemy steps into triggerRadius or lifetime ends. */
+  /**
+   * Thrown towards the aim point; arms, then explodes when an enemy steps into triggerRadius or lifetime ends.
+   * Optional rules (usually granted by passives / supports through the skill resolver, see SkillGrants):
+   * - maxActive: cap on the hero's active traps of every source; throwing past it removes the oldest one
+   *   without exploding (placeTrap, actions.ts).
+   * - chain: when this trap explodes, the hero's other traps within `radius` explode `delay` seconds later.
+   * - aura: while armed, enemies within `radius` (+ their radius) are slowed by `slow` (MobState.auraSlow).
+   */
   | {
       readonly kind: 'trap';
       readonly throwRange: number;
@@ -79,6 +98,9 @@ export type Delivery =
       readonly triggerRadius: number;
       readonly explodeRadius: number;
       readonly lifetime: number;
+      readonly maxActive?: number;
+      readonly chain?: TrapChain;
+      readonly aura?: TrapAura;
     }
   /** No targets; only self effects. */
   | { readonly kind: 'self' };
@@ -94,8 +116,13 @@ export interface ActionDef {
   readonly name?: string;
   readonly tags: readonly SkillTag[];
   readonly manaCost: number;
-  /** Seconds; 0 = no cooldown. */
+  /** Seconds; 0 = no cooldown. With charges > 1: seconds to recharge one charge. */
   readonly cooldown: number;
+  /**
+   * Uses stored up to this many (default 1). Each use spends a charge; while not full, charges recharge one at a
+   * time, each over `cooldown` (PlayerState.charges / cooldowns). Ignored for actions without a cooldown.
+   */
+  readonly charges?: number;
   /** Base seconds per use for non-attacks (spells scale it by cast speed). Attacks use weapon attack speed. */
   readonly castTime?: number;
   readonly damage?: DamageSpec;

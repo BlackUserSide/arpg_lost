@@ -2,9 +2,18 @@ import { clamp, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { PassiveMechanic } from '../passives/types';
 import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
-import type { ActionDef, ClassDef, Content, MobDef, StatusId, WeaponDef } from './content';
-import type { ActionSet } from '../skills/params';
-import { activeConditionalModifiers, deriveStat, hasStateMechanics, type ConditionState, type ConditionTarget } from './passiveEffects';
+import type { ActionDef, ClassDef, Content, MobDef, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
+import { resolveActions, type ActionSet } from '../skills/params';
+import {
+  activeConditionalModifiers,
+  deriveStat,
+  hasStateMechanics,
+  skillChangeSets,
+  stunBarStats,
+  type ConditionState,
+  type ConditionTarget,
+  type StunBarStats,
+} from './passiveEffects';
 
 export const PLAYER_ID = 0;
 
@@ -37,7 +46,17 @@ export interface PlayerState {
   mana: number;
   /** Time until the next basic attack or skill can start. */
   actionTimer: number;
+  /**
+   * Per action id: seconds until the action is ready again. For actions with charges > 1 (see `charges`): seconds
+   * until the next charge is restored (0 while all charges are stored).
+   */
   cooldowns: Record<string, number>;
+  /**
+   * Stored charges per action id, only for actions with charges > 1 (ActionDef.charges after skill changes);
+   * full at spawn. HUD: available = charges[id], max = actions' charges, next charge in cooldowns[id]
+   * (see chargeInfo in charges.ts).
+   */
+  charges: Record<string, number>;
   level: number;
   /** XP towards the next level. */
   xp: number;
@@ -55,6 +74,8 @@ export interface PlayerState {
    * setLoadoutModifiers). The simulation reads actions from here, never from the class data.
    */
   actions: ActionSet;
+  /** Stun bar rules of `mechanics` (stunBarStats), cached with `actions`; undefined without a stunBar mechanic. */
+  stunBarStats: StunBarStats | undefined;
   /** Seconds since the player last changed position (walk, dash, teleport). 0 at spawn. */
   stillTime: number;
   /**
@@ -107,6 +128,13 @@ export interface MobState {
   stunBar: number;
   /** Seconds since the last hero hit that filled the stun bar (stunBar decay delay). */
   stunBarIdle: number;
+  /**
+   * Slow from armed trap auras (TrapAura), as a magnitude (0 = none). Recomputed every step by updateTraps from the
+   * traps around the mob, so it lasts exactly while the mob stays in range (applied to movement on the next
+   * step's mob update). Own slot like freezeSlow: never merges into `slow`; the strongest active slow applies,
+   * and while it is > 0 the mob counts as slowed (conditions, freeze-if-slowed). Render may read it directly.
+   */
+  auraSlow: number;
 }
 
 export interface Projectile {
@@ -125,6 +153,8 @@ export interface Projectile {
   readonly speed: number;
   readonly radius: number;
   remaining: number;
+  /** Distance flown since it was fired (distanceDamage); keeps growing through pierced targets. */
+  travelled: number;
   pierceLeft: number;
   readonly explodeRadius: number;
   hitIds: number[];
@@ -146,6 +176,12 @@ export interface Trap {
   /** Trigger and explosion radii locked when the trap was thrown (effective skill params at that moment). */
   readonly triggerRadius: number;
   readonly explodeRadius: number;
+  /** Chain detonation rules locked when thrown (trap Delivery.chain), or null. */
+  readonly chain: TrapChain | null;
+  /** Slow aura locked when thrown (trap Delivery.aura), or null; active only while armed. Render: aura.radius. */
+  readonly aura: TrapAura | null;
+  /** Seconds until a chain detonation set off by another trap explodes this one; null when not chained. */
+  chainTimer: number | null;
   /** Hero-wide conditional modifiers locked when the trap was thrown (see Projectile.castModifiers). */
   readonly castModifiers: readonly Modifier[];
 }
@@ -192,7 +228,11 @@ export type WorldEvent =
       source?: 'deathExplosion';
       damageType?: DamageType;
       sourceMobId?: number;
+      /** A trap set off by another trap's explosion (chain detonation). */
+      chain?: true;
     }
+  /** A hero trap vanished without exploding: the oldest one, removed because the active-trap cap was reached. */
+  | { type: 'trapRemoved'; trapId: number; pos: Vec2; reason: 'limit' }
   /**
    * A status was applied to (or refreshed on) a living mob; `duration` is its new remaining time. `source`
    * 'stunBar': the stun of a full stun bar (omitted for statuses from hits).
@@ -232,6 +272,11 @@ export function getMob(content: Content, id: string): MobDef {
   const def = content.mobs[id];
   if (!def) throw new Error(`Unknown mob: ${id}`);
   return def;
+}
+
+/** What the hero's passive mechanics derive once per loadout (PlayerState.actions, PlayerState.stunBarStats). */
+export function deriveFromMechanics(classDef: ClassDef, mechanics: readonly PassiveMechanic[]): Pick<PlayerState, 'actions' | 'stunBarStats'> {
+  return { actions: resolveActions(classDef, skillChangeSets(mechanics)), stunBarStats: stunBarStats(mechanics) };
 }
 
 /** Permanent modifiers and buffs, without conditional (passive mechanic) modifiers. */

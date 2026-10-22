@@ -15,6 +15,9 @@
 // - lifePotionEffectiveness: data only until potions exist (see lifePotionMultiplier).
 // - ignite / freezeSlowed: converted to on-hit statuses of the actions (skillChangeSets); combat in statuses.ts.
 // - deathExplosion / deathExplosionRadius: see deathExplosions.ts (deathExplosionRadiusMultiplier).
+// - distanceDamage: attack projectiles gain more damage by distance travelled (distanceDamageModifier; projectiles.ts).
+// - trapCharges / trapAura: converted to skill grants of trap actions (skillChangeSets): charges, active-trap cap,
+//   chain detonation and the armed-trap slow aura; runtime in actions.ts (charges, placeTrap) and projectiles.ts.
 // Glass Cannon needs no mechanic: it is plain `more` damage / damageTaken modifiers.
 
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveStatusId } from '../passives/types';
@@ -239,6 +242,8 @@ export function lifePotionMultiplier(mechanics: readonly PassiveMechanic[]): num
  *   in one sum, like increased (designer decision 2026-10-22), and is locked into the action at cast time.
  * - ignite as an on-hit ignite on every action that applies only to hits dealing its damage type.
  * - freezeSlowed as an on-hit freeze on its skills that applies only to targets slowed before the hit.
+ * - trapCharges / trapAura as grants (SkillGrants) on every trap-delivery action: charges, maxActiveTraps,
+ *   trapChain, trapAura. The cap counts every hero trap, whatever action threw it (fan of traps included).
  * Statuses added this way are part of the action snapshot of projectiles / traps / dashes (cast time).
  */
 export function skillChangeSets(mechanics: readonly PassiveMechanic[]): SkillChangeSet[] {
@@ -261,6 +266,15 @@ export function skillChangeSets(mechanics: readonly PassiveMechanic[]): SkillCha
           skillIds: m.skillIds,
           addOnHit: [{ status: 'freeze', duration: m.duration, bossDuration: m.bossDuration, requiresStatus: 'slow' }],
         });
+        break;
+      case 'trapCharges':
+        sets.push({
+          deliveries: ['trap'],
+          grants: { charges: m.charges, maxActiveTraps: m.maxActive, trapChain: { delay: m.chainDelay, radius: m.chainRadius } },
+        });
+        break;
+      case 'trapAura':
+        sets.push({ deliveries: ['trap'], grants: { trapAura: { radius: m.radius, slow: m.slow } } });
         break;
       default:
         break;
@@ -329,6 +343,28 @@ export function stunBarStats(mechanics: readonly PassiveMechanic[]): StunBarStat
 export function stunBarFill(stats: StunBarStats, removed: number, maxLife: number, boss: boolean): number {
   const damagePart = maxLife > 0 ? (removed / maxLife) * stats.damageFill : 0;
   return (stats.baseFill + damagePart) * stats.fillMultiplier * (boss ? stats.bossFillFactor : 1);
+}
+
+/**
+ * distanceDamage: "more" damage of one projectile hit after travelling `travelled` units, for an action with `tags`.
+ * Each mechanic whose tags the action has gives clamp((travelled − minDistance) / (maxDistance − minDistance), 0, 1)
+ * × maxMore; several sources add up (like increased) into one more multiplier. 0 when none applies.
+ */
+export function distanceDamageMore(mechanics: readonly PassiveMechanic[], tags: readonly Tag[], travelled: number): number {
+  let more = 0;
+  for (const m of mechanics) {
+    if (m.kind !== 'distanceDamage' || !m.tags.every((t) => tags.includes(t))) continue;
+    const span = m.maxDistance - m.minDistance;
+    const t = span > 0 ? (travelled - m.minDistance) / span : travelled >= m.maxDistance ? 1 : 0;
+    more += Math.min(1, Math.max(0, t)) * m.maxMore;
+  }
+  return more;
+}
+
+/** distanceDamageMore as a damage modifier, or undefined when it is 0. */
+export function distanceDamageModifier(mechanics: readonly PassiveMechanic[], tags: readonly Tag[], travelled: number): Modifier | undefined {
+  const value = distanceDamageMore(mechanics, tags, travelled);
+  return value > 0 ? { stat: 'damage', kind: 'more', value } : undefined;
 }
 
 /** Counter-attack rules from the first counterAttack mechanic (several do not stack), or undefined. */

@@ -255,6 +255,16 @@ describe('spec skill-parameter nodes resolve to the design doc numbers', () => {
     expect(skill(set, 'roll').cooldown).toBe(2.5);
   });
 
+  it('ranger: Minefield gives Explosive Trap 3 charges (5 s each), cap 3, chain 0.15 s / 250; Lure adds a 150 / 30% aura', () => {
+    const set = resolveFor('ranger', ['tr_key', 'tr_b2']);
+    const trap = skill(set, 'explosive_trap');
+    expect(trap.charges).toBe(3);
+    expect(trap.cooldown).toBe(5);
+    expect(trap.delivery).toMatchObject({ maxActive: 3, chain: { delay: 0.15, radius: 250 }, aura: { radius: 150, slow: 0.3 } });
+    expect(skill(set, 'volley').charges).toBeUndefined();
+    expect(skill(set, 'roll').charges).toBeUndefined();
+  });
+
   it('mage: Inferno fireball explosion 80 → 96; Blizzard nova 150 → 180, 3 → 2.5 s; Icy Grip slow 2.5 → 3.5 s; Cold Blood slows', () => {
     const set = resolveFor('mage', ['py_a2', 'cr_entry', 'cr_a2', 'cr_b2']);
     expect(skill(set, 'fireball').delivery).toMatchObject({ explodeRadius: 96 });

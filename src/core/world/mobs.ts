@@ -7,14 +7,13 @@ import type { Content, MobDef } from './content';
 import { counterAttack } from './actions';
 import { heroDeathExplosions } from './deathExplosions';
 import { gainKillXp } from './experience';
-import { stunBarStats } from './passiveEffects';
 import { decayStunBar, tickIgnite } from './statuses';
 import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
   const { world, content, events } = ctx;
   const player = world.player;
-  const barStats = stunBarStats(player.mechanics);
+  const barStats = player.stunBarStats;
   for (const mob of world.mobs) {
     // Mobs killed earlier this step neither act nor tick: their statuses at death stay as they were.
     if (mob.life <= 0) continue;
@@ -59,6 +58,7 @@ export function updateMobs(ctx: Ctx, dt: number): void {
           speed: def.attack.projectile.speed,
           radius: def.attack.projectile.radius,
           remaining: def.attack.range + player.radius + def.radius,
+          travelled: 0,
           pierceLeft: 0,
           explodeRadius: 0,
           hitIds: [],
@@ -72,12 +72,12 @@ export function updateMobs(ctx: Ctx, dt: number): void {
   separateMobs(world, content);
 }
 
-/** Fraction of speed removed now: the strongest of the active slow and the boss freeze- / stun-slows (0..1). */
+/** Fraction of speed removed now: the strongest of the active slow, the trap aura slow and the boss freeze- / stun-slows (0..1). */
 export function slowFraction(mob: MobState, content: Content): number {
   const slow = mob.slow > 0 ? mob.slowMagnitude : 0;
   const freezeSlow = mob.freezeSlow > 0 ? content.combat.bossFreezeSlow : 0;
   const stunSlow = mob.stunSlow > 0 ? content.combat.bossStunSlow : 0;
-  return Math.min(1, Math.max(0, slow, freezeSlow, stunSlow));
+  return Math.min(1, Math.max(0, slow, mob.auraSlow, freezeSlow, stunSlow));
 }
 
 /**
@@ -192,6 +192,7 @@ export function updateSpawner(ctx: Ctx, dt: number): void {
       stunSlow: 0,
       stunBar: 0,
       stunBarIdle: 0,
+      auraSlow: 0,
     };
     world.mobs.push(mob);
     events.push({ type: 'spawn', id: mob.id });

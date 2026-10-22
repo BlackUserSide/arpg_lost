@@ -9,7 +9,7 @@ import type { ActionDef, ClassDef, Content, MobDef } from './content';
 import { slowFraction } from './mobs';
 import { stunBarFill, stunBarStats } from './passiveEffects';
 import { applyStatus, conditionTarget } from './statuses';
-import { createWorld, step, type Ctx, type MobState, type PlayerInput, type WorldEvent, type WorldState } from './world';
+import { createWorld, setLoadoutModifiers, step, type Ctx, type MobState, type PlayerInput, type WorldEvent, type WorldState } from './world';
 
 const DT = 1 / 60;
 
@@ -117,6 +117,7 @@ function addMob(world: WorldState, x: number, y: number, defId = 'dummy', life =
     stunSlow: 0,
     stunBar: 0,
     stunBarIdle: 0,
+    auraSlow: 0,
   };
   world.mobs.push(mob);
   return mob;
@@ -139,6 +140,15 @@ function makeCtx(world: WorldState, content: Content): Ctx {
 describe('Guardian mechanics are live', () => {
   it('stunBar and counterAttack are no longer pending', () => {
     expect([STUN_BAR, HEAVY_HAND, COUNTER].filter(isMechanicPending)).toEqual([]);
+  });
+
+  it('stun bar stats are cached on the player per loadout and follow mechanic changes', () => {
+    const { content, world } = setup([STUN_BAR, HEAVY_HAND]);
+    expect(world.player.stunBarStats).toEqual(stunBarStats([STUN_BAR, HEAVY_HAND]));
+    setLoadoutModifiers(world, content, [], [COUNTER]);
+    expect(world.player.stunBarStats).toBeUndefined();
+    setLoadoutModifiers(world, content, [], [STUN_BAR]);
+    expect(world.player.stunBarStats).toEqual(stunBarStats([STUN_BAR]));
   });
 });
 
@@ -347,6 +357,14 @@ describe('counter-attack', () => {
     expect(world.player.actionTimer).toBe(0);
     expect(world.player.mana).toBe(mana);
     expect(world.player.counterCooldown).toBe(1);
+  });
+
+  it('an attacker exactly on the hero: the counter faces where the hero faces', () => {
+    const { content, world } = setup([COUNTER]);
+    const brute = addMob(world, 500, 500, 'brute', 10000);
+    const events = step(world, { ...idle, aim: vec(500, 900) }, content, DT);
+    expect(events).toContainEqual({ type: 'counter', actionId: 'strike', targetId: brute.id, facing: vec(0, 1) });
+    expect(brute.life).toBe(9990);
   });
 
   it('effectiveness scales the damage (50% → 5)', () => {

@@ -128,6 +128,7 @@ function addMob(world: WorldState, x: number, y: number, defId = 'dummy', life =
     stunSlow: 0,
     stunBar: 0,
     stunBarIdle: 0,
+    auraSlow: 0,
   };
   world.mobs.push(mob);
   return mob;

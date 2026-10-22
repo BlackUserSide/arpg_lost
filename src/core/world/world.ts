@@ -7,18 +7,19 @@ import type { Modifier } from '../stats/types';
 import { levelModifiers } from '../progression/levels';
 import type { Content, WeaponDef } from './content';
 import { decayLeech, refillPools } from './experience';
-import { skillChangeSets } from './passiveEffects';
-import { resolveActions } from '../skills/params';
+import { syncCharges, tickCooldowns } from './charges';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
-import { allModifiers, clampToArena, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
+import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
 export { applyLeech, recoverLife, recoverMana, setLoadoutModifiers } from './experience';
 export { canAfford } from './actions';
+export { actionReady, availableCharges, chargeInfo, maxCharges, type ChargeInfo } from './charges';
 export {
   actionCost,
   deriveStat,
+  distanceDamageMore,
   leechStats,
   lifePotionMultiplier,
   lifeRecoveryPool,
@@ -61,13 +62,14 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     mana: 0,
     actionTimer: 0,
     cooldowns: {},
+    charges: {},
     level,
     xp: loadout.xp ?? 0,
     gearModifiers,
     modifiers: [...gearModifiers, ...levelMods],
     levelModifiers: levelMods,
     mechanics,
-    actions: resolveActions(classDef, skillChangeSets(mechanics)),
+    ...deriveFromMechanics(classDef, mechanics),
     stillTime: 0,
     leechRecent: 0,
     counterCooldown: 0,
@@ -78,6 +80,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     dead: false,
   };
   refillPools(classDef, player);
+  syncCharges(player, true);
   return {
     time: 0,
     rngState: seed >>> 0,
@@ -133,9 +136,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
 
   player.actionTimer = Math.max(0, player.actionTimer - dt);
   const recovery = computeStat(1, allModifiers(classDef, player), 'cooldownRecovery');
-  for (const id of Object.keys(player.cooldowns)) {
-    player.cooldowns[id] = Math.max(0, (player.cooldowns[id] ?? 0) - dt * recovery);
-  }
+  tickCooldowns(player, dt, recovery);
 
   if (updateMotion(ctx, dt)) return;
 

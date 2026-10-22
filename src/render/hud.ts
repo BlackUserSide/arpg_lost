@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { xpToNextLevel, type ProgressionRules } from '../core/progression/levels';
 import type { ActionDef, ClassDef } from '../core/world/content';
-import { actionCost, canAfford, lifeRecoveryPool, playerStat, type ActionSet, type WorldState } from '../core/world/world';
+import { actionCost, canAfford, chargeInfo, lifeRecoveryPool, playerStat, type ActionSet, type WorldState } from '../core/world/world';
 import { skillIcon } from './hudIcons';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
@@ -35,6 +35,11 @@ interface Slot {
   costText: Phaser.GameObjects.Text;
   /** The action is paid with life. */
   lifeCost: boolean;
+  /** Stored charges badge (top-right corner), only for multi-charge actions. */
+  chargeBadge: Phaser.GameObjects.Arc;
+  chargeText: Phaser.GameObjects.Text;
+  /** Charge count last drawn (avoids re-setting text every frame); -1 = hidden. */
+  shownCharges: number;
   x: number;
   y: number;
   size: number;
@@ -128,7 +133,10 @@ export class Hud {
       cdText.setStroke('#000', 4);
       const costText = label(scene, 0, 0, '', 12, '#ff8a7a', true).setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH + 3);
       costText.setStroke('#000', 3);
-      return { action, frame, icon, key, cdText, costText, lifeCost: false, x: 0, y: 0, size: 56 };
+      const chargeBadge = scene.add.circle(0, 0, 10, 0x1a1408, 0.92).setStrokeStyle(2, 0xc89a3a, 1).setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
+      const chargeText = label(scene, 0, 0, '', 13, UI.goldBrightText, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 4).setVisible(false);
+      chargeText.setStroke('#000', 3);
+      return { action, frame, icon, key, cdText, costText, lifeCost: false, chargeBadge, chargeText, shownCharges: -1, x: 0, y: 0, size: 56 };
     });
     this.infoFrame = makeFrame(scene, 0, 0, 240, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
     this.info = label(scene, 0, 0, '', 15, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
@@ -155,6 +163,12 @@ export class Hud {
       slot.key.setPosition(slot.x, slot.y + size / 2 - 2);
       slot.cdText.setPosition(slot.x, slot.y);
       slot.costText.setPosition(slot.x - size / 2 + 4, slot.y - size / 2 + 3);
+      // Charge badge on the frame's top-right corner (key caption is bottom-centre, life cost top-left).
+      const br = compact ? 10 : 11;
+      const bx = slot.x + size / 2 - br + 3;
+      const by = slot.y - size / 2 + br - 3;
+      slot.chargeBadge.setPosition(bx, by).setRadius(br);
+      slot.chargeText.setPosition(bx, by).setFontSize(compact ? 12 : 14);
     });
     this.manaNote.setPosition(this.mana.x, this.mana.y);
     // XP bar spans the skill bar, just above it; level number to its left.
@@ -217,18 +231,31 @@ export class Hud {
     }
     const s = this.shutters.clear();
     for (const slot of this.slots) {
-      const cd = p.cooldowns[slot.action.id] ?? 0;
+      // Multi-charge actions stay usable while any charge is stored; the shutter shows the next charge's recharge.
+      const info = chargeInfo(p, slot.action);
+      const multi = info.max > 1;
+      const cd = info.recharge;
+      const blocked = multi ? info.charges <= 0 : cd > 0.05;
       const unaffordable = !canAfford(p, slot.action);
-      slot.icon.setAlpha(cd > 0.05 || unaffordable ? 0.45 : 1);
+      slot.icon.setAlpha(blocked || unaffordable ? 0.45 : 1);
       if (unaffordable) slot.icon.setTint(slot.lifeCost ? 0xb86a6a : 0x6a7ab8);
       else slot.icon.clearTint();
+      const shown = multi ? info.charges : -1;
+      if (shown !== slot.shownCharges) {
+        slot.shownCharges = shown;
+        const empty = multi && info.charges === 0;
+        slot.chargeBadge.setVisible(multi).setStrokeStyle(2, empty ? 0x6a5a3a : 0xc89a3a, 1);
+        slot.chargeText.setVisible(multi).setText(multi ? String(info.charges) : '').setColor(empty ? '#8a8070' : UI.goldBrightText);
+      }
       if (cd > 0.05) {
         // A mid-run swap can shorten the cooldown below what is still running: never divide by less than the remainder.
         const frac = Math.min(1, cd / Math.max(slot.action.cooldown, cd));
-        s.fillStyle(0x000000, 0.6);
+        // Charges still stored: a lighter shutter, the skill stays usable.
+        s.fillStyle(0x000000, blocked ? 0.6 : 0.28);
         s.slice(slot.x, slot.y, (slot.size - 10) / 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac, false);
         s.fillPath();
-        slot.cdText.setText(cd >= 1 ? String(Math.ceil(cd)) : cd.toFixed(1));
+        // Countdown only while blocked; with charges left a big number would read as "not ready".
+        slot.cdText.setText(blocked ? (cd >= 1 ? String(Math.ceil(cd)) : cd.toFixed(1)) : '');
       } else {
         slot.cdText.setText('');
       }

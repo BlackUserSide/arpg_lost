@@ -49,9 +49,22 @@ const COUNTER_REACH = 42;
 
 export type BurstKind = 'fire' | 'ice';
 
+/** Trap slow aura: a cool teal so it never reads as the orange trigger ring. */
+const AURA_COLOR = 0x6fe0d0;
+/** Seconds per aura ripple (a ring sweeping from the trap out to the aura edge). */
+const AURA_RIPPLE_PERIOD = 1.6;
+/** Chain fuse: hot white / gold flashing over the trap, sparks hissing off it. */
+const FUSE_COLORS = [0xffffff, 0xffd23a] as const;
+const FUSE_SPARK_RATE = 30;
+/** Chain detonation accent: a golden shock ring on top of the regular trap explosion. */
+const CHAIN_TTL = 0.35;
+const CHAIN_COLOR = 0xffd23a;
+/** Trap removed by the cap: a small grey puff. */
+const PUFF_TTL = 0.4;
+
 interface Burst {
   active: boolean;
-  kind: BurstKind | 'counter';
+  kind: BurstKind | 'counter' | 'chain' | 'puff';
   x: number;
   y: number;
   /** World radius: on screen a 2r × r ellipse. */
@@ -225,6 +238,38 @@ export class CombatFx {
     }
   }
 
+  /**
+   * Slow aura of an armed trap at screen (x, y): a faint teal disc with a soft rim and a ripple sweeping outwards.
+   * `radius` is the world radius (2r × r ellipse on screen); `id` desynchronises neighbouring traps.
+   */
+  drawTrapAura(ground: Phaser.GameObjects.Graphics, x: number, y: number, radius: number, time: number, id: number): void {
+    const breathe = 0.5 + 0.5 * Math.sin(time * 2.2 + id);
+    ground.fillStyle(AURA_COLOR, 0.05 + 0.03 * breathe).fillEllipse(x, y, radius * 2, radius);
+    ground.lineStyle(1.5, AURA_COLOR, 0.28 + 0.14 * breathe).strokeEllipse(x, y, radius * 2, radius);
+    const phase = ((time + id * 0.31) / AURA_RIPPLE_PERIOD) % 1;
+    const r = radius * (0.25 + 0.75 * phase);
+    ground.lineStyle(1, AURA_COLOR, 0.3 * (1 - phase)).strokeEllipse(x, y, r * 2, r);
+  }
+
+  /** Chain fuse over a trap at screen (x, y) about to be set off by another trap: fast white/gold flashing and sparks. */
+  drawTrapFuse(top: Phaser.GameObjects.Graphics, x: number, y: number, time: number, dt: number): void {
+    const flash = Math.floor(time * 24) % 2;
+    top.fillStyle(FUSE_COLORS[flash] ?? CHAIN_COLOR, 0.9).fillEllipse(x, y - 2, 26, 13);
+    top.fillStyle(0xffffff, 0.35 + 0.35 * flash).fillCircle(x, y - 6, 6);
+    if (Math.random() < FUSE_SPARK_RATE * dt) this.guardSparks.emitParticleAt(x + (Math.random() - 0.5) * 10, y - 6, 1);
+  }
+
+  /** Accent for a chain detonation at screen (x, y), world radius `radius`: a golden shock ring and sparks. */
+  chainBurst(x: number, y: number, radius: number): void {
+    if (!this.startBurst('chain', x, y, radius, CHAIN_TTL)) return;
+    this.guardSparks.emitParticleAt(x, y - 6, 8);
+  }
+
+  /** A trap vanished without exploding (trap cap) at screen (x, y): a small grey puff. */
+  trapFizzle(x: number, y: number): void {
+    this.startBurst('puff', x, y, 16, PUFF_TTL);
+  }
+
   /** Advances and draws the bursts: ground layers into `ground`, flames / shards into `top`. */
   drawBursts(ground: Phaser.GameObjects.Graphics, top: Phaser.GameObjects.Graphics, dt: number): void {
     for (const b of this.bursts) {
@@ -236,7 +281,46 @@ export class CombatFx {
       }
       if (b.kind === 'fire') this.drawFire(ground, top, b);
       else if (b.kind === 'ice') this.drawIce(ground, top, b);
+      else if (b.kind === 'chain') this.drawChain(ground, b);
+      else if (b.kind === 'puff') this.drawPuff(top, b);
       else this.drawCounter(top, b);
+    }
+  }
+
+  /** Takes a free pooled burst and starts it; false when the pool is exhausted. */
+  private startBurst(kind: Burst['kind'], x: number, y: number, radius: number, ttl: number): boolean {
+    const burst = this.bursts.find((b) => !b.active) ?? (this.bursts.length < MAX_BURSTS ? this.newBurst() : undefined);
+    if (!burst) return false;
+    burst.active = true;
+    burst.kind = kind;
+    burst.x = x;
+    burst.y = y;
+    burst.radius = radius;
+    burst.age = 0;
+    burst.ttl = ttl;
+    burst.spin = Math.random() * Math.PI * 2;
+    return true;
+  }
+
+  /** Chain accent: a thick golden ring snapping out past the explosion edge, fading. */
+  private drawChain(g: Phaser.GameObjects.Graphics, b: Burst): void {
+    const t = b.age / b.ttl;
+    const fade = 1 - t;
+    const r = b.radius * (0.6 + 0.5 * (1 - (1 - t) ** 2));
+    g.lineStyle(4 * fade + 1, CHAIN_COLOR, 0.9 * fade).strokeEllipse(b.x, b.y, r * 2, r);
+    g.lineStyle(1.5, 0xffffff, 0.7 * fade).strokeEllipse(b.x, b.y, r * 1.6, r * 0.8);
+  }
+
+  /** Puff: three grey blobs swelling and rising a little, fading. */
+  private drawPuff(top: Phaser.GameObjects.Graphics, b: Burst): void {
+    const t = b.age / b.ttl;
+    const fade = 1 - t;
+    for (let i = 0; i < 3; i++) {
+      const a = b.spin + (i * Math.PI * 2) / 3;
+      const d = b.radius * (0.2 + 0.6 * t);
+      const px = b.x + Math.cos(a) * d;
+      const py = b.y - 6 - t * 14 + Math.sin(a) * d * 0.5;
+      top.fillStyle(0x9a948a, 0.55 * fade).fillCircle(px, py, 4 + 6 * t);
     }
   }
 

@@ -3,6 +3,7 @@
 
 import { totalDamage, type DamageByType } from '../combat/damage';
 import { resistanceMultiplier } from '../combat/mitigation';
+import { distance } from '../math';
 import { computeStat } from '../stats/modifiers';
 import type { Modifier, Tag } from '../stats/types';
 import type { StatusEffect } from './content';
@@ -19,11 +20,13 @@ const TIME_EPSILON = 1e-9;
  * A boss is not stunned by ordinary stuns either; while the stun-slow that replaces them runs, it counts as
  * stunned (and slowed), by analogy with the freeze-slow.
  * It counts as stunned, so e.g. «Добити лежачого» +25% applies (designer decision 2026-10-22).
+ * A trap aura slow (MobState.auraSlow, no duration) counts as slowed while active; `slow` is then at least its
+ * magnitude (conditions only test > 0).
  */
 export function conditionTarget(mob: MobState): ConditionTarget {
   return {
     stun: Math.max(mob.stun, mob.stunSlow),
-    slow: Math.max(mob.slow, mob.freezeSlow, mob.stunSlow),
+    slow: Math.max(mob.slow, mob.freezeSlow, mob.stunSlow, mob.auraSlow),
     ignite: mob.ignite,
     freeze: Math.max(mob.freeze, mob.freezeSlow),
   };
@@ -131,6 +134,10 @@ function setSlow(ctx: Ctx, mob: MobState, magnitude: number, duration: number): 
  * Stun bar decay for one fixed step (designer decision 2026-10-22): once stunBarIdle has reached decayDelay, the bar
  * drains decayPerSecond × dt (floored at 0); then stunBarIdle grows by dt. A hit at step n (stunBarIdle = 0) is
  * first drained on the step decayDelay later. No events: render reads mob.stunBar.
+ * Decay runs in updateMobs, so the start differs by one step with the hit's source (as for the first ignite tick):
+ * instant hero hits (updatePlayer, before updateMobs) already count a full dt of idle time in their own step and
+ * are first drained at step n + decayDelay / dt; projectile / trap hits (after updateMobs) start counting on the
+ * next step and are first drained one step later, at n + decayDelay / dt + 1.
  */
 export function decayStunBar(mob: MobState, stats: StunBarStats, dt: number): void {
   if (mob.stunBar > 0 && mob.stunBarIdle >= stats.decayDelay - TIME_EPSILON) {
@@ -192,4 +199,25 @@ export function tickIgnite(ctx: Ctx, mob: MobState, dt: number): void {
   // Snap float leftovers (e.g. 3 − 180 × 1/60) so an ignite ends on its last full step.
   mob.ignite = mob.ignite - time > TIME_EPSILON ? mob.ignite - time : 0;
   if (mob.ignite === 0) mob.igniteDps = 0;
+}
+
+/**
+ * Trap auras: each living mob gets auraSlow = the strongest slow of the armed traps whose aura.radius (+ the mob's
+ * radius) reaches it, else 0. Recomputed every step, so the slow ends on the step after the mob leaves the range
+ * (or the trap explodes). A trap removed by the active-trap cap drops its aura at once (placeTrap calls this).
+ * Movement reads it on the next step's mob update.
+ */
+export function updateTrapAuras(ctx: Ctx): void {
+  const { world, content } = ctx;
+  for (const mob of world.mobs) {
+    let slow = 0;
+    if (mob.life > 0) {
+      const reach = getMob(content, mob.defId).radius;
+      for (const trap of world.traps) {
+        if (!trap.aura || trap.armTimer > 0) continue;
+        if (distance(mob.pos, trap.pos) <= trap.aura.radius + reach) slow = Math.max(slow, trap.aura.slow);
+      }
+    }
+    mob.auraSlow = slow;
+  }
 }

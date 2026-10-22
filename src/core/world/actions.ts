@@ -4,10 +4,11 @@ import { add, distance, dot, normalize, rotate, scale, sub, type Vec2 } from '..
 import { computeStat } from '../stats/modifiers';
 import type { ActionDef } from './content';
 import { applyLeech } from './experience';
-import { actionCost, canPay, counterAttackStats, critStats, stunBarStats } from './passiveEffects';
-import { applyStatus, conditionTarget, fillStunBar } from './statuses';
+import { actionReady, spendCharge } from './charges';
+import { actionCost, canPay, counterAttackStats, critStats } from './passiveEffects';
+import { applyStatus, conditionTarget, fillStunBar, updateTrapAuras } from './statuses';
 import type { Modifier } from '../stats/types';
-import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState } from './state';
+import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState, type Trap } from './state';
 
 /** The hero's effective action (class data + skill changes, see PlayerState.actions). */
 export function findAction(ctx: Ctx, id: string): ActionDef {
@@ -36,7 +37,7 @@ export function pickAction(ctx: Ctx): ActionDef | undefined {
   for (let i = 0; i < skills.length; i++) {
     const skill = skills[i];
     if (!skill || !input.skills[i]) continue;
-    if ((player.cooldowns[skill.id] ?? 0) > 0 || !canAfford(player, skill)) continue;
+    if (!actionReady(player, skill) || !canAfford(player, skill)) continue;
     return skill;
   }
   return input.basicAttack && canAfford(player, basicAttack) ? basicAttack : undefined;
@@ -57,7 +58,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
   const { world, content, events, input } = ctx;
   const player = world.player;
   payCost(player, action);
-  if (action.cooldown > 0) player.cooldowns[action.id] = action.cooldown;
+  spendCharge(player, action);
   player.actionTimer = useTime(ctx, action);
   events.push({ type: 'action', actionId: action.id, facing: player.facing });
 
@@ -82,6 +83,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
           speed: delivery.speed,
           radius: delivery.radius,
           remaining: delivery.range,
+          travelled: 0,
           pierceLeft: delivery.pierce,
           explodeRadius: delivery.explodeRadius ?? 0,
           hitIds: [],
@@ -111,7 +113,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
     }
     case 'trap': {
       const dist = Math.min(delivery.throwRange, distance(input.aim, player.pos));
-      world.traps.push({
+      const trap: Trap = {
         id: world.nextId++,
         actionId: action.id,
         action,
@@ -120,8 +122,12 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
         lifetime: delivery.lifetime,
         triggerRadius: delivery.triggerRadius,
         explodeRadius: delivery.explodeRadius,
+        chain: delivery.chain ?? null,
+        aura: delivery.aura ?? null,
+        chainTimer: null,
         castModifiers: heroConditionalModifiers(ctx.classDef, player),
-      });
+      };
+      placeTrap(ctx, trap, delivery.maxActive);
       break;
     }
     case 'self':
@@ -136,6 +142,29 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
       player.buffs.push({ id: effect.id, modifiers: effect.modifiers, remaining: effect.duration });
     }
   }
+}
+
+/**
+ * Adds a hero trap under the active-trap cap `maxActive` (undefined = no cap). The cap counts every hero trap,
+ * whatever action threw it, so any trap source (e.g. a fan of traps) shares it: while the cap is reached the
+ * oldest trap (lowest id) is removed without exploding ('trapRemoved' event).
+ */
+// Designer decision 2026-10-22: over the cap the oldest trap vanishes without exploding.
+export function placeTrap(ctx: Ctx, trap: Trap, maxActive: number | undefined): void {
+  const { world, events } = ctx;
+  let removed = false;
+  if (maxActive !== undefined) {
+    const cap = Math.max(1, Math.floor(maxActive));
+    while (world.traps.length >= cap) {
+      const oldest = world.traps.reduce((a, b) => (b.id < a.id ? b : a));
+      world.traps = world.traps.filter((t) => t !== oldest);
+      events.push({ type: 'trapRemoved', trapId: oldest.id, pos: oldest.pos, reason: 'limit' });
+      // A removed trap's aura ends now, not at the next updateTraps.
+      removed = true;
+    }
+  }
+  world.traps.push(trap);
+  if (removed) updateTrapAuras(ctx);
 }
 
 /** Advances a dash: moves the player and hits enemies along the path once. Returns true while dashing. */
@@ -174,9 +203,10 @@ export function hitArc(
   angleDeg: number,
   maxTargets?: number,
   castModifiers?: readonly Modifier[],
+  chain = false,
 ): void {
   const { world, content, events } = ctx;
-  events.push({ type: 'area', actionId: action.id, origin, facing, radius, angleDeg });
+  events.push({ type: 'area', actionId: action.id, origin, facing, radius, angleDeg, ...(chain ? { chain: true as const } : {}) });
   const halfAngleCos = Math.cos(((angleDeg / 2) * Math.PI) / 180);
   const targets = world.mobs
     .filter((mob) => mob.life > 0)
@@ -191,9 +221,12 @@ export function hitArc(
   for (const { mob } of targets) damageMob(ctx, action, mob, castModifiers);
 }
 
-/** Circle damage at a point (projectile explosions, traps); `castModifiers` as in damageMob. */
-export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, castModifiers?: readonly Modifier[]): void {
-  hitArc(ctx, action, pos, ctx.world.player.facing, radius, 360, undefined, castModifiers);
+/**
+ * Circle damage at a point (projectile explosions, traps); `castModifiers` as in damageMob. `chain` marks the
+ * 'area' event of a chain-detonated trap.
+ */
+export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, castModifiers?: readonly Modifier[], chain = false): void {
+  hitArc(ctx, action, pos, ctx.world.player.facing, radius, 360, undefined, castModifiers, chain);
 }
 
 /**
@@ -241,7 +274,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
   const hit = { mods, tags: action.tags, raw, before };
   for (const effect of action.onHit ?? []) applyStatus(ctx, mob, effect, hit);
   if (action.damage) {
-    const bar = stunBarStats(world.player.mechanics);
+    const bar = world.player.stunBarStats;
     if (bar) fillStunBar(ctx, mob, bar, removed);
   }
 }
@@ -260,6 +293,9 @@ export function counterAttack(ctx: Ctx, attacker: MobState): void {
   if (!counter || player.counterCooldown > 0 || player.dead || attacker.life <= 0) return;
   player.counterCooldown = counter.cooldown;
   const action = player.actions.basicAttack;
-  ctx.events.push({ type: 'counter', actionId: action.id, targetId: attacker.id, facing: normalize(sub(attacker.pos, player.pos)) });
+  // An attacker exactly on the hero has no direction: fall back to the hero's facing.
+  const toAttacker = normalize(sub(attacker.pos, player.pos));
+  const facing = toAttacker.x !== 0 || toAttacker.y !== 0 ? toAttacker : player.facing;
+  ctx.events.push({ type: 'counter', actionId: action.id, targetId: attacker.id, facing });
   damageMob(ctx, action, attacker, undefined, counter.effectiveness);
 }

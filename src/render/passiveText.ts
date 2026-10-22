@@ -75,6 +75,7 @@ export const SKILL_NAMES: ReadonlyMap<string, string> = new Map(
 
 const PARAM: Record<SkillParam, { name: string; unit: string }> = {
   cooldown: { name: 'кулдаун', unit: ' с' },
+  charges: { name: 'заряди', unit: '' },
   buffDuration: { name: 'тривалість бафу', unit: ' с' },
   radius: { name: 'радіус', unit: '' },
   explodeRadius: { name: 'радіус вибуху', unit: '' },
@@ -219,7 +220,7 @@ export function formatMechanic(m: PassiveMechanic): string[] {
     case 'counterAttack':
       return [`Коли ворог б'є вас у ближньому бою: удар у відповідь (${pct(m.effectiveness)} базової атаки), не частіше ніж раз на ${num(m.cooldown)} с`];
     case 'distanceDamage':
-      return [`Снаряди завдають більше урону з відстанню: від 0% на ${num(m.minDistance)} до ${pct(m.maxMore)} на ${num(m.maxDistance)}+ од.`];
+      return [`Снаряди атак завдають більше урону (more) з пройденою відстанню: від 0% на ${num(m.minDistance)} до ${pct(m.maxMore)} на ${num(m.maxDistance)}+ од.`];
     case 'trapCharges':
       return [
         `Пастка має ${m.charges} ${plural(m.charges, 'заряд', 'заряди', 'зарядів')}, до ${m.maxActive} ${plural(m.maxActive, 'пастки', 'пасток', 'пасток')} одночасно`,

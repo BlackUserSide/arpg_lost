@@ -5,7 +5,7 @@
 import type { ActionDef, ClassDef, Delivery, SelfEffect, StatusEffect, StatusId } from '../world/content';
 import { STATUS_IDS } from '../world/content';
 import type { Modifier } from '../stats/types';
-import type { SkillChangeSet, SkillParam } from './types';
+import type { SkillChangeSet, SkillGrants, SkillParam } from './types';
 
 /** The hero's actions after changes; same shape as the class data. */
 export interface ActionSet {
@@ -15,8 +15,9 @@ export interface ActionSet {
 }
 
 /** True if the change set targets this action (see SkillChangeSet). */
-export function skillMatches(action: ActionDef, set: Pick<SkillChangeSet, 'skillIds' | 'tags'>): boolean {
+export function skillMatches(action: ActionDef, set: Pick<SkillChangeSet, 'skillIds' | 'tags' | 'deliveries'>): boolean {
   if (set.skillIds && !set.skillIds.includes(action.id)) return false;
+  if (set.deliveries && !set.deliveries.includes(action.delivery.kind)) return false;
   return (set.tags ?? []).every((t) => action.tags.includes(t));
 }
 
@@ -37,7 +38,8 @@ function applyTotal(base: number, total: ParamTotal | undefined): number {
 
 /**
  * Which action fields each param changes:
- * - cooldown: the action cooldown.
+ * - cooldown: the action cooldown (with charges: the recharge time of one charge).
+ * - charges: stored uses (base: granted charges, else the action's, else 1; rounded down, at least 1).
  * - buffDuration: every buff the action applies to its user (not invulnerability).
  * - radius: arc radius (melee swings, novas). Projectile hitboxes and dash hit widths are not "radius".
  * - explodeRadius: projectile explosion, trap explosion.
@@ -47,7 +49,7 @@ function applyTotal(base: number, total: ParamTotal | undefined): number {
  * - armTime / triggerRadius: trap.
  * - statusDuration: every on-hit status of the action (including statuses added by change sets).
  */
-function applyDelivery(d: Delivery, p: (param: SkillParam, base: number) => number): Delivery {
+function applyDelivery(d: Delivery, p: (param: SkillParam, base: number) => number, grants: SkillGrants): Delivery {
   switch (d.kind) {
     case 'arc':
       return { ...d, radius: p('radius', d.radius) };
@@ -55,14 +57,21 @@ function applyDelivery(d: Delivery, p: (param: SkillParam, base: number) => numb
       const explode = d.explodeRadius !== undefined ? { explodeRadius: p('explodeRadius', d.explodeRadius) } : {};
       return { ...d, range: p('range', d.range), speed: p('projectileSpeed', d.speed), pierce: Math.floor(p('pierce', d.pierce)), ...explode };
     }
-    case 'trap':
+    case 'trap': {
+      const maxActive = grants.maxActiveTraps !== undefined ? Math.min(grants.maxActiveTraps, d.maxActive ?? Infinity) : d.maxActive;
+      const chain = d.chain ?? grants.trapChain;
+      const aura = d.aura ?? grants.trapAura;
       return {
         ...d,
+        ...(maxActive !== undefined ? { maxActive } : {}),
+        ...(chain ? { chain } : {}),
+        ...(aura ? { aura } : {}),
         throwRange: p('range', d.throwRange),
         armTime: p('armTime', d.armTime),
         triggerRadius: p('triggerRadius', d.triggerRadius),
         explodeRadius: p('explodeRadius', d.explodeRadius),
       };
+    }
     case 'teleport':
       return { ...d, range: p('range', d.range) };
     case 'dash':
@@ -78,9 +87,32 @@ function isCombatStatus(status: string): status is StatusId {
 }
 
 /**
+ * Combined grants of the matching sets: charges = highest, maxActiveTraps = lowest, trapChain / trapAura = first.
+ */
+function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
+  let charges: number | undefined;
+  let maxActiveTraps: number | undefined;
+  let trapChain: SkillGrants['trapChain'];
+  let trapAura: SkillGrants['trapAura'];
+  for (const { grants } of sets) {
+    if (!grants) continue;
+    if (grants.charges !== undefined) charges = Math.max(charges ?? 0, grants.charges);
+    if (grants.maxActiveTraps !== undefined) maxActiveTraps = Math.min(maxActiveTraps ?? Infinity, grants.maxActiveTraps);
+    trapChain ??= grants.trapChain;
+    trapAura ??= grants.trapAura;
+  }
+  return {
+    ...(charges !== undefined ? { charges } : {}),
+    ...(maxActiveTraps !== undefined ? { maxActiveTraps } : {}),
+    ...(trapChain ? { trapChain } : {}),
+    ...(trapAura ? { trapAura } : {}),
+  };
+}
+
+/**
  * The effective definition of one action under the change sets that match it. Order: statuses and buff
- * modifiers are added first, then every param is recomputed from the base value with all matching changes
- * summed (add and increased combine like stats). Returns `action` itself when nothing matches.
+ * modifiers are added first, grants (SkillGrants) set their base values, then every param is recomputed from the
+ * base value with all matching changes summed (add and increased combine like stats). Returns `action` itself when nothing matches.
  * Added statuses that combat does not implement are skipped. Duration changes also scale a freeze's bossDuration.
  */
 export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]): ActionDef {
@@ -120,6 +152,10 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
     }
   }
   const p = (param: SkillParam, base: number): number => applyTotal(base, totals.get(param));
+  const grants = combineGrants(matching);
+  // A granted charge count replaces the action's own (the higher of the two wins); `charges` changes add on top.
+  const baseCharges = Math.max(grants.charges ?? 0, action.charges ?? 1);
+  const charges = Math.max(1, Math.floor(p('charges', baseCharges)));
 
   const onHitBase = [...(action.onHit ?? []), ...addedOnHit];
   const statusTotal = totals.get('statusDuration');
@@ -138,7 +174,8 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
   return {
     ...action,
     cooldown: p('cooldown', action.cooldown),
-    delivery: applyDelivery(action.delivery, p),
+    ...(charges !== 1 || action.charges !== undefined ? { charges } : {}),
+    delivery: applyDelivery(action.delivery, p, grants),
     ...(onHit.length > 0 ? { onHit } : {}),
     ...(selfEffects ? { selfEffects } : {}),
   };

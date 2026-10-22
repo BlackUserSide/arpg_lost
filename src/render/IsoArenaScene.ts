@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
-import { createWorld, getClass, getMob, PLAYER_ID, setLoadoutModifiers, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { createWorld, distanceDamageMore, getClass, getMob, PLAYER_ID, setLoadoutModifiers, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
 import { unspentPoints } from '../core/passives/allocation';
 import { equippedWeapon } from '../core/items/equipment';
 import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
@@ -56,6 +56,20 @@ const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
 const AREA_COLORS: Record<string, number> = { cleave: 0xff9a3c, fireball: 0xff6a1a, explosive_trap: 0xff8a2a, frost_nova: 0x8fd3ff };
 const PROJECTILE_COLORS: Record<string, number> = { ranger_bolt: 0xe8e2cf, volley: 0xe8e2cf, wand_bolt: 0xb58cff, fireball: 0xff7a1a };
 const MOB_PROJECTILE_COLOR = 0xff4b4b;
+/** Area tint of a trap explosion set off by another trap. */
+const CHAIN_AREA_COLOR = 0xffd23a;
+/** Far Shot (distanceDamage) glow around bolts. */
+const FAR_SHOT_GLOW = 0xfff0a0;
+
+type Mechanics = Parameters<typeof distanceDamageMore>[0];
+type Tags = Parameters<typeof distanceDamageMore>[1];
+
+/** 0..1: share of the full distanceDamage bonus a projectile has built up (0 when the hero has none). Read from core. */
+function farShotGlow(mechanics: Mechanics, tags: Tags, travelled: number): number {
+  if (!mechanics.some((m) => m.kind === 'distanceDamage')) return 0;
+  const full = distanceDamageMore(mechanics, tags, Number.POSITIVE_INFINITY);
+  return full > 0 ? Math.min(1, distanceDamageMore(mechanics, tags, travelled) / full) : 0;
+}
 
 interface Actor {
   sprite: Phaser.GameObjects.Sprite;
@@ -551,9 +565,20 @@ export class IsoArenaScene extends Phaser.Scene {
           const s = toScreen(event.origin);
           this.combatFx.deathExplosion(event.damageType === 'cold' ? 'ice' : 'fire', s.x, s.y, event.radius);
         } else {
-          this.areas.push({ ...event, color: AREA_COLORS[event.actionId] ?? 0xdde4ff, ttl: AREA_TTL });
+          // Chain detonations: a golden tint plus a shock ring, so a chain reads apart from a triggered trap.
+          const color = event.chain ? CHAIN_AREA_COLOR : (AREA_COLORS[event.actionId] ?? 0xdde4ff);
+          this.areas.push({ ...event, color, ttl: AREA_TTL });
+          if (event.chain) {
+            const s = toScreen(event.origin);
+            this.combatFx.chainBurst(s.x, s.y, event.radius);
+          }
         }
         break;
+      case 'trapRemoved': {
+        const s = toScreen(event.pos);
+        this.combatFx.trapFizzle(s.x, s.y);
+        break;
+      }
       case 'dot': {
         let tally = this.dotTallies.get(event.targetId);
         if (!tally) {
@@ -671,7 +696,7 @@ export class IsoArenaScene extends Phaser.Scene {
       this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), def.moveSpeed, actor.frozen);
       // Likewise a boss under an ordinary stun (stunSlow) looks stunned but keeps moving.
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
-      const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, mob.slow, this.world.time, mob.id);
+      const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, Math.max(mob.slow, mob.auraSlow), this.world.time, mob.id);
       if (look === undefined) actor.sprite.clearTint();
       else actor.sprite.setTint(look.color).setTintMode(look.mode);
     }
@@ -780,6 +805,12 @@ export class IsoArenaScene extends Phaser.Scene {
     g.lineStyle(2, player.buffs.length > 0 ? 0xff9a3c : 0xe8c15a, 0.9).strokeEllipse(hero.x, hero.y, 46, 23);
 
     for (const trap of this.world.traps) {
+      // Slow auras first, under every trigger ring; only while armed (that is when core applies them).
+      if (!trap.aura || trap.armTimer > 0) continue;
+      const p = toScreen(trap.pos);
+      this.combatFx.drawTrapAura(g, p.x, p.y, trap.aura.radius, this.world.time, trap.id);
+    }
+    for (const trap of this.world.traps) {
       const p = toScreen(trap.pos);
       const armed = trap.armTimer <= 0;
       const pulse = armed ? 0.6 + 0.4 * Math.sin(this.world.time * 10) : 0.4;
@@ -787,6 +818,7 @@ export class IsoArenaScene extends Phaser.Scene {
       g.lineStyle(1, armed ? 0xff7a3a : 0x888888, armed ? 0.25 + 0.3 * pulse : 0.25).strokeEllipse(p.x, p.y, trap.triggerRadius * 2, trap.triggerRadius);
       g.fillStyle(armed ? 0xff5a1a : 0x777777, pulse).fillEllipse(p.x, p.y, 22, 11);
       g.lineStyle(1, 0x000000, 0.8).strokeEllipse(p.x, p.y, 22, 11);
+      if (trap.chainTimer !== null) this.combatFx.drawTrapFuse(top, p.x, p.y, this.world.time, dt);
     }
 
     for (const area of this.areas) area.ttl -= dt;
@@ -831,6 +863,9 @@ export class IsoArenaScene extends Phaser.Scene {
         top.fillStyle(color, 0.35).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 2.2);
         top.fillStyle(color, 1).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 1.2);
       } else {
+        // Far Shot: the bolt glows brighter as its distance bonus builds up.
+        const glow = p.action ? farShotGlow(player.mechanics, p.action.tags, p.travelled) : 0;
+        if (glow > 0) top.lineStyle(3 + 5 * glow, FAR_SHOT_GLOW, 0.15 + 0.45 * glow).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
         top.lineStyle(3, color, 1).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
       }
     }

@@ -386,12 +386,14 @@ describe('respec', () => {
 });
 
 describe('pending mechanics', () => {
-  it('flags nodes whose mechanics are not implemented yet', async () => {
-    const { hasPendingMechanics } = await import('./mechanics');
+  it('every mechanic kind is implemented now (ranger specs were the last pending ones)', async () => {
+    const { hasPendingMechanics, PENDING_MECHANICS } = await import('./mechanics');
     const node = (mechanics: PassiveMechanic[]): PassiveNodeDef => ({ id: 'k', name: 'k', type: 'keystone', cost: 3, pos: { angleDeg: 0, radius: 0 }, mechanics });
+    expect(PENDING_MECHANICS.size).toBe(0);
     expect(hasPendingMechanics({ id: 'x', name: 'x', type: 'small', cost: 1, pos: { angleDeg: 0, radius: 0 } })).toBe(false);
-    expect(hasPendingMechanics(node([{ kind: 'trapAura', radius: 100, slow: 0.3 }]))).toBe(true);
-    expect(hasPendingMechanics(node([{ kind: 'alwaysCrit', critMultiplier: 1.3 }, { kind: 'trapAura', radius: 100, slow: 0.3 }]))).toBe(true);
+    expect(hasPendingMechanics(node([{ kind: 'trapAura', radius: 150, slow: 0.3 }]))).toBe(false);
+    expect(hasPendingMechanics(node([{ kind: 'trapCharges', charges: 3, maxActive: 3, chainDelay: 0.15, chainRadius: 250 }]))).toBe(false);
+    expect(hasPendingMechanics(node([{ kind: 'distanceDamage', tags: ['attack', 'projectile'], minDistance: 150, maxDistance: 450, maxMore: 0.5 }]))).toBe(false);
   });
 
   it('the wheel keystone mechanics are implemented', async () => {

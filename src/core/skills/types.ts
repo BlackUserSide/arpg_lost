@@ -2,7 +2,7 @@
 // (passive tree nodes now; skill level-3 effects and support modifiers later, docs/design/skill-modifiers.md).
 
 import type { DamageType, Modifier, SkillTag } from '../stats/types';
-import type { StatusId } from '../world/content';
+import type { Delivery, StatusId, TrapAura, TrapChain } from '../world/content';
 
 /**
  * Skill parameters a change can target. Each maps onto fields of the action definition
@@ -10,6 +10,7 @@ import type { StatusId } from '../world/content';
  */
 export type SkillParam =
   | 'cooldown'
+  | 'charges'
   | 'buffDuration'
   | 'radius'
   | 'explodeRadius'
@@ -49,12 +50,29 @@ export interface AddedStatus {
 }
 
 /**
- * One source of skill changes. Applies to an action if its id is in `skillIds` (when given) and the action
- * has all of `tags` (when given); with neither it applies to every action, basic attack included.
+ * Rules a change set grants to its skills (absolute values, not deltas). Applied before param changes, so e.g. a
+ * later `charges` +1 change adds to granted charges. Several sources: charges take the highest, maxActiveTraps the
+ * lowest (the strictest cap), trapChain / trapAura the first source. Trap rules are ignored on non-trap actions.
+ */
+export interface SkillGrants {
+  readonly charges?: number;
+  /** Cap on the hero's active traps (all trap sources count), see the trap Delivery. */
+  readonly maxActiveTraps?: number;
+  readonly trapChain?: TrapChain;
+  readonly trapAura?: TrapAura;
+}
+
+/**
+ * One source of skill changes. Applies to an action if its id is in `skillIds` (when given), the action has all
+ * of `tags` (when given) and its delivery kind is in `deliveries` (when given); with none of them it applies to
+ * every action, basic attack included.
  */
 export interface SkillChangeSet {
   readonly skillIds?: readonly string[];
   readonly tags?: readonly SkillTag[];
+  /** Delivery kinds the set applies to (e.g. ['trap'] for "trap skills", which have no tag of their own). */
+  readonly deliveries?: readonly Delivery['kind'][];
+  readonly grants?: SkillGrants;
   readonly changes?: readonly SkillParamChange[];
   /** Extra modifiers granted by every buff the skill applies to its user. */
   readonly buffModifiers?: readonly Modifier[];
