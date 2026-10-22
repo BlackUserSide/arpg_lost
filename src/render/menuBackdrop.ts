@@ -2,7 +2,7 @@ import * as Phaser from 'phaser';
 import { vec } from '../core/math';
 import { softDotTexture, sparkTexture } from './fxTextures';
 import { toScreen } from './iso';
-import { spriteFrame, textureKey } from './sprites';
+import { ORIGIN_Y, SPRITE_SETS, spriteFrame, textureKey } from './sprites';
 
 // Animated menu background: a hero resting by a campfire on a patch of dungeon floor, lit by
 // flickering firelight, embers rising into darkness. Render-only, no game logic.
@@ -10,6 +10,12 @@ import { spriteFrame, textureKey } from './sprites';
 const FLOOR_TILE = 68;
 const FLOOR_RADIUS = 5;
 const PLAIN_FLOORS = [0, 1, 2, 3, 20, 21, 22, 23];
+/** Hero seat relative to the fire, screen px (west of the fire, facing it). */
+const HERO_DX = -115;
+const HERO_DY = 8;
+const HERO_SCALE = 1.9;
+/** Direction row facing the fire (east, see render/iso directionRow). */
+const HERO_ROW = 4;
 
 export function preloadBackdrop(scene: Phaser.Scene): void {
   if (!scene.textures.exists('floor')) scene.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
@@ -44,6 +50,7 @@ export class MenuBackdrop {
   private readonly embers: Phaser.GameObjects.Particles.ParticleEmitter;
   private hero: Phaser.GameObjects.Sprite | undefined;
   private heroSet = '';
+  private heroAnim = 'idle';
   private vignette: Phaser.GameObjects.Image | undefined;
   private time = 0;
   private fireX = 0;
@@ -112,7 +119,7 @@ export class MenuBackdrop {
     this.flames.setPosition(x, y - 6);
     this.embers.setPosition(x, y - 10);
     this.drawLogs(x, y);
-    this.hero?.setPosition(x - 115, y + 8);
+    this.hero?.setPosition(x + HERO_DX, y + HERO_DY);
     this.vignette?.destroy();
     this.vignette = this.scene.add.image(0, 0, vignetteTexture(this.scene, width, height, x, y - 20)).setOrigin(0).setDepth(-30);
   }
@@ -124,7 +131,13 @@ export class MenuBackdrop {
     this.hero?.destroy();
     this.hero = undefined;
     if (!set) return;
-    this.hero = this.scene.add.sprite(this.fireX - 115, this.fireY + 8, textureKey(set, 'idle'), 0).setOrigin(0.5, 0.81).setScale(1.9).setDepth(-45);
+    // Sitting pose when baked for this set; standing idle otherwise. Both share the feet origin.
+    this.heroAnim = SPRITE_SETS[set]?.sit ? 'sit' : 'idle';
+    this.hero = this.scene.add
+      .sprite(this.fireX + HERO_DX, this.fireY + HERO_DY, textureKey(set, this.heroAnim), spriteFrame(set, this.heroAnim, HERO_ROW, 0))
+      .setOrigin(0.5, ORIGIN_Y)
+      .setScale(HERO_SCALE)
+      .setDepth(-45);
     this.hero.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
     this.hero.setTint(0xffd2a0);
     this.hero.setAlpha(0);
@@ -135,8 +148,8 @@ export class MenuBackdrop {
     this.time += dt;
     const flicker = 0.45 + 0.1 * Math.sin(this.time * 11) + 0.07 * Math.sin(this.time * 23.7) + 0.05 * Math.sin(this.time * 5.3);
     this.glow.setAlpha(flicker).setScale(5 + flicker * 2);
-    // Hero faces the fire (east row) and breathes with the idle loop.
-    if (this.hero) this.hero.setFrame(spriteFrame(this.heroSet, 'idle', 4, this.time));
+    // Hero faces the fire and breathes with the slow sitting loop.
+    if (this.hero) this.hero.setFrame(spriteFrame(this.heroSet, this.heroAnim, HERO_ROW, this.time));
   }
 
   private drawLogs(x: number, y: number): void {

@@ -51,6 +51,8 @@ interface ManifestAnim {
   frames: number;
   fps: number;
   loop: boolean;
+  /** Baked direction rows when only a subset is in the sheet (sheet row i = rows[i]). */
+  rows?: number[];
 }
 
 async function bakeCharacter(def: BakeCharacter): Promise<Record<string, ManifestAnim>> {
@@ -89,7 +91,7 @@ async function bakeCharacter(def: BakeCharacter): Promise<Record<string, Manifes
     const clip = THREE.AnimationClip.findByName(gltf.animations, anim.clip)!;
     // Loops without explicit fps play at the clip's natural speed.
     const fps = anim.fps ?? Math.round((anim.frames / clip.duration) * 100) / 100;
-    result[anim.id] = { file, frames: anim.frames, fps, loop: anim.loop };
+    result[anim.id] = { file, frames: anim.frames, fps, loop: anim.loop, ...(anim.rows ? { rows: [...anim.rows] } : {}) };
   }
   scene.remove(model);
   return result;
@@ -104,14 +106,23 @@ function bakeAnim(model: THREE.Object3D, mixer: THREE.AnimationMixer, clips: THR
   action.setLoop(anim.loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
   action.clampWhenFinished = !anim.loop;
   action.play();
+  const hidden: THREE.Object3D[] = [];
+  model.traverse((obj) => {
+    if (anim.hide?.includes(obj.name) && obj.visible) {
+      obj.visible = false;
+      hidden.push(obj);
+    }
+  });
 
   const sheet = document.createElement('canvas');
   sheet.width = FRAME * anim.frames;
-  sheet.height = FRAME * SCREEN_DIRS.length;
+  const rows = anim.rows ?? SCREEN_DIRS.map((_, row) => row);
+  sheet.height = FRAME * rows.length;
   const ctx = sheet.getContext('2d')!;
   ctx.imageSmoothingEnabled = false;
 
-  SCREEN_DIRS.forEach(([sx, sy], row) => {
+  rows.forEach((dir, row) => {
+    const [sx, sy] = SCREEN_DIRS[dir]!;
     const w = toWorld({ x: sx, y: sy });
     // Ground plane is (x, z) = core world (x, y); glTF models face +Z.
     model.rotation.y = Math.atan2(w.x, w.y);
@@ -122,6 +133,7 @@ function bakeAnim(model: THREE.Object3D, mixer: THREE.AnimationMixer, clips: THR
       ctx.drawImage(renderer.domElement, 0, 0, INNER, INNER, i * FRAME, row * FRAME, FRAME, FRAME);
     }
   });
+  for (const obj of hidden) obj.visible = true;
   return sheet;
 }
 
