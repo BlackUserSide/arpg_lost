@@ -9,6 +9,13 @@ export interface BakeAnim {
   /** Playback fps. Omit for loops to play at the clip's natural speed (frames / clip duration). */
   readonly fps?: number;
   readonly loop: boolean;
+  /**
+   * Direction rows to bake (Flare order: 0 W, 1 NW, 2 N, 3 NE, 4 E, 5 SE, 6 S, 7 SW). Omit for all 8.
+   * Use for anims shown from one fixed angle (e.g. the menu pose) to keep the build small.
+   */
+  readonly rows?: readonly number[];
+  /** Extra mesh node names hidden for this anim only (e.g. a weapon that clips through a sitting pose). */
+  readonly hide?: readonly string[];
 }
 
 export interface BakeAttachment {
@@ -47,6 +54,8 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     height: 64,
     anims: [
       { id: 'idle', clip: 'Idle', frames: 10, loop: true },
+      // Menu backdrop only: sitting by the campfire, facing it (east row).
+      { id: 'sit', clip: 'Sit_Floor_Idle', frames: 12, loop: true, rows: [4] },
       { id: 'run', clip: 'Running_A', frames: 14, loop: true },
       { id: 'attack', clip: '1H_Melee_Attack_Chop', frames: 8, fps: 24, loop: false },
       { id: 'cleave', clip: '1H_Melee_Attack_Slice_Horizontal', frames: 8, fps: 24, loop: false },
@@ -63,6 +72,8 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     height: 62,
     anims: [
       { id: 'idle', clip: '2H_Ranged_Aiming', frames: 10, loop: true },
+      // Crossbow is set aside while resting: held in a sitting pose it points straight into the floor.
+      { id: 'sit', clip: 'Sit_Floor_Idle', frames: 12, loop: true, rows: [4], hide: ['2H_Crossbow'] },
       { id: 'run', clip: 'Running_A', frames: 14, loop: true },
       { id: 'attack', clip: '2H_Ranged_Shoot', frames: 8, fps: 24, loop: false },
       { id: 'volley', clip: '2H_Ranged_Shooting', frames: 8, fps: 24, loop: false },
@@ -79,6 +90,7 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     height: 62,
     anims: [
       { id: 'idle', clip: 'Idle', frames: 10, loop: true },
+      { id: 'sit', clip: 'Sit_Floor_Idle', frames: 12, loop: true, rows: [4] },
       { id: 'run', clip: 'Running_A', frames: 14, loop: true },
       { id: 'attack', clip: 'Spellcast_Shoot', frames: 8, fps: 24, loop: false },
       { id: 'fireball', clip: 'Spellcast_Long', frames: 8, fps: 19, loop: false },

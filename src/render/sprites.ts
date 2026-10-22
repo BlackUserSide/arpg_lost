@@ -8,6 +8,8 @@ export interface AnimDef {
   frames: number;
   fps: number;
   loop: boolean;
+  /** Direction rows present in the sheet when only a subset was baked (sheet row i = rows[i]). */
+  rows?: number[];
 }
 
 type SpriteSet = Partial<Record<string, AnimDef>>;
@@ -66,5 +68,7 @@ export function loadSprites(scene: Phaser.Scene): void {
 export function spriteFrame(set: string, anim: string, row: number, time: number): number {
   const def = SPRITE_SETS[set]?.[anim];
   if (!def) return 0;
-  return row * def.frames + (Math.floor(time * def.fps) % def.frames);
+  // Partial sheets hold only some directions; an unbaked direction falls back to the first baked one.
+  const sheetRow = def.rows ? Math.max(0, def.rows.indexOf(row)) : row;
+  return sheetRow * def.frames + (Math.floor(time * def.fps) % def.frames);
 }

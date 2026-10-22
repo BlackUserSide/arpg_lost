@@ -9,6 +9,15 @@
         "fps": 9.37,
         "loop": true
       },
+      "sit": {
+        "file": "knight_sit.png",
+        "frames": 12,
+        "fps": 3,
+        "loop": true,
+        "rows": [
+          4
+        ]
+      },
       "run": {
         "file": "knight_run.png",
         "frames": 14,
@@ -59,6 +68,15 @@
         "fps": 6.25,
         "loop": true
       },
+      "sit": {
+        "file": "ranger_sit.png",
+        "frames": 12,
+        "fps": 3,
+        "loop": true,
+        "rows": [
+          4
+        ]
+      },
       "run": {
         "file": "ranger_run.png",
         "frames": 14,
@@ -108,6 +126,15 @@
         "frames": 10,
         "fps": 9.37,
         "loop": true
+      },
+      "sit": {
+        "file": "mage_sit.png",
+        "frames": 12,
+        "fps": 3,
+        "loop": true,
+        "rows": [
+          4
+        ]
       },
       "run": {
         "file": "mage_run.png",
