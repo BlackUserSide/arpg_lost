@@ -5,15 +5,17 @@
 // - bloodMagic: skills cost life, max mana / mana regen are 0.
 // - alwaysCrit: hits always crit with a fixed multiplier (see critStats).
 // - lifeToEnergyShield: base life (class + levels) becomes flat ES, max life is fixed, life regen feeds ES.
-// - conditionalModifiers: movedWithin / stationaryFor / lifeBelow / targetHasStatus (stun, slow).
+// - conditionalModifiers: movedWithin / stationaryFor / lifeBelow / targetHasStatus (stun, slow, ignite, freeze).
 // - moreDamagePerMissingLife: hero-state "more" damage from missing life (see missingLifeModifier).
 // - skillParams: converted to SkillChangeSets (skillChangeSets) and resolved once per loadout (core/skills).
 // - stunBonus: stun duration part (stunDurationMultiplier); fill is for stunBar (pending).
 // - lifeLeech: hits restore a fraction of damage dealt, capped per second (see leechStats, applyLeech).
 // - lifePotionEffectiveness: data only until potions exist (see lifePotionMultiplier).
+// - ignite / freezeSlowed: converted to on-hit statuses of the actions (skillChangeSets); combat in statuses.ts.
+// - deathExplosion / deathExplosionRadius: see deathExplosions.ts (deathExplosionRadiusMultiplier).
 // Glass Cannon needs no mechanic: it is plain `more` damage / damageTaken modifiers.
 
-import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind } from '../passives/types';
+import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveStatusId } from '../passives/types';
 import { computeStat } from '../stats/modifiers';
 import type { SkillChangeSet } from '../skills/types';
 import type { Modifier, StatId, Tag } from '../stats/types';
@@ -85,15 +87,25 @@ export interface ConditionState {
   readonly maxEnergyShield: number;
 }
 
-/** Target state for per-hit conditions; omitted for hero-wide stats. */
+/**
+ * Target state for per-hit conditions and death explosions; omitted for hero-wide stats. Remaining seconds
+ * per status (> 0 = has it). `freeze` is "counts as frozen": a slowed boss counts as frozen (see conditionTarget).
+ */
 export interface ConditionTarget {
   readonly stun: number;
   readonly slow: number;
+  readonly ignite: number;
+  readonly freeze: number;
+}
+
+/** True if the target has the status now. */
+export function targetHasStatus(target: ConditionTarget, status: PassiveStatusId): boolean {
+  return target[status] > 0;
 }
 
 /**
  * True if the condition holds. `movedWithin` and `stationaryFor` with the same threshold are complementary.
- * `targetHasStatus` is false without a target, and for statuses combat does not have yet (ignite, freeze).
+ * `targetHasStatus` is false without a target.
  */
 export function conditionHolds(condition: PassiveCondition, state: ConditionState, target?: ConditionTarget): boolean {
   switch (condition.kind) {
@@ -104,15 +116,7 @@ export function conditionHolds(condition: PassiveCondition, state: ConditionStat
     case 'lifeBelow':
       return state.life < condition.fraction * state.maxLife;
     case 'targetHasStatus':
-      if (!target) return false;
-      switch (condition.status) {
-        case 'stun':
-          return target.stun > 0;
-        case 'slow':
-          return target.slow > 0;
-        default:
-          return false;
-      }
+      return target ? targetHasStatus(target, condition.status) : false;
   }
 }
 
@@ -231,14 +235,43 @@ export function lifePotionMultiplier(mechanics: readonly PassiveMechanic[]): num
  *   ranger's bolt (designer decision 2026-10-22).
  * - stunBonus.durationIncreased as a stun duration change on every action. It adds to the skill's statusDuration
  *   in one sum, like increased (designer decision 2026-10-22), and is locked into the action at cast time.
+ * - ignite as an on-hit ignite on every action that applies only to hits dealing its damage type.
+ * - freezeSlowed as an on-hit freeze on its skills that applies only to targets slowed before the hit.
+ * Statuses added this way are part of the action snapshot of projectiles / traps / dashes (cast time).
  */
 export function skillChangeSets(mechanics: readonly PassiveMechanic[]): SkillChangeSet[] {
   const sets: SkillChangeSet[] = [];
   for (const m of mechanics) {
-    if (m.kind === 'skillParams') sets.push(m);
-    else if (m.kind === 'stunBonus' && m.durationIncreased !== 0) sets.push({ statusDurations: [{ status: 'stun', increased: m.durationIncreased }] });
+    switch (m.kind) {
+      case 'skillParams':
+        sets.push(m);
+        break;
+      case 'stunBonus':
+        if (m.durationIncreased !== 0) sets.push({ statusDurations: [{ status: 'stun', increased: m.durationIncreased }] });
+        break;
+      case 'ignite':
+        sets.push({
+          addOnHit: [{ status: 'ignite', duration: m.duration, magnitude: m.damageFraction, chance: m.chance, requiresDamageType: m.damageType }],
+        });
+        break;
+      case 'freezeSlowed':
+        sets.push({
+          skillIds: m.skillIds,
+          addOnHit: [{ status: 'freeze', duration: m.duration, bossDuration: m.bossDuration, requiresStatus: 'slow' }],
+        });
+        break;
+      default:
+        break;
+    }
   }
   return sets;
+}
+
+/** Multiplier on death explosion radii: 1 + Σ deathExplosionRadius.increased (never below 0). */
+export function deathExplosionRadiusMultiplier(mechanics: readonly PassiveMechanic[]): number {
+  let increased = 0;
+  for (const m of mechanics) if (m.kind === 'deathExplosionRadius') increased += m.increased;
+  return Math.max(0, 1 + increased);
 }
 
 /**

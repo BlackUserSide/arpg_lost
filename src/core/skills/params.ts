@@ -81,7 +81,7 @@ function isCombatStatus(status: string): status is StatusId {
  * The effective definition of one action under the change sets that match it. Order: statuses and buff
  * modifiers are added first, then every param is recomputed from the base value with all matching changes
  * summed (add and increased combine like stats). Returns `action` itself when nothing matches.
- * Added statuses that combat does not implement yet (ignite, freeze) are skipped.
+ * Added statuses that combat does not implement are skipped. Duration changes also scale a freeze's bossDuration.
  */
 export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]): ActionDef {
   const matching = sets.filter((s) => skillMatches(action, s));
@@ -106,12 +106,16 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
     }
     buffModifiers.push(...(set.buffModifiers ?? []));
     for (const s of set.addOnHit ?? []) {
-      if (!isCombatStatus(s.status)) continue;
+      const status = s.status;
+      if (!isCombatStatus(status)) continue;
       addedOnHit.push({
-        status: s.status,
+        status,
         duration: s.duration,
         ...(s.magnitude !== undefined ? { magnitude: s.magnitude } : {}),
         ...(s.chance !== undefined ? { chance: s.chance } : {}),
+        ...(s.requiresStatus !== undefined ? { requiresStatus: s.requiresStatus } : {}),
+        ...(s.requiresDamageType !== undefined ? { requiresDamageType: s.requiresDamageType } : {}),
+        ...(s.bossDuration !== undefined ? { bossDuration: s.bossDuration } : {}),
       });
     }
   }
@@ -123,7 +127,8 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
     // The generic statusDuration param and this status's own changes add up in one sum.
     const own = perStatus.get(e.status);
     const total = own || statusTotal ? { add: (statusTotal?.add ?? 0) + (own?.add ?? 0), increased: (statusTotal?.increased ?? 0) + (own?.increased ?? 0) } : undefined;
-    return { ...e, duration: applyTotal(e.duration, total) };
+    const boss = e.bossDuration !== undefined ? { bossDuration: applyTotal(e.bossDuration, total) } : {};
+    return { ...e, duration: applyTotal(e.duration, total), ...boss };
   });
   const selfEffects = action.selfEffects?.map((e): SelfEffect => {
     if (e.kind !== 'buff') return e;

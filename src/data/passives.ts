@@ -424,7 +424,7 @@ const specDefs: SpecSpec[] = [
         name: 'Погребальне вогнище',
         mechanics: [{ kind: 'deathExplosion', status: 'ignite', radius: 100, lifeFraction: 0.3, damageType: 'fire', applyStatus: 'ignite' }],
       },
-      a1: { name: 'Розпал', mechanics: [{ kind: 'igniteBonus', chance: 0.2, damageIncreased: 0.3 }] },
+      a1: { name: 'Розпал', modifiers: [flat('igniteChance', 0.2), inc('igniteDamage', 0.3)] },
       a2: {
         name: 'Пекло',
         mechanics: [
@@ -451,7 +451,8 @@ const specDefs: SpecSpec[] = [
         name: 'Крижана хватка',
         mechanics: [
           { kind: 'freezeSlowed', skillIds: ['frost_nova'], duration: 1, bossDuration: 0.3 },
-          { kind: 'skillParams', skillIds: ['frost_nova'], changes: [{ param: 'statusDuration', increased: 0.4 }] },
+          // Only the nova's slow is extended (the design says "сповільнення нови"), not the freeze.
+          { kind: 'skillParams', skillIds: ['frost_nova'], statusDurations: [{ status: 'slow', increased: 0.4 }] },
         ],
       },
       key: {
@@ -461,7 +462,7 @@ const specDefs: SpecSpec[] = [
           { kind: 'deathExplosion', status: 'freeze', radius: 90, lifeFraction: 0.2, damageType: 'cold' },
         ],
       },
-      a1: { name: 'Вічна мерзлота', mechanics: [{ kind: 'freezeDuration', increased: 0.5 }] },
+      a1: { name: 'Вічна мерзлота', modifiers: [inc('freezeDuration', 0.5)] },
       a2: { name: 'Холодна кров', mechanics: [{ kind: 'skillParams', skillIds: ['wand_bolt'], addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.2 }] }] },
       b1: { name: 'Холодне серце', modifiers: [dmg(0.2, 'cold'), inc('energyShield', 0.1)] },
       b2: {

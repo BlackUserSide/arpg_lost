@@ -37,6 +37,9 @@ const STAT: Record<StatId, string> = {
   cooldownRecovery: 'відновлення кулдаунів',
   movementSpeed: 'швидкості руху',
   damageTaken: 'отриманого урону',
+  igniteChance: 'шансу підпалу',
+  igniteDamage: 'урону підпалу',
+  freezeDuration: 'тривалості заморозки',
 };
 
 /** "+8% <damage phrase>" for a single damage tag. */
@@ -84,6 +87,8 @@ const PARAM: Record<SkillParam, { name: string; unit: string }> = {
 };
 
 const STATUS: Record<PassiveStatusId, string> = { stun: 'оглушення', slow: 'сповільнення', ignite: 'підпал', freeze: 'заморозку' };
+/** "тривалість <status>" (genitive). */
+const STATUS_GENITIVE: Record<PassiveStatusId, string> = { stun: 'оглушення', slow: 'сповільнення', ignite: 'підпалу', freeze: 'заморозки' };
 /** "<adjective> вороги" for target-state conditions. */
 const STATUS_TARGET: Record<PassiveStatusId, string> = { stun: 'оглушених', slow: 'сповільнених', ignite: 'підпалених', freeze: 'заморожених' };
 const DAMAGE_TYPE: Record<string, string> = { physical: 'фізичний', fire: 'вогняний', cold: 'холодний', lightning: 'блискавичний' };
@@ -95,7 +100,7 @@ const signed = (v: number): string => `${v < 0 ? MINUS : '+'}${num(v)}`;
 const pct = (v: number): string => `${num(v * 100)}%`;
 const signedPct = (v: number): string => `${v < 0 ? MINUS : '+'}${pct(v)}`;
 
-const PERCENT_FLAT: ReadonlySet<StatId> = new Set(['fireResistance', 'coldResistance', 'lightningResistance', 'critChance']);
+const PERCENT_FLAT: ReadonlySet<StatId> = new Set(['fireResistance', 'coldResistance', 'lightningResistance', 'critChance', 'igniteChance']);
 
 function tagSuffix(tags: readonly Tag[] | undefined): string {
   return tags && tags.length > 0 ? ` для ${tags.map((t) => TAG_FOR[t]).join(' і ')}` : '';
@@ -177,7 +182,7 @@ export function formatMechanic(m: PassiveMechanic): string[] {
       ];
     case 'lifeLeech':
       return [
-        `${pct(m.fraction)} завданого урону відновлює життя (вампіризм)`,
+        `${pct(m.fraction)} завданого урону відновлює життя (вампіризм; лише від ударів, не від підпалу й вибухів)`,
         ...(m.maxPerSecond !== undefined ? [`Не більше ${pct(m.maxPerSecond)} макс. життя за секунду`] : []),
       ];
     case 'lifePotionEffectiveness':
@@ -190,6 +195,12 @@ export function formatMechanic(m: PassiveMechanic): string[] {
       const target = skillTarget(m.skillIds, m.tags);
       const lines: string[] = [];
       if (m.changes && m.changes.length > 0) lines.push(`${target}: ${m.changes.map(changeText).join(', ')}`);
+      for (const c of m.statusDurations ?? []) {
+        const parts: string[] = [];
+        if (c.add !== undefined) parts.push(`${signed(c.add)} с`);
+        if (c.increased !== undefined) parts.push(signedPct(c.increased));
+        lines.push(`${target}: тривалість ${STATUS_GENITIVE[c.status as PassiveStatusId] ?? c.status} ${parts.join(', ')}`);
+      }
       if (m.buffModifiers && m.buffModifiers.length > 0) lines.push(`${target}: баф також дає ${formatModifiers(m.buffModifiers).join(', ')}`);
       for (const s of m.addOnHit ?? []) {
         const power = s.magnitude !== undefined ? ` на ${pct(s.magnitude)}` : '';
@@ -217,8 +228,6 @@ export function formatMechanic(m: PassiveMechanic): string[] {
       return [`Зведена пастка сповільнює ворогів у радіусі ${num(m.radius)} на ${pct(m.slow)}`];
     case 'ignite':
       return [`Влучання (${DAMAGE_TYPE[m.damageType] ?? m.damageType} урон) мають ${pct(m.chance)} шансу підпалити: ${pct(m.damageFraction)} урону влучання за ${num(m.duration)} с`];
-    case 'igniteBonus':
-      return [`${signedPct(m.chance)} шансу підпалу`, `${signedPct(m.damageIncreased)} урону підпалу`];
     case 'deathExplosion': {
       const extra = m.applyStatus ? `, накладає ${STATUS[m.applyStatus]}` : '';
       return [`Ворог, що помер під дією «${STATUS[m.status]}», вибухає: ${pct(m.lifeFraction)} його макс. життя як ${DAMAGE_TYPE[m.damageType] ?? m.damageType} урон, радіус ${num(m.radius)}${extra}`];
@@ -227,8 +236,6 @@ export function formatMechanic(m: PassiveMechanic): string[] {
       return [`${signedPct(m.increased)} радіуса вибухів при смерті`];
     case 'freezeSlowed':
       return [`${skillTarget(m.skillIds, undefined)} заморожує вже сповільнених ворогів на ${num(m.duration)} с (бос: ${num(m.bossDuration)} с)`];
-    case 'freezeDuration':
-      return [`${signedPct(m.increased)} тривалості заморозки`];
   }
 }
 

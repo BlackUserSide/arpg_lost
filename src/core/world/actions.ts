@@ -2,9 +2,10 @@ import { computeDamage, rollBaseDamage, scaleDamage, type DamageByType } from '.
 import { resolveHit } from '../combat/hit';
 import { add, distance, dot, normalize, rotate, scale, sub, type Vec2 } from '../math';
 import { computeStat } from '../stats/modifiers';
-import type { ActionDef, StatusEffect } from './content';
+import type { ActionDef } from './content';
 import { applyLeech } from './experience';
 import { actionCost, canPay, critStats } from './passiveEffects';
+import { applyStatus, conditionTarget } from './statuses';
 import type { Modifier } from '../stats/types';
 import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState } from './state';
 
@@ -198,12 +199,17 @@ export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, 
 /**
  * Resolves one player hit on a mob. Instant hits evaluate hero conditions now (cast == hit); delayed hits
  * (projectiles, traps) pass `castModifiers`, the hero conditions locked when the action fired.
- * Target conditions (stunned / slowed target) are always evaluated at the hit.
+ * Target conditions (stunned / slowed / ignited / frozen target) are always evaluated at the hit, before its
+ * statuses apply. On-hit statuses come from the action (cast-time snapshot for delayed hits); see applyStatus.
  */
 export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifiers?: readonly Modifier[]): void {
   const { world, content, classDef, rng, events } = ctx;
+  if (!action.damage && !(action.onHit && action.onHit.length > 0)) return;
+  const def = getMob(content, mob.defId);
+  const before = conditionTarget(mob);
+  const mods = allModifiers(classDef, world.player, before, castModifiers);
+  let raw: DamageByType | undefined;
   if (action.damage) {
-    const mods = allModifiers(classDef, world.player, mob, castModifiers);
     let rolled: DamageByType;
     let baseCrit: number;
     if (action.damage.source === 'weapon') {
@@ -218,29 +224,14 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
       critChance: computeStat(baseCrit, mods, 'critChance', action.tags),
       critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', action.tags),
     });
-    const def = getMob(content, mob.defId);
     const hit = resolveHit(rng, { damage, critChance, critMultiplier }, { armour: def.armour, resistances: def.resistances }, content.combat);
     // Leech counts only the life actually removed (overkill does not leech).
     const removed = Math.max(0, Math.min(hit.total, mob.life));
     mob.life -= hit.total;
     events.push({ type: 'hit', targetId: mob.id, pos: mob.pos, amount: hit.total, isCrit: hit.isCrit });
     applyLeech(classDef, world.player, removed);
+    raw = hit.raw;
   }
-  for (const effect of action.onHit ?? []) applyStatus(ctx, mob, effect);
-}
-
-function applyStatus(ctx: Ctx, mob: MobState, effect: StatusEffect): void {
-  if (effect.chance !== undefined && !ctx.rng.chance(effect.chance)) return;
-  switch (effect.status) {
-    case 'stun':
-      // stunBonus is already folded into the action's stun durations (skillChangeSets), locked at cast time.
-      mob.stun = Math.max(mob.stun, effect.duration);
-      break;
-    case 'slow': {
-      const magnitude = effect.magnitude ?? 0;
-      mob.slowMagnitude = mob.slow > 0 ? Math.max(mob.slowMagnitude, magnitude) : magnitude;
-      mob.slow = Math.max(mob.slow, effect.duration);
-      break;
-    }
-  }
+  const hit = { mods, tags: action.tags, raw, before };
+  for (const effect of action.onHit ?? []) applyStatus(ctx, mob, effect, hit);
 }

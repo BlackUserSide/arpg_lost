@@ -53,7 +53,7 @@ const tree: PassiveTreeData = {
       n('k1', 'keystone', 3, { exclusiveGroup: 'g', mechanics: [{ kind: 'bloodMagic', lifePerMana: 1 }] }),
       n('k2', 'keystone', 3, { exclusiveGroup: 'g' }),
       n('sa_e', 'specEntry', 1, { specId: 'sa', modifiers: [{ stat: 'armour', kind: 'flat', value: 5 }] }),
-      n('sa_k', 'specKeystone', 1, { specId: 'sa', mechanics: [{ kind: 'freezeDuration', increased: 0.5 }] }),
+      n('sa_k', 'specKeystone', 1, { specId: 'sa', mechanics: [{ kind: 'deathExplosionRadius', increased: 0.5 }] }),
       n('sb_e', 'specEntry', 1, { specId: 'sb' }),
       n('sc_e', 'specEntry', 1, { specId: 'sc' }),
     ].map((node) => [node.id, node]),
@@ -305,7 +305,7 @@ describe('modifiers and mechanics', () => {
       { stat: 'mana', kind: 'flat', value: 10 },
       { stat: 'armour', kind: 'flat', value: 5 },
     ]);
-    expect(passiveMechanics(tree, alloc)).toEqual([{ kind: 'freezeDuration', increased: 0.5 }]);
+    expect(passiveMechanics(tree, alloc)).toEqual([{ kind: 'deathExplosionRadius', increased: 0.5 }]);
     expect(passiveModifiers(tree, createAllocation())).toEqual([]);
   });
 
@@ -317,7 +317,7 @@ describe('modifiers and mechanics', () => {
   it('heroMechanics returns the mechanics of allocated nodes', () => {
     expect(heroMechanics({ passives: { nodes: ['n1', 'k1'], spec: 'sa', specNodes: ['sa_e', 'sa_k'] } }, tree)).toEqual([
       { kind: 'bloodMagic', lifePerMana: 1 },
-      { kind: 'freezeDuration', increased: 0.5 },
+      { kind: 'deathExplosionRadius', increased: 0.5 },
     ]);
   });
 });
@@ -390,8 +390,8 @@ describe('pending mechanics', () => {
     const { hasPendingMechanics } = await import('./mechanics');
     const node = (mechanics: PassiveMechanic[]): PassiveNodeDef => ({ id: 'k', name: 'k', type: 'keystone', cost: 3, pos: { angleDeg: 0, radius: 0 }, mechanics });
     expect(hasPendingMechanics({ id: 'x', name: 'x', type: 'small', cost: 1, pos: { angleDeg: 0, radius: 0 } })).toBe(false);
-    expect(hasPendingMechanics(node([{ kind: 'freezeDuration', increased: 0.5 }]))).toBe(true);
-    expect(hasPendingMechanics(node([{ kind: 'alwaysCrit', critMultiplier: 1.3 }, { kind: 'freezeDuration', increased: 0.5 }]))).toBe(true);
+    expect(hasPendingMechanics(node([{ kind: 'counterAttack', effectiveness: 0.5, cooldown: 1 }]))).toBe(true);
+    expect(hasPendingMechanics(node([{ kind: 'alwaysCrit', critMultiplier: 1.3 }, { kind: 'counterAttack', effectiveness: 0.5, cooldown: 1 }]))).toBe(true);
   });
 
   it('the wheel keystone mechanics are implemented', async () => {
@@ -415,15 +415,18 @@ describe('pending mechanics', () => {
     expect(implemented.filter(isMechanicPending)).toEqual([]);
   });
 
-  it('skill changes that add a status combat does not have yet stay pending', async () => {
+  it('pyromancer / cryomancer mechanics and ignite / freeze statuses are implemented', async () => {
     const { isMechanicPending } = await import('./mechanics');
-    expect(isMechanicPending({ kind: 'skillParams', addOnHit: [{ status: 'ignite', duration: 3 }] })).toBe(true);
-    expect(isMechanicPending({ kind: 'skillParams', addOnHit: [{ status: 'slow', duration: 1 }, { status: 'freeze', duration: 1 }] })).toBe(true);
-  });
-
-  it('conditions on statuses combat does not have yet stay pending', async () => {
-    const { isMechanicPending } = await import('./mechanics');
-    expect(isMechanicPending({ kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'freeze' }, modifiers: [] })).toBe(true);
-    expect(isMechanicPending({ kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'ignite' }, modifiers: [] })).toBe(true);
+    const implemented: PassiveMechanic[] = [
+      { kind: 'ignite', damageType: 'fire', chance: 0.3, damageFraction: 0.5, duration: 3 },
+      { kind: 'deathExplosion', status: 'ignite', radius: 100, lifeFraction: 0.3, damageType: 'fire', applyStatus: 'ignite' },
+      { kind: 'deathExplosionRadius', increased: 0.2 },
+      { kind: 'freezeSlowed', skillIds: ['frost_nova'], duration: 1, bossDuration: 0.3 },
+      { kind: 'skillParams', addOnHit: [{ status: 'ignite', duration: 3 }] },
+      { kind: 'skillParams', addOnHit: [{ status: 'slow', duration: 1 }, { status: 'freeze', duration: 1 }] },
+      { kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'freeze' }, modifiers: [] },
+      { kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'ignite' }, modifiers: [] },
+    ];
+    expect(implemented.filter(isMechanicPending)).toEqual([]);
   });
 });

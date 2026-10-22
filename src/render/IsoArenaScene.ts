@@ -12,6 +12,7 @@ import { itemsData } from '../data/items';
 import { content } from '../data';
 import { passiveTree } from '../data/passives';
 import { getApp } from './app';
+import { CombatFx, statusLook } from './combatFx';
 import { Hud } from './hud';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
@@ -43,6 +44,8 @@ const SNAP_DISTANCE = 80;
 const MOB_SMOOTHING = 22;
 /** Below this speed (world units/s) an actor is considered standing. */
 const MOVING_SPEED = 8;
+/** Ignite damage is summed per mob and shown as one number this often (seconds). */
+const DOT_NUMBER_INTERVAL = 0.5;
 
 const PLAIN_FLOORS = [0, 1, 2, 3, 20, 21, 22, 23];
 const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
@@ -66,6 +69,8 @@ interface Actor {
   moving: boolean;
   /** One-shot animation playing on top of idle/run. */
   oneShot: { anim: string; elapsed: number } | undefined;
+  /** Frozen as of the last synced frame (mobs only): holds its pose, no hit reaction. */
+  frozen: boolean;
 }
 
 interface Corpse {
@@ -81,6 +86,23 @@ interface AreaFx {
   color: number;
   ttl: number;
 }
+
+/** Ignite damage dealt to one mob since its last damage number. */
+interface DotTally {
+  amount: number;
+  timer: number;
+  pos: Vec2;
+}
+
+type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot';
+
+/** Visual-only damage number looks. */
+const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: number; rise: number; duration: number }> = {
+  hit: { color: '#ffffff', size: 18, rise: 30, duration: 600 },
+  crit: { color: '#ffd23f', size: 26, rise: 30, duration: 600 },
+  player: { color: '#ff5050', size: 18, rise: 30, duration: 600 },
+  dot: { color: '#ff9a3c', size: 14, rise: 20, duration: 700 },
+};
 
 type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'P' | 'ESC', Phaser.Input.Keyboard.Key>;
 
@@ -110,6 +132,8 @@ export class IsoArenaScene extends Phaser.Scene {
   private overlay: Phaser.GameObjects.GameObject[] | undefined;
   private paused = false;
   private textPool: Phaser.GameObjects.Text[] = [];
+  private combatFx!: CombatFx;
+  private dotTallies = new Map<number, DotTally>();
   private skillWasDown: boolean[] = [];
   private skillBuffer: number[] = [];
   private mode: RunMode = SOLO_MODE;
@@ -163,6 +187,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.corpses = [];
     this.areas = [];
     this.textPool = [];
+    this.dotTallies.clear();
     this.skillWasDown = [];
     this.skillBuffer = [];
 
@@ -178,6 +203,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.buildFloor();
     this.fx = this.add.graphics().setDepth(-1000);
     this.fxTop = this.add.graphics().setDepth(4000);
+    this.combatFx = new CombatFx(this);
     const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
     this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
     this.light = this.createLight();
@@ -492,8 +518,23 @@ export class IsoArenaScene extends Phaser.Scene {
         break;
       }
       case 'area':
-        this.areas.push({ ...event, color: AREA_COLORS[event.actionId] ?? 0xdde4ff, ttl: AREA_TTL });
+        if (event.source === 'deathExplosion') {
+          const s = toScreen(event.origin);
+          this.combatFx.deathExplosion(event.damageType === 'cold' ? 'ice' : 'fire', s.x, s.y, event.radius);
+        } else {
+          this.areas.push({ ...event, color: AREA_COLORS[event.actionId] ?? 0xdde4ff, ttl: AREA_TTL });
+        }
         break;
+      case 'dot': {
+        let tally = this.dotTallies.get(event.targetId);
+        if (!tally) {
+          tally = { amount: 0, timer: DOT_NUMBER_INTERVAL, pos: event.pos };
+          this.dotTallies.set(event.targetId, tally);
+        }
+        tally.amount += event.amount;
+        tally.pos = event.pos;
+        break;
+      }
       case 'teleport':
         this.areas.push({ origin: event.from, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
         this.areas.push({ origin: event.to, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
@@ -506,11 +547,13 @@ export class IsoArenaScene extends Phaser.Scene {
       case 'hit': {
         const actor = event.targetId === PLAYER_ID ? this.hero : this.mobs.get(event.targetId);
         // Hit reaction only interrupts idle/run, never an attack or skill.
-        if (actor && !actor.oneShot) this.playOneShot(actor, 'hit');
-        this.spawnDamageNumber(event.pos, event.amount, event.isCrit, event.targetId === PLAYER_ID);
+        // A frozen mob holds its pose.
+        if (actor && !actor.oneShot && !actor.frozen) this.playOneShot(actor, 'hit');
+        this.spawnDamageNumber(event.pos, event.amount, event.isCrit ? 'crit' : event.targetId === PLAYER_ID ? 'player' : 'hit');
         break;
       }
       case 'death': {
+        this.flushDotTally(event.id);
         const actor = this.mobs.get(event.id);
         if (actor) {
           this.playOneShot(actor, 'death');
@@ -538,7 +581,7 @@ export class IsoArenaScene extends Phaser.Scene {
 
   private createActor(set: string, pos: Vec2): Actor {
     const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y);
-    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined };
+    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false };
   }
 
   /** Remembers where everything was before a sim step, for interpolation. */
@@ -591,14 +634,55 @@ export class IsoArenaScene extends Phaser.Scene {
         const k = 1 - Math.exp(-MOB_SMOOTHING * dt);
         actor.display = vec(actor.display.x + (target.x - actor.display.x) * k, actor.display.y + (target.y - actor.display.y) * k);
       }
-      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), getMob(this.content, mob.defId).moveSpeed);
-      if (mob.stun > 0) actor.sprite.setTint(0xfff27a);
-      else if (mob.slow > 0) actor.sprite.setTint(0x8fd3ff);
-      else actor.sprite.clearTint();
+      const def = getMob(this.content, mob.defId);
+      // A frozen mob holds its pose; a boss under freeze (freezeSlow) only looks frozen and keeps moving.
+      actor.frozen = mob.freeze > 0;
+      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), def.moveSpeed, actor.frozen);
+      const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
+      const look = statusLook(frozenLook, mob.stun, mob.ignite, mob.slow, this.world.time, mob.id);
+      if (look === undefined) actor.sprite.clearTint();
+      else actor.sprite.setTint(look.color).setTintMode(look.mode);
+    }
+    this.updateDotNumbers(dt);
+  }
+
+  /** Pops a damage number for each mob's ignite damage every DOT_NUMBER_INTERVAL, and once more when it ends. */
+  private updateDotNumbers(dt: number): void {
+    if (this.dotTallies.size === 0) return;
+    for (const mob of this.world.mobs) {
+      const tally = this.dotTallies.get(mob.id);
+      if (!tally) continue;
+      tally.timer -= dt;
+      if (mob.ignite <= 0) this.flushDotTally(mob.id);
+      else if (tally.timer <= 0) {
+        // Still burning: show the sum and keep counting in the same tally.
+        this.showDotTally(tally);
+        tally.amount = 0;
+        tally.timer = DOT_NUMBER_INTERVAL;
+      }
     }
   }
 
-  private updateActor(actor: Actor, dt: number, speed: number, referenceSpeed: number): void {
+  /** Shows the accumulated ignite damage of one mob (if any) and forgets the tally until the next dot event. */
+  private flushDotTally(id: number): void {
+    const tally = this.dotTallies.get(id);
+    if (!tally) return;
+    this.showDotTally(tally);
+    this.dotTallies.delete(id);
+  }
+
+  private showDotTally(tally: DotTally): void {
+    if (tally.amount >= 0.5) this.spawnDamageNumber(tally.pos, tally.amount, 'dot');
+  }
+
+  private updateActor(actor: Actor, dt: number, speed: number, referenceSpeed: number, frozen = false): void {
+    if (frozen) {
+      // Frozen: keep the current frame and row; only follow position and depth.
+      const screen = toScreen(actor.display);
+      actor.sprite.setPosition(screen.x, screen.y);
+      actor.sprite.setDepth(screen.y);
+      return;
+    }
     // Moving state comes from sim velocity, not from per-frame deltas (which are zero on frames
     // without a sim step at high refresh rates and made run/idle flicker).
     actor.moving = speed > MOVING_SPEED;
@@ -689,6 +773,16 @@ export class IsoArenaScene extends Phaser.Scene {
       g.fillPoints(points.map((p) => new Phaser.Math.Vector2(p.x, p.y)), true);
     }
 
+    // Status marks on living mobs (ice patch, stun dots, embers) and death explosion bursts.
+    for (const mob of this.world.mobs) {
+      const actor = this.mobs.get(mob.id);
+      if (!actor) continue;
+      const radius = getMob(this.content, mob.defId).radius;
+      const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
+      this.combatFx.drawMobStatus(g, top, actor.sprite.x, actor.sprite.y, radius, frozenLook, mob.stun, mob.ignite, this.world.time, dt, mob.id);
+    }
+    this.combatFx.drawBursts(g, top, dt);
+
     for (const p of this.world.projectiles) {
       const pos = this.interpolated(p.id, p.pos);
       const s = toScreen(pos);
@@ -772,21 +866,24 @@ export class IsoArenaScene extends Phaser.Scene {
     this.tweens.add({ targets: banner, scale: 1, duration: 300, ease: 'Back.easeOut' });
   }
 
-  private spawnDamageNumber(pos: Vec2, amount: number, isCrit: boolean, onPlayer: boolean): void {
+  private spawnDamageNumber(pos: Vec2, amount: number, kind: DamageNumberKind): void {
+    const style = DAMAGE_NUMBER_STYLES[kind];
     const screen = toScreen(pos);
     const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
+    // Ignite numbers sit a bit lower and to the side so they do not cover hit numbers.
+    const dx = kind === 'dot' ? 14 + Math.random() * 10 : (Math.random() - 0.5) * 16;
     text
-      .setText(String(Math.round(amount)))
-      .setPosition(screen.x + (Math.random() - 0.5) * 16, screen.y - 70)
-      .setColor(onPlayer ? '#ff5050' : isCrit ? '#ffd23f' : '#ffffff')
-      .setFontSize(isCrit ? 26 : 18)
+      .setText(String(kind === 'dot' ? Math.max(1, Math.round(amount)) : Math.round(amount)))
+      .setPosition(screen.x + dx, screen.y - (kind === 'dot' ? 56 : 70))
+      .setColor(style.color)
+      .setFontSize(style.size)
       .setAlpha(1)
       .setVisible(true);
     this.tweens.add({
       targets: text,
-      y: text.y - 30,
+      y: text.y - style.rise,
       alpha: 0,
-      duration: 600,
+      duration: style.duration,
       onComplete: () => {
         text.setVisible(false);
         this.textPool.push(text);

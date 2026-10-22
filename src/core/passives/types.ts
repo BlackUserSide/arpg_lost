@@ -1,8 +1,8 @@
 // Passive tree schema (docs/design/passives.md, docs/design/passives-wheel.md).
 // Plain data: the tree lives in src/data/passives.ts, the hero's allocation is saved JSON.
 
-import type { StatusId } from '../world/content';
-import type { SkillParamChange } from '../skills/types';
+import type { DeathExplosionDef, StatusId } from '../world/content';
+import type { AddedStatus, SkillChangeSet, SkillParamChange } from '../skills/types';
 import type { DamageType, Modifier, SkillTag } from '../stats/types';
 
 /**
@@ -29,8 +29,8 @@ export type PassiveCondition =
   /** The hit's target has this status. */
   | { readonly kind: 'targetHasStatus'; readonly status: PassiveStatusId };
 
-/** Statuses passives refer to; `ignite` and `freeze` do not exist in combat yet. */
-export type PassiveStatusId = StatusId | 'ignite' | 'freeze';
+/** Statuses passives refer to (all implemented by combat). */
+export type PassiveStatusId = StatusId;
 
 /** Skill parameter vocabulary is shared with skill level effects and support modifiers (core/skills). */
 export type { SkillParam, SkillParamChange } from '../skills/types';
@@ -73,7 +73,9 @@ export type PassiveMechanic =
       /** Extra modifiers granted by the skill's self buff. */
       readonly buffModifiers?: readonly Modifier[];
       /** Extra statuses applied on hit. */
-      readonly addOnHit?: readonly { readonly status: PassiveStatusId; readonly duration: number; readonly magnitude?: number }[];
+      readonly addOnHit?: readonly (AddedStatus & { readonly status: PassiveStatusId })[];
+      /** Duration changes for one on-hit status only (see SkillChangeSet.statusDurations). */
+      readonly statusDurations?: NonNullable<SkillChangeSet['statusDurations']>;
     }
   /** Hits fill the target's stun bar by baseFill + damage / maxLife × damageFill; full bar stuns and resets. */
   | {
@@ -94,25 +96,21 @@ export type PassiveMechanic =
   | { readonly kind: 'trapCharges'; readonly charges: number; readonly maxActive: number; readonly chainDelay: number; readonly chainRadius: number }
   /** An armed trap slows enemies around it. */
   | { readonly kind: 'trapAura'; readonly radius: number; readonly slow: number }
-  /** Hits dealing `damageType` damage may ignite: damageFraction of the hit as fire over duration; strongest ignite applies. */
+  /**
+   * Hits dealing `damageType` damage may ignite: damageFraction of the hit as fire over duration; strongest
+   * ignite applies. Becomes an on-hit ignite status of every action (skillChangeSets), so delayed hits use the
+   * cast-time snapshot. Chance / damage scale with the igniteChance / igniteDamage stats.
+   */
   | { readonly kind: 'ignite'; readonly damageType: DamageType; readonly chance: number; readonly damageFraction: number; readonly duration: number }
-  /** Adds to ignite chance (absolute) and ignite damage (increased). */
-  | { readonly kind: 'igniteBonus'; readonly chance: number; readonly damageIncreased: number }
-  /** An enemy dying with `status` explodes for lifeFraction of its max life as `damageType` damage. */
-  | {
-      readonly kind: 'deathExplosion';
-      readonly status: PassiveStatusId;
-      readonly radius: number;
-      readonly lifeFraction: number;
-      readonly damageType: DamageType;
-      readonly applyStatus?: PassiveStatusId;
-    }
-  /** Increased radius of death explosions. */
+  /** An enemy dying with `status` explodes (DeathExplosionDef). Explosion kills can chain; each mob explodes at most once. */
+  | ({ readonly kind: 'deathExplosion'; readonly status: PassiveStatusId } & DeathExplosionDef)
+  /** Increased radius of death explosions (all sources add up). */
   | { readonly kind: 'deathExplosionRadius'; readonly increased: number }
-  /** Hits from these skills freeze targets that are already slowed. */
-  | { readonly kind: 'freezeSlowed'; readonly skillIds: readonly string[]; readonly duration: number; readonly bossDuration: number }
-  /** Increased freeze duration. */
-  | { readonly kind: 'freezeDuration'; readonly increased: number };
+  /**
+   * Hits from these skills freeze targets that were already slowed before the hit (duration scales with the
+   * freezeDuration stat). Bosses get a strong slow for bossDuration instead (CombatConfig.bossFreezeSlow).
+   */
+  | { readonly kind: 'freezeSlowed'; readonly skillIds: readonly string[]; readonly duration: number; readonly bossDuration: number };
 
 export type PassiveMechanicKind = PassiveMechanic['kind'];
 

@@ -22,10 +22,13 @@ const STAT_LABEL: Record<StatId, string> = {
   cooldownRecovery: 'Cooldown Recovery Speed',
   movementSpeed: 'Movement Speed',
   damageTaken: 'Damage Taken',
+  igniteChance: 'Ignite Chance',
+  igniteDamage: 'Ignite Damage',
+  freezeDuration: 'Freeze Duration',
 };
 
 /** Stats whose flat values are fractions shown as percentages. */
-const PERCENT_FLAT: ReadonlySet<StatId> = new Set(['fireResistance', 'coldResistance', 'lightningResistance', 'critMultiplier', 'critChance']);
+const PERCENT_FLAT: ReadonlySet<StatId> = new Set(['fireResistance', 'coldResistance', 'lightningResistance', 'critMultiplier', 'critChance', 'igniteChance']);
 const MAXIMUM: ReadonlySet<StatId> = new Set(['life', 'mana', 'energyShield']);
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);

@@ -1,7 +1,8 @@
 // Skill parameter changes: one vocabulary for every source that alters a skill's definition
 // (passive tree nodes now; skill level-3 effects and support modifiers later, docs/design/skill-modifiers.md).
 
-import type { Modifier, SkillTag } from '../stats/types';
+import type { DamageType, Modifier, SkillTag } from '../stats/types';
+import type { StatusId } from '../world/content';
 
 /**
  * Skill parameters a change can target. Each maps onto fields of the action definition
@@ -29,13 +30,22 @@ export interface SkillParamChange {
   readonly increased?: number;
 }
 
-/** A status added to a skill's hits. `status` may name statuses combat does not have yet; those are skipped. */
+/**
+ * A status added to a skill's hits; fields as in StatusEffect (core/world/content). `status` may name statuses
+ * combat does not have; those are skipped.
+ */
 export interface AddedStatus {
   readonly status: string;
   readonly duration: number;
   readonly magnitude?: number;
   /** Omit for a guaranteed status. */
   readonly chance?: number;
+  /** Only if the target already had this status before the hit. */
+  readonly requiresStatus?: StatusId;
+  /** Only if the hit dealt damage of this type. */
+  readonly requiresDamageType?: DamageType;
+  /** Freeze on a boss: duration of the replacing slow. */
+  readonly bossDuration?: number;
 }
 
 /**

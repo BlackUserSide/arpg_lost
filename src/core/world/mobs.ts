@@ -4,20 +4,28 @@ import type { Defences } from '../combat/mitigation';
 import { add, distance, normalize, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { Content, MobDef } from './content';
+import { heroDeathExplosions } from './deathExplosions';
 import { gainKillXp } from './experience';
+import { tickIgnite } from './statuses';
 import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
   const { world, content, events } = ctx;
   const player = world.player;
   for (const mob of world.mobs) {
+    // Mobs killed earlier this step neither act nor tick: their statuses at death stay as they were.
+    if (mob.life <= 0) continue;
+    tickIgnite(ctx, mob, dt);
+    if (mob.life <= 0) continue;
     const def = getMob(content, mob.defId);
     mob.slow = Math.max(0, mob.slow - dt);
-    if (mob.stun > 0) {
-      mob.stun = Math.max(0, mob.stun - dt);
-      continue;
-    }
-    const speedFactor = mob.slow > 0 ? Math.max(0, 1 - mob.slowMagnitude) : 1;
+    mob.freezeSlow = Math.max(0, mob.freezeSlow - dt);
+    const speedFactor = 1 - slowFraction(mob, content);
+    // Stunned or frozen: cannot move or attack (the attack timer does not run either).
+    const disabled = mob.stun > 0 || mob.freeze > 0;
+    mob.stun = Math.max(0, mob.stun - dt);
+    mob.freeze = Math.max(0, mob.freeze - dt);
+    if (disabled) continue;
     mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor);
 
     const toPlayer = normalize(sub(player.pos, mob.pos));
@@ -57,6 +65,13 @@ export function updateMobs(ctx: Ctx, dt: number): void {
     }
   }
   separateMobs(world, content);
+}
+
+/** Fraction of speed removed now: the stronger of the active slow and the boss freeze-slow (0..1). */
+export function slowFraction(mob: MobState, content: Content): number {
+  const slow = mob.slow > 0 ? mob.slowMagnitude : 0;
+  const freezeSlow = mob.freezeSlow > 0 ? content.combat.bossFreezeSlow : 0;
+  return Math.min(1, Math.max(0, slow, freezeSlow));
 }
 
 export function hitPlayer(ctx: Ctx, mobDef: MobDef): void {
@@ -117,19 +132,22 @@ function separateMobs(world: WorldState, content: Content): void {
   }
 }
 
+/**
+ * Removes dead mobs: kill count, death event, XP, then death explosions. Mobs killed by an explosion are queued
+ * and processed in the same call (their own explosions included); every mob dies once, so chains terminate.
+ */
 export function removeDeadMobs(ctx: Ctx): void {
   const { world, events } = ctx;
-  const alive: MobState[] = [];
-  for (const mob of world.mobs) {
-    if (mob.life > 0) {
-      alive.push(mob);
-      continue;
-    }
+  const queue = world.mobs.filter((mob) => mob.life <= 0);
+  if (queue.length === 0) return;
+  for (let i = 0; i < queue.length; i++) {
+    const mob = queue[i]!;
     world.kills++;
     events.push({ type: 'death', id: mob.id, pos: mob.pos });
     gainKillXp(ctx, getMob(ctx.content, mob.defId).xp);
+    queue.push(...heroDeathExplosions(ctx, mob));
   }
-  world.mobs = alive;
+  world.mobs = world.mobs.filter((mob) => mob.life > 0);
 }
 
 export function updateSpawner(ctx: Ctx, dt: number): void {
@@ -150,10 +168,15 @@ export function updateSpawner(ctx: Ctx, dt: number): void {
       pos: randomEdgePoint(rng, def.radius, content),
       facing: vec(0, 1),
       life: def.life,
+      maxLife: def.life,
       attackTimer: 0,
       stun: 0,
       slow: 0,
       slowMagnitude: 0,
+      ignite: 0,
+      igniteDps: 0,
+      freeze: 0,
+      freezeSlow: 0,
     };
     world.mobs.push(mob);
     events.push({ type: 'spawn', id: mob.id });

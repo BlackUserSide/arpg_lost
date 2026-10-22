@@ -148,13 +148,26 @@ describe('resolveAction', () => {
 
   it('addOnHit appends statuses; statusDuration scales every on-hit status; unknown statuses are skipped', () => {
     const r = resolveAction(bolt, [
-      { skillIds: ['bolt'], addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.2 }, { status: 'freeze', duration: 1 }] },
+      { skillIds: ['bolt'], addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.2 }, { status: 'poison', duration: 1 }] },
     ]);
     expect(r.onHit).toEqual([{ status: 'slow', duration: 2, magnitude: 0.2 }]);
     const n = resolveAction(nova, [{ skillIds: ['nova'], changes: [{ param: 'statusDuration', increased: 0.4 }], addOnHit: [{ status: 'stun', duration: 1, chance: 0.5 }] }]);
     expect(n.onHit).toEqual([
       { status: 'slow', duration: 3.5, magnitude: 0.4 },
       { status: 'stun', duration: 1.4, chance: 0.5 },
+    ]);
+  });
+
+  it('addOnHit keeps ignite / freeze requirements; duration changes also scale a freeze bossDuration', () => {
+    const r = resolveAction(nova, [
+      { addOnHit: [{ status: 'ignite', duration: 3, magnitude: 0.5, chance: 0.3, requiresDamageType: 'fire' }] },
+      { skillIds: ['nova'], addOnHit: [{ status: 'freeze', duration: 1, bossDuration: 0.3, requiresStatus: 'slow' }] },
+      { skillIds: ['nova'], statusDurations: [{ status: 'freeze', increased: 0.5 }] },
+    ]);
+    expect(r.onHit).toEqual([
+      { status: 'slow', duration: 2.5, magnitude: 0.4 },
+      { status: 'ignite', duration: 3, magnitude: 0.5, chance: 0.3, requiresDamageType: 'fire' },
+      { status: 'freeze', duration: 1.5, bossDuration: 0.3 * 1.5, requiresStatus: 'slow' },
     ]);
   });
 

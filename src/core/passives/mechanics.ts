@@ -3,7 +3,7 @@
 // marks them "Ефект ще в розробці". Remove a kind from this list when core implements it.
 // Implemented kinds live in src/core/world/passiveEffects.ts.
 
-import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveNodeDef, PassiveStatusId } from './types';
+import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveNodeDef } from './types';
 
 export const PENDING_MECHANICS: ReadonlySet<PassiveMechanicKind> = new Set<PassiveMechanicKind>([
   // Also the consumer of stunBonus.fillIncreased (stunBonus itself is live: its duration part applies to all stuns).
@@ -12,25 +12,16 @@ export const PENDING_MECHANICS: ReadonlySet<PassiveMechanicKind> = new Set<Passi
   'distanceDamage',
   'trapCharges',
   'trapAura',
-  'ignite',
-  'igniteBonus',
-  'deathExplosion',
-  'deathExplosionRadius',
-  'freezeSlowed',
-  'freezeDuration',
 ]);
 
-/** Statuses combat does not have yet: `targetHasStatus` conditions on them never hold. */
-export const PENDING_STATUSES: ReadonlySet<PassiveStatusId> = new Set<PassiveStatusId>(['ignite', 'freeze']);
-
+/** True if a condition refers to something combat does not have yet. Every status exists now, so always false. */
 export function isConditionPending(condition: PassiveCondition): boolean {
-  return condition.kind === 'targetHasStatus' && PENDING_STATUSES.has(condition.status);
+  void condition;
+  return false;
 }
 
 export function isMechanicPending(mechanic: PassiveMechanic): boolean {
   if (mechanic.kind === 'conditionalModifiers') return isConditionPending(mechanic.condition);
-  // Skill changes work; statuses combat lacks are skipped when added on hit, so such a node is still pending.
-  if (mechanic.kind === 'skillParams') return (mechanic.addOnHit ?? []).some((s) => PENDING_STATUSES.has(s.status));
   return PENDING_MECHANICS.has(mechanic.kind);
 }
 

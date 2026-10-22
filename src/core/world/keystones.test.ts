@@ -82,7 +82,7 @@ function makeContent(baseStats: ClassDef['baseStats'] = {}): Content {
     skills: [sweep, blink, charge],
   };
   return {
-    combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9 },
+    combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5 },
     classes: { hero },
     mobs: { dummy },
     arena: { width: 1000, height: 1000, spawn: { firstDelay: 1000, interval: 1000, batchStart: 0, batchGrowth: 0, maxAlive: 0, mobIds: ['dummy'] } },
@@ -101,7 +101,7 @@ const idle: PlayerInput = { move: vec(0, 0), aim: vec(1000, 500), basicAttack: f
 const attack: PlayerInput = { ...idle, basicAttack: true };
 
 function addMob(world: WorldState, x: number, y: number, life = 1000): MobState {
-  const mob: MobState = { id: world.nextId++, defId: 'dummy', pos: vec(x, y), facing: vec(0, 1), life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0 };
+  const mob: MobState = { id: world.nextId++, defId: 'dummy', pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0 };
   world.mobs.push(mob);
   return mob;
 }
@@ -210,9 +210,9 @@ describe('passiveEffects: pure rules', () => {
     expect(conditionHolds({ kind: 'lifeBelow', fraction: 0.5 }, state(0, 50))).toBe(false);
     const stun = { kind: 'targetHasStatus', status: 'stun' } as const;
     expect(conditionHolds(stun, state(0))).toBe(false);
-    expect(conditionHolds(stun, state(0), { stun: 1, slow: 0 })).toBe(true);
-    expect(conditionHolds({ kind: 'targetHasStatus', status: 'slow' }, state(0), { stun: 0, slow: 1 })).toBe(true);
-    expect(conditionHolds({ kind: 'targetHasStatus', status: 'freeze' }, state(0), { stun: 1, slow: 1 })).toBe(false);
+    expect(conditionHolds(stun, state(0), { stun: 1, slow: 0, ignite: 0, freeze: 0 })).toBe(true);
+    expect(conditionHolds({ kind: 'targetHasStatus', status: 'slow' }, state(0), { stun: 0, slow: 1, ignite: 0, freeze: 0 })).toBe(true);
+    expect(conditionHolds({ kind: 'targetHasStatus', status: 'freeze' }, state(0), { stun: 1, slow: 1, ignite: 0, freeze: 0 })).toBe(false);
   });
 
   it('hero conditions apply without a target, target conditions only with one', () => {
@@ -223,8 +223,8 @@ describe('passiveEffects: pure rules', () => {
     ];
     const state: ConditionState = { stillTime: 0, life: 1, maxLife: 1, energyShield: 0, maxEnergyShield: 0 };
     expect(activeConditionalModifiers(mechanics, state)).toEqual(more(0.3));
-    expect(activeConditionalModifiers(mechanics, state, { stun: 1, slow: 0 })).toEqual(more(0.25));
-    expect(activeConditionalModifiers(mechanics, state, { stun: 0, slow: 0 })).toEqual([]);
+    expect(activeConditionalModifiers(mechanics, state, { stun: 1, slow: 0, ignite: 0, freeze: 0 })).toEqual(more(0.25));
+    expect(activeConditionalModifiers(mechanics, state, { stun: 0, slow: 0, ignite: 0, freeze: 0 })).toEqual([]);
   });
 });
 

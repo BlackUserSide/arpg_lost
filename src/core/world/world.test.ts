@@ -59,7 +59,7 @@ function hero(skills: ActionDef[], baseStats: ClassDef['baseStats'] = {}): Class
 
 function makeContent(skills: ActionDef[] = [sweep, slam], spawn: Partial<Content['arena']['spawn']> = {}, baseStats: ClassDef['baseStats'] = {}): Content {
   return {
-    combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9 },
+    combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5 },
     classes: { hero: hero(skills, baseStats) },
     mobs: { dummy, walker, shooter },
     arena: {
@@ -81,7 +81,7 @@ function makeContent(skills: ActionDef[] = [sweep, slam], spawn: Partial<Content
 const idle: PlayerInput = { move: vec(0, 0), aim: vec(1000, 500), basicAttack: false, skills: [] };
 
 function addMob(world: WorldState, x: number, y: number, life = 100, defId = 'dummy'): MobState {
-  const mob: MobState = { id: world.nextId++, defId, pos: vec(x, y), facing: vec(0, 1), life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0 };
+  const mob: MobState = { id: world.nextId++, defId, pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0 };
   world.mobs.push(mob);
   return mob;
 }

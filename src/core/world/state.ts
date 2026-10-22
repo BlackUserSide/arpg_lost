@@ -1,8 +1,8 @@
 import { clamp, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { PassiveMechanic } from '../passives/types';
-import type { Modifier, StatId, Tag } from '../stats/types';
-import type { ActionDef, ClassDef, Content, MobDef, WeaponDef } from './content';
+import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
+import type { ActionDef, ClassDef, Content, MobDef, StatusId, WeaponDef } from './content';
 import type { ActionSet } from '../skills/params';
 import { activeConditionalModifiers, deriveStat, hasStateMechanics, type ConditionState, type ConditionTarget } from './passiveEffects';
 
@@ -76,10 +76,23 @@ export interface MobState {
   pos: Vec2;
   facing: Vec2;
   life: number;
+  /** Max life, set at spawn (= MobDef.life today; elite / map scaling later). Death explosions use it. */
+  readonly maxLife: number;
   attackTimer: number;
+  /** Remaining seconds of each status (0 = none); see STATUS_IDS. */
   stun: number;
   slow: number;
   slowMagnitude: number;
+  ignite: number;
+  /** Fire damage per second of the current ignite, after the mob's fire resistance (0 when not ignited). */
+  igniteDps: number;
+  freeze: number;
+  /**
+   * Bosses only: the short strong slow that replaces a freeze (CombatConfig.bossFreezeSlow). A separate slot,
+   * so it never overwrites a longer, weaker `slow`; the stronger of the two active slows applies.
+   * While it runs the boss counts as frozen (and as slowed).
+   */
+  freezeSlow: number;
 }
 
 export interface Projectile {
@@ -151,8 +164,25 @@ export interface PlayerInput {
 
 export type WorldEvent =
   | { type: 'action'; actionId: string; facing: Vec2 }
-  /** A damage zone resolved this tick (arc swing, nova, explosion) — for visuals. */
-  | { type: 'area'; actionId: string; origin: Vec2; facing: Vec2; radius: number; angleDeg: number }
+  /**
+   * A damage zone resolved this tick (arc swing, nova, explosion) — for visuals. Death explosions have
+   * actionId 'deathExplosion', `source` 'deathExplosion', their damage type and the id of the mob that exploded.
+   */
+  | {
+      type: 'area';
+      actionId: string;
+      origin: Vec2;
+      facing: Vec2;
+      radius: number;
+      angleDeg: number;
+      source?: 'deathExplosion';
+      damageType?: DamageType;
+      sourceMobId?: number;
+    }
+  /** A status was applied to (or refreshed on) a living mob; `duration` is its new remaining time. */
+  | { type: 'status'; targetId: number; pos: Vec2; status: StatusId; duration: number }
+  /** Damage over time dealt this step (one event per mob per step; aggregate for damage numbers). */
+  | { type: 'dot'; targetId: number; pos: Vec2; amount: number; status: StatusId }
   | { type: 'teleport'; from: Vec2; to: Vec2 }
   | { type: 'mobAttack'; id: number }
   | { type: 'hit'; targetId: number; pos: Vec2; amount: number; isCrit: boolean }
