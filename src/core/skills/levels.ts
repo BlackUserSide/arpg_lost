@@ -4,7 +4,7 @@
 // passive tree's sets. Pure functions over plain data; the progress records are saved per character.
 
 import type { ClassDef } from '../world/content';
-import type { SkillChangeSet } from './types';
+import type { SkillBonus, SkillChangeSet } from './types';
 
 /** Saved per character per skill (CharacterRecord.skills). Support slots will be added next to these fields. */
 export interface SkillProgress {
@@ -14,7 +14,7 @@ export interface SkillProgress {
 }
 
 /** What a skill gains at one level: a SkillChangeSet without the targeting (it always targets its own skill). */
-export type SkillLevelBonus = Omit<SkillChangeSet, 'skillIds' | 'tags' | 'deliveries'>;
+export type SkillLevelBonus = SkillBonus;
 
 /**
  * The per-skill new effect (level 3 in the design). `pending`: the mechanic is not implemented yet; the effect
@@ -122,15 +122,31 @@ export function skillLevelChangeSet(skillId: string, level: number, data: SkillL
   const effect = table.effect;
   if (effect && !effect.pending && level >= effect.level) bonuses.push(effect);
   if (bonuses.length === 0) return undefined;
+  return { skillIds: [skillId], ...mergeBonuses(bonuses) };
+}
+
+/**
+ * Several bonuses of one skill as one: lists are concatenated, grants of later bonuses override earlier ones
+ * field by field, resource cost multipliers multiply, leech and stun bar fill add up.
+ */
+export function mergeBonuses(bonuses: readonly SkillBonus[]): SkillBonus {
   const changes = bonuses.flatMap((b) => b.changes ?? []);
   const modifiers = bonuses.flatMap((b) => b.modifiers ?? []);
   const buffModifiers = bonuses.flatMap((b) => b.buffModifiers ?? []);
   const addOnHit = bonuses.flatMap((b) => b.addOnHit ?? []);
   const statusDurations = bonuses.flatMap((b) => b.statusDurations ?? []);
   const addSelfEffects = bonuses.flatMap((b) => b.addSelfEffects ?? []);
-  const grants = mergeGrants(bonuses);
+  let grants: SkillChangeSet['grants'];
+  let costMultiplier: number | undefined;
+  let leech: number | undefined;
+  let stunBarFill: number | undefined;
+  for (const b of bonuses) {
+    if (b.grants) grants = { ...grants, ...b.grants };
+    if (b.resourceCostMultiplier !== undefined) costMultiplier = (costMultiplier ?? 1) * b.resourceCostMultiplier;
+    if (b.leech !== undefined) leech = (leech ?? 0) + b.leech;
+    if (b.stunBarFillIncreased !== undefined) stunBarFill = (stunBarFill ?? 0) + b.stunBarFillIncreased;
+  }
   return {
-    skillIds: [skillId],
     ...(grants ? { grants } : {}),
     ...(changes.length > 0 ? { changes } : {}),
     ...(modifiers.length > 0 ? { modifiers } : {}),
@@ -138,14 +154,10 @@ export function skillLevelChangeSet(skillId: string, level: number, data: SkillL
     ...(addOnHit.length > 0 ? { addOnHit } : {}),
     ...(statusDurations.length > 0 ? { statusDurations } : {}),
     ...(addSelfEffects.length > 0 ? { addSelfEffects } : {}),
+    ...(costMultiplier !== undefined ? { resourceCostMultiplier: costMultiplier } : {}),
+    ...(leech !== undefined ? { leech } : {}),
+    ...(stunBarFill !== undefined ? { stunBarFillIncreased: stunBarFill } : {}),
   };
-}
-
-/** Grants of several bonuses of one skill: later levels override earlier ones field by field. */
-function mergeGrants(bonuses: readonly SkillLevelBonus[]): SkillChangeSet['grants'] {
-  let grants: SkillChangeSet['grants'];
-  for (const b of bonuses) if (b.grants) grants = { ...grants, ...b.grants };
-  return grants;
 }
 
 /** Change sets of all class skills at their current levels, in class skill order (resolver input after passives). */

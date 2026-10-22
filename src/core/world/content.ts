@@ -3,6 +3,7 @@ import type { BaseDamage } from '../combat/damage';
 import type { WeaponType } from '../items/types';
 import type { ProgressionRules } from '../progression/levels';
 import type { SkillLevelData } from '../skills/levels';
+import type { SupportData } from '../supports/types';
 import type { DamageType, ElementalType, Modifier, SkillTag, StatId } from '../stats/types';
 
 /** Where the action's damage comes from. Attacks scale weapon damage; spells have their own base damage. */
@@ -16,8 +17,10 @@ export type DamageSpec =
  *   ordinary stuns only slow them (CombatConfig.bossStunSlow); only a full stun bar stuns a boss.
  * - slow: speed (movement and attack timer) reduced by its magnitude.
  * - ignite: fire damage over time; does not stack, the strongest (highest damage per second) applies.
+ * - bleed: physical damage over time (Bleed support); stacks up to the effect's maxStacks, every hit adds a stack
+ *   and restarts the shared timer (designer decision 2026-10-23). See applyBleed (statuses.ts).
  */
-export const STATUS_IDS = ['stun', 'slow', 'ignite', 'freeze'] as const;
+export const STATUS_IDS = ['stun', 'slow', 'ignite', 'freeze', 'bleed'] as const;
 export type StatusId = (typeof STATUS_IDS)[number];
 
 export interface StatusEffect {
@@ -27,8 +30,12 @@ export interface StatusEffect {
    * Slow: fraction of speed removed (0.4 = 40% slower).
    * Ignite: fraction of the hit's damage (after crit, before the target's defences) dealt as fire over the
    * duration; scaled by igniteDamage, then reduced by the target's fire resistance.
+   * Bleed: fraction of the hit's damage (after crit, before defences) one stack deals as physical damage over
+   * the duration (not reduced by armour: a damage over time).
    */
   readonly magnitude?: number;
+  /** Bleed: most stacks a target can carry (default 1). */
+  readonly maxStacks?: number;
   /** Omit for a guaranteed status. Ignite chance is scaled by the igniteChance stat. */
   readonly chance?: number;
   /** Applies only if the target already had this status before the hit (freeze: "already slowed"). */
@@ -148,6 +155,54 @@ export interface ActionDef {
    * explosion for projectiles and traps. Usually granted by skill changes (SkillGrants.groundZone).
    */
   readonly zone?: GroundZoneDef;
+  /** Fraction of the life this action's hits remove that the hero leeches, on top of lifeLeech mechanics (supports). */
+  readonly leech?: number;
+  /** Increased stun bar fill of this action's hits; adds to stunBonus fillIncreased (supports). */
+  readonly stunBarFillIncreased?: number;
+  /** Lightning hopping from every impact (SkillGrants.chainHit). */
+  readonly chainHit?: ChainHitDef;
+  /** Chance to repeat the action (SkillGrants.echo). */
+  readonly echo?: EchoDef;
+  /** Hits push mobs away (SkillGrants.knockback). */
+  readonly knockback?: KnockbackDef;
+}
+
+/**
+ * Chain Lightning: every impact of the action (an arc / explosion that hit someone, a projectile contact hit, a
+ * dash path hit) releases a bolt from the first target hit. It hops up to `hops` times, each time to the nearest
+ * living mob within `range` (+ its radius) of the previous one that neither the impact nor the bolt hit yet.
+ * Each hop is a hit of the action at `effectiveness` × its rolled base damage, all of it converted to
+ * `damageType` (so it grows with skill level, passives and damage modifiers, designer decision 2026-10-23); it
+ * can crit, leech, gain resource and fill the stun bar, but applies no on-hit statuses, knockback or new chains.
+ */
+export interface ChainHitDef {
+  readonly hops: number;
+  readonly range: number;
+  readonly effectiveness: number;
+  readonly damageType: DamageType;
+}
+
+/**
+ * Echo: after the action is used, with `chance` it repeats `delay` seconds later: free (no cost, charge, cooldown
+ * or action time), with the same aim and direction from the hero's position at that moment; it does not count as a
+ * use (Cleave's every-N-th) and repeats the same swing angle. An echo never echoes again. Not for movement skills or
+ * buffs (support compatibility, designer decision 2026-10-23).
+ */
+export interface EchoDef {
+  readonly chance: number;
+  readonly delay: number;
+}
+
+/**
+ * Knockback: hits push the target `distance` away from the hero at `speed` (while pushed it neither moves nor
+ * attacks). Elites are pushed `eliteMultiplier` × distance; bosses are never pushed (designer decision 2026-10-23).
+ * Omit `chance` for every hit.
+ */
+export interface KnockbackDef {
+  readonly distance: number;
+  readonly speed: number;
+  readonly eliteMultiplier: number;
+  readonly chance?: number;
 }
 
 /** Every `every`-th use of an arc action swings `angleDeg` instead (PlayerState.useCounts counts the uses). */
@@ -284,6 +339,8 @@ export interface MobDef {
    * stunned for conditions). Exception: a full stun bar stuns a boss (bossFillFactor, bossStunDuration).
    */
   readonly boss?: boolean;
+  /** Elite mob (docs/design/mobs.md, maps 0.4): knocked back less, drops supports more often. */
+  readonly elite?: boolean;
   readonly attack: {
     readonly damage: BaseDamage;
     /** Reach beyond touching distance (melee) or max shooting distance (ranged). */
@@ -316,4 +373,6 @@ export interface Content {
   readonly progression: ProgressionRules;
   /** Skill levels and XP (docs/design/classes.md «Рівні скілів»). Absent: skills stay at level 1 and gain no XP. */
   readonly skillLevels?: SkillLevelData;
+  /** Skill modifiers (docs/design/skill-modifiers.md). Absent: socketed supports do nothing and none drop. */
+  readonly supports?: SupportData;
 }
