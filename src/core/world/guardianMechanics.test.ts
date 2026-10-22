@@ -44,7 +44,7 @@ const MOBS: Record<string, MobDef> = {
 const strike: ActionDef = {
   id: 'strike',
   tags: ['attack', 'melee'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'arc', radius: 50, angleDeg: 90, maxTargets: 1 },
@@ -52,7 +52,7 @@ const strike: ActionDef = {
 const charge: ActionDef = {
   id: 'charge',
   tags: ['attack', 'melee'],
-  manaCost: 5,
+  resourceCost: 5,
   cooldown: 4,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'dash', distance: 200, speed: 1000, hitRadius: 20 },
@@ -64,7 +64,8 @@ function makeContent(): Content {
     id: 'hero',
     radius: 10,
     weaponType: 'sword',
-    baseStats: { life: 50, mana: 50, manaRegen: 0, movementSpeed: 100 },
+    baseStats: { life: 50, resource: 50, resourceRegen: 0, movementSpeed: 100 },
+    resource: { id: 'mana', startFraction: 1, refillOnLevelUp: true },
     weapon: { damage: { physical: { min: 10, max: 10 } }, attacksPerSecond: 2, critChance: 0 },
     basicAttack: strike,
     skills: [charge],
@@ -348,14 +349,14 @@ describe('counter-attack', () => {
   it('a melee hit is answered with the basic attack (100%) at the attacker: free, instant, counter event', () => {
     const { content, world } = setup([COUNTER]);
     const brute = addMob(world, 525, 500, 'brute', 10000);
-    const mana = world.player.mana;
+    const resource = world.player.resource;
     const events = step(world, idle, content, DT);
     expect(events).toContainEqual({ type: 'mobAttack', id: brute.id });
     expect(events).toContainEqual({ type: 'counter', actionId: 'strike', targetId: brute.id, facing: vec(1, 0) });
     expect(hits(events, brute.id)).toEqual([10]);
     expect(brute.life).toBe(9990);
     expect(world.player.actionTimer).toBe(0);
-    expect(world.player.mana).toBe(mana);
+    expect(world.player.resource).toBe(resource);
     expect(world.player.counterCooldown).toBe(1);
   });
 

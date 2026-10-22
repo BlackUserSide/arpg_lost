@@ -6,14 +6,16 @@ import type { PassiveMechanic } from '../passives/types';
 import type { Modifier } from '../stats/types';
 import { levelModifiers } from '../progression/levels';
 import type { Content, WeaponDef } from './content';
-import { decayLeech, refillPools } from './experience';
+import { decayLeech, spawnPools } from './experience';
+import { advanceCombatIdle, spawnCombatIdle, tickResource } from './resource';
 import { syncCharges, tickCooldowns } from './charges';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
-export { applyLeech, recoverLife, recoverMana, setLoadoutModifiers } from './experience';
+export { applyLeech, recoverLife, setLoadoutModifiers } from './experience';
+export { inCombat, maxResource, recoverResource } from './resource';
 export { canAfford } from './actions';
 export { actionReady, availableCharges, chargeInfo, maxCharges, type ChargeInfo } from './charges';
 export {
@@ -59,7 +61,9 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     radius: classDef.radius,
     life: 0,
     energyShield: 0,
-    mana: 0,
+    resource: 0,
+    combatIdle: spawnCombatIdle(classDef),
+    resourceHits: 0,
     actionTimer: 0,
     cooldowns: {},
     charges: {},
@@ -79,7 +83,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     motion: undefined,
     dead: false,
   };
-  refillPools(classDef, player);
+  spawnPools(classDef, player);
   syncCharges(player, true);
   return {
     time: 0,
@@ -123,15 +127,15 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   player.buffs = player.buffs.filter((b) => (b.remaining -= dt) > 0);
   player.invulnerable = Math.max(0, player.invulnerable - dt);
   player.stillTime += dt;
+  advanceCombatIdle(classDef, player, dt);
   // Snap float leftovers (1 − 60 × 1/60) so a 1 s internal cooldown ends after exactly 60 steps.
   player.counterCooldown = player.counterCooldown - dt > TIME_EPSILON ? player.counterCooldown - dt : 0;
 
   const maxLife = playerStat(classDef, player, 'life');
   const maxShield = playerStat(classDef, player, 'energyShield');
-  const maxMana = playerStat(classDef, player, 'mana');
   player.life = clamp(player.life + playerStat(classDef, player, 'lifeRegen') * dt, 0, maxLife);
   player.energyShield = clamp(player.energyShield + playerStat(classDef, player, 'energyShieldRegen') * dt, 0, maxShield);
-  player.mana = clamp(player.mana + playerStat(classDef, player, 'manaRegen') * dt, 0, maxMana);
+  tickResource(classDef, player, dt);
   decayLeech(classDef, player, dt);
 
   player.actionTimer = Math.max(0, player.actionTimer - dt);

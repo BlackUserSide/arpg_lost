@@ -7,6 +7,7 @@ import { applyLeech } from './experience';
 import { actionReady, spendCharge } from './charges';
 import { actionCost, canPay, counterAttackStats, critStats } from './passiveEffects';
 import { applyStatus, conditionTarget, fillStunBar, updateTrapAuras } from './statuses';
+import { resourceOnHeroHit, startResourceUse } from './resource';
 import type { Modifier } from '../stats/types';
 import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState, type Trap } from './state';
 
@@ -43,21 +44,22 @@ export function pickAction(ctx: Ctx): ActionDef | undefined {
   return input.basicAttack && canAfford(player, basicAttack) ? basicAttack : undefined;
 }
 
-/** True if the player can pay the action's cost now (mana, or life under blood magic: life must stay above 0). */
+/** True if the player can pay the action's cost now (class resource, or life under blood magic: life must stay above 0). */
 export function canAfford(player: PlayerState, action: ActionDef): boolean {
-  return canPay(player, actionCost(player.mechanics, action.manaCost));
+  return canPay(player, actionCost(player.mechanics, action.resourceCost));
 }
 
 function payCost(player: PlayerState, action: ActionDef): void {
-  const cost = actionCost(player.mechanics, action.manaCost);
+  const cost = actionCost(player.mechanics, action.resourceCost);
   if (cost.pool === 'life') player.life -= cost.amount;
-  else player.mana -= cost.amount;
+  else player.resource -= cost.amount;
 }
 
 export function performAction(ctx: Ctx, action: ActionDef): void {
   const { world, content, events, input } = ctx;
   const player = world.player;
   payCost(player, action);
+  startResourceUse(ctx.classDef, player, action);
   spendCharge(player, action);
   player.actionTimer = useTime(ctx, action);
   events.push({ type: 'action', actionId: action.id, facing: player.facing });
@@ -238,6 +240,8 @@ export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, 
  * mechanic, read live at the hit) with the life actually removed, after the on-hit statuses.
  * Only these direct hero hits fill the bar: ignite ticks and death explosions do not.
  * Fill uses the life actually removed (designer decision 2026-10-22).
+ * Every damage hit also puts the hero back in combat for resource decay and may grant class resource
+ * (ResourceDef.onHit, see resourceOnHeroHit).
  */
 export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifiers?: readonly Modifier[], effectiveness = 1): void {
   const { world, content, classDef, rng, events } = ctx;
@@ -269,6 +273,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
     mob.life -= hit.total;
     events.push({ type: 'hit', targetId: mob.id, pos: mob.pos, amount: hit.total, isCrit: hit.isCrit });
     applyLeech(classDef, world.player, removed);
+    resourceOnHeroHit(classDef, world.player, action);
     raw = hit.raw;
   }
   const hit = { mods, tags: action.tags, raw, before };
@@ -297,5 +302,6 @@ export function counterAttack(ctx: Ctx, attacker: MobState): void {
   const toAttacker = normalize(sub(attacker.pos, player.pos));
   const facing = toAttacker.x !== 0 || toAttacker.y !== 0 ? toAttacker : player.facing;
   ctx.events.push({ type: 'counter', actionId: action.id, targetId: attacker.id, facing });
+  startResourceUse(ctx.classDef, player, action);
   damageMob(ctx, action, attacker, undefined, counter.effectiveness);
 }

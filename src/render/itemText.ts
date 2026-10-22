@@ -1,15 +1,17 @@
 import type { AffixDef, Item, ItemsData, StatLine, ValueRange } from '../core/items/types';
 import type { StatId } from '../core/stats/types';
+import { resourceNames } from './resourceText';
 
 // Human-readable item text for tooltips. Pure functions (tested), no Phaser.
+// `resourceId` (ClassDef.resource.id of the viewing hero) names the resource stats ("Rage"); "Resource" without it.
 
 const STAT_LABEL: Record<StatId, string> = {
   life: 'Life',
   lifeRegen: 'Life Regeneration per second',
   energyShield: 'Energy Shield',
   energyShieldRegen: 'Energy Shield Regeneration per second',
-  mana: 'Mana',
-  manaRegen: 'Mana Regeneration per second',
+  resource: 'Resource',
+  resourceRegen: 'Resource Regeneration per second',
   armour: 'Armour',
   fireResistance: 'Fire Resistance',
   coldResistance: 'Cold Resistance',
@@ -29,7 +31,7 @@ const STAT_LABEL: Record<StatId, string> = {
 
 /** Stats whose flat values are fractions shown as percentages. */
 const PERCENT_FLAT: ReadonlySet<StatId> = new Set(['fireResistance', 'coldResistance', 'lightningResistance', 'critMultiplier', 'critChance', 'igniteChance']);
-const MAXIMUM: ReadonlySet<StatId> = new Set(['life', 'mana', 'energyShield']);
+const MAXIMUM: ReadonlySet<StatId> = new Set(['life', 'resource', 'energyShield']);
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 const pct = (v: number): number => Math.round(v * 100);
@@ -39,8 +41,14 @@ function tagWords(line: StatLine): string {
   return (line.tags ?? []).map((t) => `${cap(t)} `).join('');
 }
 
-export function formatLine(line: StatLine, value: number): string {
-  const label = STAT_LABEL[line.stat];
+function statLabel(stat: StatId, resourceId: string | undefined): string {
+  if (stat === 'resource') return resourceNames(resourceId).en;
+  if (stat === 'resourceRegen') return `${resourceNames(resourceId).en} Regeneration per second`;
+  return STAT_LABEL[stat];
+}
+
+export function formatLine(line: StatLine, value: number, resourceId?: string): string {
+  const label = statLabel(line.stat, resourceId);
   if (line.stat === 'damage' && line.kind === 'flat' && line.damageType) return `Adds ${num(value)} ${cap(line.damageType)} Damage`;
   if (line.kind === 'increased') return `${Math.abs(pct(value))}% ${value < 0 ? 'reduced' : 'increased'} ${tagWords(line)}${label}`;
   if (line.kind === 'more') return `${Math.abs(pct(value))}% ${value < 0 ? 'less' : 'more'} ${tagWords(line)}${label}`;
@@ -69,7 +77,7 @@ export interface ItemTooltip {
   readonly lines: readonly TooltipLine[];
 }
 
-export function describeItem(item: Item, data: ItemsData): ItemTooltip {
+export function describeItem(item: Item, data: ItemsData, resourceId?: string): ItemTooltip {
   const base = data.bases[item.baseId];
   const lines: TooltipLine[] = [];
   if (base?.weapon) {
@@ -80,13 +88,13 @@ export function describeItem(item: Item, data: ItemsData): ItemTooltip {
   }
   if (item.armour) lines.push({ text: `Armour: ${item.armour}`, kind: 'base' });
   if (item.energyShield) lines.push({ text: `Energy Shield: ${item.energyShield}`, kind: 'base' });
-  if (base?.implicit && item.implicit !== undefined) lines.push({ text: formatLine(base.implicit, item.implicit), kind: 'implicit' });
+  if (base?.implicit && item.implicit !== undefined) lines.push({ text: formatLine(base.implicit, item.implicit, resourceId), kind: 'implicit' });
   for (const rolled of item.affixes) {
     const affix: AffixDef | undefined = data.affixes[rolled.affixId];
     if (!affix) continue;
     const tier = affix.tiers[affix.tiers.length - rolled.tier];
     const detail = `${affix.kind === 'prefix' ? 'P' : 'S'} · T${rolled.tier}${tier ? ` · ${formatRange(affix.line, tier)}` : ''}`;
-    lines.push({ text: formatLine(affix.line, rolled.value), kind: 'affix', detail });
+    lines.push({ text: formatLine(affix.line, rolled.value, resourceId), kind: 'affix', detail });
   }
   lines.push({ text: `Item level ${item.level} · Requires level ${item.level}`, kind: 'meta' });
   return {

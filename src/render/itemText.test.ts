@@ -15,6 +15,14 @@ describe('item text', () => {
     expect(formatLine({ stat: 'critMultiplier', kind: 'flat' }, 0.2)).toBe('+20% to Critical Strike Multiplier');
   });
 
+  it('names the resource stats after the hero class, neutral without one', () => {
+    expect(formatLine({ stat: 'resource', kind: 'flat' }, 12)).toBe('+12 to maximum Resource');
+    expect(formatLine({ stat: 'resource', kind: 'flat' }, 12, 'rage')).toBe('+12 to maximum Rage');
+    expect(formatLine({ stat: 'resource', kind: 'increased' }, 0.1, 'mana')).toBe('10% increased Mana');
+    expect(formatLine({ stat: 'resourceRegen', kind: 'flat' }, 2, 'energy')).toBe('+2 Energy Regeneration per second');
+    expect(formatLine({ stat: 'resourceRegen', kind: 'flat' }, 2)).toBe('+2 Resource Regeneration per second');
+  });
+
   it('formats tier ranges in the same units as the value', () => {
     expect(formatRange({ stat: 'life', kind: 'flat' }, { min: 10, max: 15, step: 1 })).toBe('10–15');
     expect(formatRange({ stat: 'armour', kind: 'increased' }, { min: 0.1, max: 0.15, step: 0.01 })).toBe('10%–15%');

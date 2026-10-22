@@ -187,7 +187,7 @@ describe('passive tree data', () => {
     expect(mods('m_n2')).toEqual([
       { stat: 'energyShield', kind: 'increased', value: 0.16 },
       { stat: 'energyShieldRegen', kind: 'flat', value: 2 },
-      { stat: 'manaRegen', kind: 'flat', value: 1.5 },
+      { stat: 'resourceRegen', kind: 'flat', value: 1.5 },
     ]);
   });
 

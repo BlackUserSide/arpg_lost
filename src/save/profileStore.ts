@@ -7,7 +7,7 @@ import type { KeyValueStorage } from '../platform/platform';
 // Versioned profile persistence. Bump SAVE_VERSION and add a migration whenever the Profile shape changes.
 
 export const SAVE_KEY = 'arpg.profile';
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 interface SaveFile {
   version: number;
@@ -31,7 +31,48 @@ const migrations: Record<number, (profile: unknown) => unknown> = {
     const p = data as { characters?: Array<Record<string, unknown>> };
     return { ...p, characters: (p.characters ?? []).map((c) => ({ passives: createAllocation(), ...c })) };
   },
+  // v4: class resource. Mana affixes became resource affixes (mana_flat → resource_flat, mana_regen → resource_regen)
+  // in the stash and in every character's equipment; resource_regen values are rescaled ×0.6 (see v4Affix).
+  3: (data) => {
+    const p = data as { characters?: Array<Record<string, unknown>>; stash?: { items?: unknown[] } };
+    const equipment = (eq: unknown): unknown =>
+      typeof eq === 'object' && eq !== null ? Object.fromEntries(Object.entries(eq).map(([slot, item]) => [slot, v4Item(item)])) : eq;
+    return {
+      ...p,
+      characters: (p.characters ?? []).map((c) => ({ ...c, equipment: equipment(c.equipment) })),
+      ...(p.stash ? { stash: { ...p.stash, items: (p.stash.items ?? []).map((item) => v4Item(item)) } } : {}),
+    };
+  },
 };
+
+const V4_AFFIX_RENAMES: Readonly<Record<string, string>> = { mana_flat: 'resource_flat', mana_regen: 'resource_regen' };
+/**
+ * v4 cut the resource regen tiers ×0.6 (balance pass). Stored values are rescaled and snapped to the roll step
+ * (0.1) like generation does (rollValue), so e.g. 1.1 → 0.66 → 0.7; every old tier value lands inside its new tier.
+ * Frozen here, not read from data, so the migration stays the same when data changes later.
+ */
+const V4_REGEN_SCALE = 0.6;
+const V4_REGEN_STEP = 0.1;
+
+/** One stored affix upgraded to v4: renamed, and the (renamed) resource regen value rescaled. */
+function v4Affix(affix: unknown): unknown {
+  if (typeof affix !== 'object' || affix === null) return affix;
+  const a = affix as { affixId?: unknown; value?: unknown };
+  const id = typeof a.affixId === 'string' ? (V4_AFFIX_RENAMES[a.affixId] ?? a.affixId) : a.affixId;
+  let value = a.value;
+  if (id === 'resource_regen' && typeof value === 'number') {
+    value = Math.round((Math.round((value * V4_REGEN_SCALE) / V4_REGEN_STEP) * V4_REGEN_STEP) * 10000) / 10000;
+  }
+  return { ...affix, affixId: id, value };
+}
+
+/** A stored item with its affixes upgraded; anything that is not an item with an affix array is returned as is. */
+function v4Item(item: unknown): unknown {
+  if (typeof item !== 'object' || item === null) return item;
+  const affixes = (item as { affixes?: unknown }).affixes;
+  if (!Array.isArray(affixes)) return item;
+  return { ...item, affixes: affixes.map(v4Affix) };
+}
 
 export interface LoadResult {
   profile: Profile;

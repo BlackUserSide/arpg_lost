@@ -8,7 +8,7 @@ const rules: ProgressionRules = {
   mobXpGrowth: 0.5,
   lowAreaPenalty: { startDiff: 2, multipliers: [0.8, 0.6], floor: 0.1 },
   mapClearBonus: 0.07,
-  perLevel: { life: 4, mana: 1 },
+  perLevel: { life: 4, resource: 1 },
 };
 
 describe('levels', () => {
@@ -50,7 +50,7 @@ describe('levels', () => {
     expect(levelModifiers(1, rules)).toEqual([]);
     expect(levelModifiers(3, rules)).toEqual([
       { stat: 'life', kind: 'flat', value: 8 },
-      { stat: 'mana', kind: 'flat', value: 2 },
+      { stat: 'resource', kind: 'flat', value: 2 },
     ]);
     expect(mapClearBonusXp(1000, rules)).toBeCloseTo(70);
   });

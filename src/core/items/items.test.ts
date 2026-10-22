@@ -17,11 +17,11 @@ const affixes: Record<string, AffixDef> = {
   res: { id: 'res', group: 'res', kind: 'suffix', slots: ['helmet', 'ring'], weight: 100, line: { stat: 'fireResistance', kind: 'flat' }, tiers: tiers([[1, 2]]) },
   regen: { id: 'regen', group: 'regen', kind: 'suffix', slots: ['helmet', 'ring'], weight: 100, line: { stat: 'lifeRegen', kind: 'flat' }, tiers: tiers([[1, 2]]) },
   speed: { id: 'speed', group: 'speed', kind: 'suffix', slots: ['helmet'], weight: 100, line: { stat: 'movementSpeed', kind: 'increased' }, tiers: [{ min: 0.05, max: 0.1, step: 0.01, minLevel: 1 }] },
-  late: { id: 'late', group: 'late', kind: 'suffix', slots: ['helmet'], weight: 100, line: { stat: 'mana', kind: 'flat' }, tiers: tiers([[5, 5]], [25]) },
+  late: { id: 'late', group: 'late', kind: 'suffix', slots: ['helmet'], weight: 100, line: { stat: 'resource', kind: 'flat' }, tiers: tiers([[5, 5]], [25]) },
 };
 
 const bases: Record<string, BaseDef> = {
-  cap: { id: 'cap', name: 'Cap', slot: 'helmet', level: 1, armour: { min: 10, max: 10, step: 1 }, implicit: { stat: 'mana', kind: 'flat', range: { min: 5, max: 5, step: 1 } } },
+  cap: { id: 'cap', name: 'Cap', slot: 'helmet', level: 1, armour: { min: 10, max: 10, step: 1 }, implicit: { stat: 'resource', kind: 'flat', range: { min: 5, max: 5, step: 1 } } },
   crown: { id: 'crown', name: 'Crown', slot: 'helmet', level: 15, armour: { min: 40, max: 40, step: 1 } },
   ring: { id: 'ring', name: 'Ring', slot: 'ring', level: 1 },
   sword: { id: 'sword', name: 'Sword', slot: 'weapon', level: 1, weapon: { type: 'sword', damage: { physical: { min: 5, max: 9 } }, attacksPerSecond: 1.2, critChance: 0.05 } },
@@ -148,7 +148,7 @@ describe('item modifiers and equipment', () => {
   it('turns defences, implicit and affixes into stat modifiers', () => {
     const mods = itemModifiers(item, data);
     expect(computeStat(0, mods, 'armour')).toBe(10);
-    expect(computeStat(0, mods, 'mana')).toBe(5);
+    expect(computeStat(0, mods, 'resource')).toBe(5);
     expect(computeStat(100, mods, 'life')).toBe(102);
     expect(computeStat(100, mods, 'movementSpeed')).toBeCloseTo(107, 9);
   });

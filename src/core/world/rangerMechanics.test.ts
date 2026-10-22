@@ -36,7 +36,7 @@ const MOBS: Record<string, MobDef> = { dummy: mobDef('dummy'), walker: mobDef('w
 const bolt: ActionDef = {
   id: 'bolt',
   tags: ['attack', 'projectile'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'projectile', count: 1, spreadDeg: 0, speed: 600, range: 1000, radius: 2, pierce: 0 },
@@ -44,7 +44,7 @@ const bolt: ActionDef = {
 const spellBolt: ActionDef = {
   id: 'spell_bolt',
   tags: ['spell', 'projectile'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   castTime: 0,
   damage: { source: 'skill', base: { cold: { min: 10, max: 10 } }, critChance: 0 },
@@ -53,7 +53,7 @@ const spellBolt: ActionDef = {
 const mine: ActionDef = {
   id: 'mine',
   tags: ['area'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 5,
   castTime: 0,
   damage: { source: 'skill', base: { fire: { min: 20, max: 20 } }, critChance: 0 },
@@ -68,7 +68,8 @@ function makeContent(): Content {
     id: 'hero',
     radius: 10,
     weaponType: 'crossbow',
-    baseStats: { life: 50, mana: 50, manaRegen: 0, movementSpeed: 100 },
+    baseStats: { life: 50, resource: 50, resourceRegen: 0, movementSpeed: 100 },
+    resource: { id: 'mana', startFraction: 1, refillOnLevelUp: true },
     weapon: { damage: { physical: { min: 10, max: 10 } }, attacksPerSecond: 2, critChance: 0 },
     basicAttack: bolt,
     skills: [mine, mine2, spellBolt],

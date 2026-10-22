@@ -47,10 +47,10 @@ const tree: PassiveTreeData = {
       n('n2', 'notable', 2, { modifiers: [{ stat: 'damage', kind: 'increased', value: 0.2, tags: ['fire'] }] }),
       n('n3', 'small', 1),
       n('n4', 'small', 1),
-      n('n5', 'small', 1, { modifiers: [{ stat: 'mana', kind: 'flat', value: 10 }] }),
+      n('n5', 'small', 1, { modifiers: [{ stat: 'resource', kind: 'flat', value: 10 }] }),
       n('x1', 'small', 1),
       n('x2', 'small', 1),
-      n('k1', 'keystone', 3, { exclusiveGroup: 'g', mechanics: [{ kind: 'bloodMagic', lifePerMana: 1 }] }),
+      n('k1', 'keystone', 3, { exclusiveGroup: 'g', mechanics: [{ kind: 'bloodMagic', lifePerResource: 1 }] }),
       n('k2', 'keystone', 3, { exclusiveGroup: 'g' }),
       n('sa_e', 'specEntry', 1, { specId: 'sa', modifiers: [{ stat: 'armour', kind: 'flat', value: 5 }] }),
       n('sa_k', 'specKeystone', 1, { specId: 'sa', mechanics: [{ kind: 'deathExplosionRadius', increased: 0.5 }] }),
@@ -302,7 +302,7 @@ describe('modifiers and mechanics', () => {
     expect(passiveModifiers(tree, alloc)).toEqual([
       { stat: 'life', kind: 'increased', value: 0.1 },
       { stat: 'damage', kind: 'increased', value: 0.2, tags: ['fire'] },
-      { stat: 'mana', kind: 'flat', value: 10 },
+      { stat: 'resource', kind: 'flat', value: 10 },
       { stat: 'armour', kind: 'flat', value: 5 },
     ]);
     expect(passiveMechanics(tree, alloc)).toEqual([{ kind: 'deathExplosionRadius', increased: 0.5 }]);
@@ -316,7 +316,7 @@ describe('modifiers and mechanics', () => {
 
   it('heroMechanics returns the mechanics of allocated nodes', () => {
     expect(heroMechanics({ passives: { nodes: ['n1', 'k1'], spec: 'sa', specNodes: ['sa_e', 'sa_k'] } }, tree)).toEqual([
-      { kind: 'bloodMagic', lifePerMana: 1 },
+      { kind: 'bloodMagic', lifePerResource: 1 },
       { kind: 'deathExplosionRadius', increased: 0.5 },
     ]);
   });
@@ -401,7 +401,7 @@ describe('pending mechanics', () => {
     const implemented: PassiveMechanic[] = [
       { kind: 'lifeLeech', fraction: 0.05, maxPerSecond: 0.2 },
       { kind: 'lifePotionEffectiveness', multiplier: 0.5 },
-      { kind: 'bloodMagic', lifePerMana: 1 },
+      { kind: 'bloodMagic', lifePerResource: 1 },
       { kind: 'alwaysCrit', critMultiplier: 1.3 },
       { kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true },
       { kind: 'conditionalModifiers', condition: { kind: 'movedWithin', seconds: 0.5 }, modifiers: [] },

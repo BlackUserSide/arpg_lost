@@ -22,7 +22,7 @@ const dummy: MobDef = {
 const bolt: ActionDef = {
   id: 'bolt',
   tags: ['attack', 'projectile'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'projectile', count: 1, spreadDeg: 0, speed: 600, range: 400, radius: 2, pierce: 0 },
@@ -30,7 +30,7 @@ const bolt: ActionDef = {
 const nova: ActionDef = {
   id: 'nova',
   tags: ['spell', 'area'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 3,
   castTime: 0.4,
   damage: { source: 'skill', base: { cold: { min: 10, max: 10 } }, critChance: 0 },
@@ -40,7 +40,7 @@ const nova: ActionDef = {
 const charge: ActionDef = {
   id: 'charge',
   tags: ['attack', 'melee'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 4,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'dash', distance: 200, speed: 1000, hitRadius: 20 },
@@ -49,7 +49,7 @@ const charge: ActionDef = {
 const cry: ActionDef = {
   id: 'cry',
   tags: [],
-  manaCost: 8,
+  resourceCost: 8,
   cooldown: 12,
   castTime: 0,
   delivery: { kind: 'self' },
@@ -58,7 +58,7 @@ const cry: ActionDef = {
 const mine: ActionDef = {
   id: 'mine',
   tags: ['area'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 5,
   castTime: 0,
   damage: { source: 'skill', base: { fire: { min: 20, max: 20 } }, critChance: 0 },
@@ -67,7 +67,7 @@ const mine: ActionDef = {
 const strike: ActionDef = {
   id: 'strike',
   tags: ['attack', 'melee'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'arc', radius: 50, angleDeg: 90, maxTargets: 1 },
@@ -79,7 +79,8 @@ function makeContent(basicAttack: ActionDef = bolt): Content {
     id: 'hero',
     radius: 10,
     weaponType: 'wand',
-    baseStats: { life: 50, mana: 50, manaRegen: 0, movementSpeed: 100 },
+    baseStats: { life: 50, resource: 50, resourceRegen: 0, movementSpeed: 100 },
+    resource: { id: 'mana', startFraction: 1, refillOnLevelUp: true },
     weapon: { damage: { physical: { min: 10, max: 10 } }, attacksPerSecond: 2, critChance: 0 },
     basicAttack,
     skills: [nova, charge, cry, mine],
@@ -157,7 +158,7 @@ const ICY_GRIP_SLOW: PassiveMechanic = { kind: 'skillParams', skillIds: ['nova']
 const COLD_BLOOD: PassiveMechanic = { kind: 'skillParams', skillIds: ['bolt'], addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.2 }] };
 const HEAVY_HAND: PassiveMechanic = { kind: 'stunBonus', fillIncreased: 0.3, durationIncreased: 0.3 };
 const FURY: PassiveMechanic = { kind: 'moreDamagePerMissingLife', perMissingLife: 0.6, max: 0.45 };
-const BLOOD: PassiveMechanic = { kind: 'bloodMagic', lifePerMana: 1 };
+const BLOOD: PassiveMechanic = { kind: 'bloodMagic', lifePerResource: 1 };
 const CRYSTAL: PassiveMechanic = { kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true };
 /** Fast attacks so tests are not gated by the action timer. */
 const FAST: Modifier = { stat: 'attackSpeed', kind: 'increased', value: 9 };

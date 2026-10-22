@@ -3,9 +3,11 @@ import type { RespecError } from '../core/passives/respec';
 import type { PassiveCondition, PassiveMechanic, PassiveNodeDef, PassiveNodeType, PassiveStatusId, SkillParam, SkillParamChange } from '../core/passives/types';
 import type { Modifier, StatId, Tag } from '../core/stats/types';
 import { classes } from '../data/classes';
+import { resourceNames } from './resourceText';
 
 // Ukrainian text for the passive tree screen. Pure functions (tested), no Phaser.
 // Only wording lives here; every number comes from the node data.
+// `resourceId` (ClassDef.resource.id of the hero viewing the tree) names the resource ("люті"); "ресурсу" without it.
 
 export const NODE_TYPE_LABEL: Record<PassiveNodeType, string> = {
   start: 'Стартова точка',
@@ -23,8 +25,8 @@ const STAT: Record<StatId, string> = {
   lifeRegen: 'регенерації життя/с',
   energyShield: 'енергетичного щита',
   energyShieldRegen: 'регенерації ЕЩ/с',
-  mana: 'мани',
-  manaRegen: 'регенерації мани/с',
+  resource: 'ресурсу', // replaced by the hero's resource name (statName)
+  resourceRegen: 'регенерації ресурсу/с',
   armour: 'броні',
   fireResistance: 'опору вогню',
   coldResistance: 'опору холоду',
@@ -108,25 +110,31 @@ function tagSuffix(tags: readonly Tag[] | undefined): string {
 }
 
 /** Stat phrase in the genitive, folding a single damage tag into the noun ("урону снарядами"). */
-function statPhrase(m: Modifier): string {
-  if (m.stat === 'damage' && m.tags?.length === 1) return DAMAGE_TAG[m.tags[0]!];
-  return `${STAT[m.stat]}${tagSuffix(m.tags)}`;
+function statName(stat: StatId, resourceId: string | undefined): string {
+  if (stat === 'resource') return resourceNames(resourceId).ukGen;
+  if (stat === 'resourceRegen') return `регенерації ${resourceNames(resourceId).ukGen}/с`;
+  return STAT[stat];
 }
 
-export function formatModifier(m: Modifier): string {
+function statPhrase(m: Modifier, resourceId: string | undefined): string {
+  if (m.stat === 'damage' && m.tags?.length === 1) return DAMAGE_TAG[m.tags[0]!];
+  return `${statName(m.stat, resourceId)}${tagSuffix(m.tags)}`;
+}
+
+export function formatModifier(m: Modifier, resourceId?: string): string {
   // "100% less" switches the stat off (Bloodsucker: no life regen).
-  if (m.kind === 'more' && m.value <= -1) return `Немає ${statPhrase(m)}`;
-  if (m.kind === 'more') return `${pct(m.value)} ${m.value < 0 ? 'менше' : 'більше'} ${statPhrase(m)} (more)`;
-  if (m.kind === 'increased') return `${signedPct(m.value)} ${statPhrase(m)}`;
+  if (m.kind === 'more' && m.value <= -1) return `Немає ${statPhrase(m, resourceId)}`;
+  if (m.kind === 'more') return `${pct(m.value)} ${m.value < 0 ? 'менше' : 'більше'} ${statPhrase(m, resourceId)} (more)`;
+  if (m.kind === 'increased') return `${signedPct(m.value)} ${statPhrase(m, resourceId)}`;
   if (m.stat === 'damage' && m.damageType) return `${signed(m.value)} ${DAMAGE_TAG[m.damageType]}`;
-  if (PERCENT_FLAT.has(m.stat)) return `${signedPct(m.value)} ${statPhrase(m)}`;
-  return `${signed(m.value)} ${statPhrase(m)}`;
+  if (PERCENT_FLAT.has(m.stat)) return `${signedPct(m.value)} ${statPhrase(m, resourceId)}`;
+  return `${signed(m.value)} ${statPhrase(m, resourceId)}`;
 }
 
 const RESISTANCES: readonly StatId[] = ['fireResistance', 'coldResistance', 'lightningResistance'];
 
 /** One line per modifier; three equal flat resistances collapse into "опору всім стихіям". */
-export function formatModifiers(mods: readonly Modifier[]): string[] {
+export function formatModifiers(mods: readonly Modifier[], resourceId?: string): string[] {
   const res = mods.filter((m) => m.kind === 'flat' && RESISTANCES.includes(m.stat) && !m.tags);
   const allRes = res.length === 3 && new Set(res.map((m) => m.stat)).size === 3 && res.every((m) => m.value === res[0]!.value);
   const lines: string[] = [];
@@ -137,7 +145,7 @@ export function formatModifiers(mods: readonly Modifier[]): string[] {
       resDone = true;
       continue;
     }
-    lines.push(formatModifier(m));
+    lines.push(formatModifier(m, resourceId));
   }
   return lines;
 }
@@ -169,10 +177,12 @@ function skillTarget(skillIds: readonly string[] | undefined, tags: readonly str
   return 'Скіли';
 }
 
-export function formatMechanic(m: PassiveMechanic): string[] {
+export function formatMechanic(m: PassiveMechanic, resourceId?: string): string[] {
   switch (m.kind) {
-    case 'bloodMagic':
-      return [`Скіли коштують життя замість мани (${num(m.lifePerMana)} життя за 1 ману)`, 'Максимум мани = 0'];
+    case 'bloodMagic': {
+      const r = resourceNames(resourceId);
+      return [`Скіли коштують життя замість ${r.ukGen} (${num(m.lifePerResource)} життя за 1 ${r.ukAcc})`, `Максимум ${r.ukGen} = 0`];
+    }
     case 'alwaysCrit':
       return ['Усі влучання критичні', `Множник криту фіксований: ×${num(m.critMultiplier)}, бонуси до множника не діють`];
     case 'lifeToEnergyShield':
@@ -189,7 +199,7 @@ export function formatMechanic(m: PassiveMechanic): string[] {
     case 'lifePotionEffectiveness':
       return [`Зілля здоров'я відновлюють ${pct(m.multiplier)} від звичайного`];
     case 'conditionalModifiers':
-      return [`${conditionText(m.condition)}: ${formatModifiers(m.modifiers).join(', ')}`];
+      return [`${conditionText(m.condition)}: ${formatModifiers(m.modifiers, resourceId).join(', ')}`];
     case 'moreDamagePerMissingLife':
       return [`${pct(m.perMissingLife / 100)} більше урону за кожен 1% втраченого життя й ЕЩ, максимум ${pct(m.max)}`];
     case 'skillParams': {
@@ -202,7 +212,7 @@ export function formatMechanic(m: PassiveMechanic): string[] {
         if (c.increased !== undefined) parts.push(signedPct(c.increased));
         lines.push(`${target}: тривалість ${STATUS_GENITIVE[c.status as PassiveStatusId] ?? c.status} ${parts.join(', ')}`);
       }
-      if (m.buffModifiers && m.buffModifiers.length > 0) lines.push(`${target}: баф також дає ${formatModifiers(m.buffModifiers).join(', ')}`);
+      if (m.buffModifiers && m.buffModifiers.length > 0) lines.push(`${target}: баф також дає ${formatModifiers(m.buffModifiers, resourceId).join(', ')}`);
       for (const s of m.addOnHit ?? []) {
         const power = s.magnitude !== undefined ? ` на ${pct(s.magnitude)}` : '';
         lines.push(`${target}: влучання накладає ${STATUS[s.status]}${power} на ${num(s.duration)} с`);
@@ -244,8 +254,8 @@ export function formatMechanic(m: PassiveMechanic): string[] {
 export const PENDING_EFFECT = 'Ефект ще в розробці';
 
 /** All effect lines of a node: stat modifiers first, then mechanics. */
-export function describeNode(node: PassiveNodeDef): string[] {
-  return [...formatModifiers(node.modifiers ?? []), ...(node.mechanics ?? []).flatMap(formatMechanic)];
+export function describeNode(node: PassiveNodeDef, resourceId?: string): string[] {
+  return [...formatModifiers(node.modifiers ?? [], resourceId), ...(node.mechanics ?? []).flatMap((m) => formatMechanic(m, resourceId))];
 }
 
 export const ALLOCATE_ERRORS: Record<AllocateError, string> = {

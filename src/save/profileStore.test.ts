@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createCharacter, createProfile } from '../core/progression/profile';
 import type { KeyValueStorage } from '../platform/platform';
+import { itemsData } from '../data/items';
 import { loadProfile, SAVE_KEY, saveProfile } from './profileStore';
 
 function memoryStorage(): KeyValueStorage & { data: Map<string, string> } {
@@ -97,6 +98,78 @@ describe('profile store migrations', () => {
     expect(profile.characters[0]!.level).toBe(7);
     expect(profile.currency).toEqual({ shards: 12 });
     expect(profile.nextItemId).toBe(5);
+  });
+
+  it('upgrades v3 saves: mana affixes become resource affixes in stash and equipment, other affixes kept', () => {
+    const storage = memoryStorage();
+    const helmet = {
+      id: 'i1',
+      baseId: 'iron_cap',
+      level: 10,
+      rarity: 'magic',
+      name: 'Cap',
+      implicit: 6,
+      armour: 10,
+      affixes: [
+        { affixId: 'mana_flat', tier: 3, value: 18 },
+        { affixId: 'life_flat', tier: 4, value: 20 },
+      ],
+    };
+    const ring = (id: string, tier: number, value: number) => ({ id, baseId: 'iron_ring', level: 30, rarity: 'magic', name: 'Ring', affixes: [{ affixId: 'mana_regen', tier, value }] });
+    const v3 = {
+      version: 3,
+      profile: {
+        characters: [
+          { id: 'c1', name: 'Aria', classId: 'mage', level: 7, xp: 40, stats: { runs: 0, deaths: 0, kills: 0, longestRun: 0 }, equipment: { helmet }, passives: { nodes: [], spec: null, specNodes: [] } },
+        ],
+        stash: { items: [ring('i2', 5, 0.7), ring('i3', 4, 1.1), ring('i4', 1, 4.6), ring('i5', 1, 6)] },
+        currency: {},
+        records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 0 },
+        nextCharacterId: 2,
+        nextItemId: 3,
+      },
+    };
+    storage.setItem(SAVE_KEY, JSON.stringify(v3));
+    const { profile, backupKey } = loadProfile(storage);
+    expect(backupKey).toBeUndefined();
+    expect(profile.characters[0]!.equipment.helmet!.affixes).toEqual([
+      { affixId: 'resource_flat', tier: 3, value: 18 },
+      { affixId: 'life_flat', tier: 4, value: 20 },
+    ]);
+    expect(profile.characters[0]!.equipment.helmet!.implicit).toBe(6);
+    // Resource regen rescaled ×0.6 and snapped to the 0.1 roll step: 0.7 → 0.4, 1.1 → 0.7, 4.6 → 2.8, 6 → 3.6.
+    expect(profile.stash.items.map((i) => i.affixes[0])).toEqual([
+      { affixId: 'resource_regen', tier: 5, value: 0.4 },
+      { affixId: 'resource_regen', tier: 4, value: 0.7 },
+      { affixId: 'resource_regen', tier: 1, value: 2.8 },
+      { affixId: 'resource_regen', tier: 1, value: 3.6 },
+    ]);
+    expect(profile.nextItemId).toBe(3);
+  });
+
+  it('v3 → v4 puts every old resource regen roll inside its new tier', () => {
+    // Old mana_regen tiers T5..T1 (step 0.1) before the ×0.6 cut.
+    const oldTiers: Array<[number, number]> = [[0.5, 1], [1.1, 2], [2.1, 3], [3.1, 4.5], [4.6, 6]];
+    const items: unknown[] = [];
+    oldTiers.forEach(([min, max], i) => {
+      for (let k = 0; min + k * 0.1 <= max + 1e-9; k++) {
+        const value = Math.round((min + k * 0.1) * 10) / 10;
+        items.push({ id: `i${items.length}`, baseId: 'iron_ring', level: 30, rarity: 'magic', name: 'Ring', affixes: [{ affixId: 'mana_regen', tier: 5 - i, value }] });
+      }
+    });
+    const storage = memoryStorage();
+    const profile = { characters: [], stash: { items }, currency: {}, records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 0 }, nextCharacterId: 1, nextItemId: 1 };
+    storage.setItem(SAVE_KEY, JSON.stringify({ version: 3, profile }));
+    const tiers = itemsData.affixes.resource_regen!.tiers;
+    const migrated = loadProfile(storage).profile.stash.items;
+    expect(migrated).toHaveLength(items.length);
+    for (const item of migrated) {
+      const affix = item.affixes[0]!;
+      const tier = tiers[tiers.length - affix.tier]!;
+      expect(affix.value).toBeGreaterThanOrEqual(tier.min);
+      expect(affix.value).toBeLessThanOrEqual(tier.max);
+      expect(Math.round(affix.value * 10) / 10).toBe(affix.value);
+    }
   });
 
   it('fills partial passives and resets invalid allocations for free, keeping valid ones', () => {

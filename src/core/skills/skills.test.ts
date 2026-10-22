@@ -6,7 +6,7 @@ import type { SkillChangeSet } from './types';
 const nova: ActionDef = {
   id: 'nova',
   tags: ['spell', 'area'],
-  manaCost: 10,
+  resourceCost: 10,
   cooldown: 3,
   castTime: 0.4,
   damage: { source: 'skill', base: { cold: { min: 10, max: 10 } }, critChance: 0 },
@@ -16,7 +16,7 @@ const nova: ActionDef = {
 const bolt: ActionDef = {
   id: 'bolt',
   tags: ['attack', 'projectile'],
-  manaCost: 0,
+  resourceCost: 0,
   cooldown: 0,
   damage: { source: 'weapon', effectiveness: 1 },
   delivery: { kind: 'projectile', count: 1, spreadDeg: 0, speed: 750, range: 620, radius: 6, pierce: 0 },
@@ -24,21 +24,21 @@ const bolt: ActionDef = {
 const fireball: ActionDef = {
   id: 'fireball',
   tags: ['spell', 'projectile', 'area'],
-  manaCost: 9,
+  resourceCost: 9,
   cooldown: 0,
   delivery: { kind: 'projectile', count: 1, spreadDeg: 0, speed: 520, range: 600, radius: 9, pierce: 0, explodeRadius: 80 },
 };
 const trap: ActionDef = {
   id: 'trap',
   tags: ['area'],
-  manaCost: 12,
+  resourceCost: 12,
   cooldown: 5,
   delivery: { kind: 'trap', throwRange: 300, armTime: 0.5, triggerRadius: 40, explodeRadius: 110, lifetime: 8 },
 };
 const cry: ActionDef = {
   id: 'cry',
   tags: [],
-  manaCost: 15,
+  resourceCost: 15,
   cooldown: 12,
   delivery: { kind: 'self' },
   selfEffects: [
@@ -46,11 +46,11 @@ const cry: ActionDef = {
     { kind: 'buff', id: 'cry', duration: 6, modifiers: [{ stat: 'damage', kind: 'increased', value: 0.4 }] },
   ],
 };
-const blink: ActionDef = { id: 'blink', tags: ['spell'], manaCost: 0, cooldown: 4, delivery: { kind: 'teleport', range: 350 } };
+const blink: ActionDef = { id: 'blink', tags: ['spell'], resourceCost: 0, cooldown: 4, delivery: { kind: 'teleport', range: 350 } };
 const charge: ActionDef = {
   id: 'charge',
   tags: ['attack', 'melee'],
-  manaCost: 10,
+  resourceCost: 10,
   cooldown: 4,
   delivery: { kind: 'dash', distance: 230, speed: 950, hitRadius: 30 },
   onHit: [{ status: 'stun', duration: 1.2 }],
@@ -200,6 +200,7 @@ describe('resolveActions', () => {
       radius: 10,
       weaponType: 'wand',
       baseStats: {},
+      resource: { id: 'mana', startFraction: 1, refillOnLevelUp: true },
       weapon: { damage: { physical: { min: 1, max: 1 } }, attacksPerSecond: 1, critChance: 0 },
       basicAttack: bolt,
       skills: [fireball, nova, blink],
