@@ -14,6 +14,7 @@ import { passiveTree } from '../data/passives';
 import { getApp, type App } from './app';
 import { itemIcon } from './itemIcons';
 import { describeItem } from './itemText';
+import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
@@ -132,6 +133,12 @@ export class InventoryScene extends Phaser.Scene {
     this.root.add(title);
     this.root.add(label(this, title.x + title.width + 16, title.y + title.height - (compact ? 20 : 26), levelLine(character), UI.size.small, UI.goldBrightText));
     this.root.add(makeButton(this, width - m - 60, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, 'Back', () => this.back()));
+    this.root.add(
+      makeButton(this, width - m - 60 - 120, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, 'Таланти', () => {
+        const data: PassiveTreeSceneData = { characterId: character.id, returnTo: 'inventory' };
+        this.scene.start('passive-tree', data);
+      }),
+    );
 
     const top = titleH + (compact ? 0 : 6);
     const avail = height - top - m;

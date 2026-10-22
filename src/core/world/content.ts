@@ -58,6 +58,8 @@ export type SelfEffect =
 /** Basic attack or skill. */
 export interface ActionDef {
   readonly id: string;
+  /** Display name (Ukrainian). */
+  readonly name?: string;
   readonly tags: readonly SkillTag[];
   readonly manaCost: number;
   /** Seconds; 0 = no cooldown. */

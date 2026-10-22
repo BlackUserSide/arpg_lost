@@ -21,6 +21,7 @@ export const classes: Record<string, ClassDef> = {
     },
     basicAttack: {
       id: 'warrior_strike',
+      name: 'Удар по цілі',
       tags: ['attack', 'melee'],
       manaCost: 0,
       cooldown: 0,
@@ -30,6 +31,7 @@ export const classes: Record<string, ClassDef> = {
     skills: [
       {
         id: 'cleave',
+        name: 'Рублячий удар',
         tags: ['attack', 'melee', 'area'],
         manaCost: 6,
         cooldown: 0,
@@ -38,6 +40,7 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'shield_charge',
+        name: 'Ривок зі щитом',
         tags: ['attack', 'melee'],
         manaCost: 10,
         cooldown: 4,
@@ -47,6 +50,7 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'battle_cry',
+        name: 'Бойовий клич',
         tags: [],
         manaCost: 15,
         cooldown: 12,
@@ -76,6 +80,7 @@ export const classes: Record<string, ClassDef> = {
     },
     basicAttack: {
       id: 'ranger_bolt',
+      name: 'Болт',
       tags: ['attack', 'projectile'],
       manaCost: 0,
       cooldown: 0,
@@ -85,6 +90,7 @@ export const classes: Record<string, ClassDef> = {
     skills: [
       {
         id: 'volley',
+        name: 'Віяло стріл',
         tags: ['attack', 'projectile'],
         manaCost: 7,
         cooldown: 0,
@@ -93,6 +99,7 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'explosive_trap',
+        name: 'Вибухова пастка',
         tags: ['area'],
         manaCost: 12,
         cooldown: 5,
@@ -102,6 +109,7 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'roll',
+        name: 'Перекат',
         tags: [],
         manaCost: 8,
         cooldown: 3,
@@ -136,6 +144,7 @@ export const classes: Record<string, ClassDef> = {
     },
     basicAttack: {
       id: 'wand_bolt',
+      name: 'Магічний снаряд',
       tags: ['attack', 'projectile'],
       manaCost: 0,
       cooldown: 0,
@@ -145,6 +154,7 @@ export const classes: Record<string, ClassDef> = {
     skills: [
       {
         id: 'fireball',
+        name: 'Вогняна куля',
         tags: ['spell', 'projectile', 'area'],
         manaCost: 9,
         cooldown: 0,
@@ -154,6 +164,7 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'frost_nova',
+        name: 'Крижана нова',
         tags: ['spell', 'area'],
         manaCost: 14,
         cooldown: 3,
@@ -164,6 +175,7 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'teleport',
+        name: 'Телепорт',
         tags: ['spell'],
         manaCost: 12,
         cooldown: 4,

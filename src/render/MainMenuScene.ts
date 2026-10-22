@@ -1,8 +1,12 @@
 import * as Phaser from 'phaser';
+import { unspentPoints } from '../core/passives/allocation';
 import { deleteCharacter, findCharacter, type CharacterRecord } from '../core/progression/profile';
+import { passiveTree } from '../data/passives';
 import { profileRules } from '../data/profile';
 import { getApp, type App } from './app';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
+import { PointsBanner } from './passiveBanner';
+import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, textureKey } from './sprites';
 import { confirmDialog, fadeIn, heading, label, makeAvatar, makeButton, makeCard, makeFrame, UI } from './ui';
 
@@ -83,7 +87,13 @@ export class MainMenuScene extends Phaser.Scene {
       const playW = compact ? 200 : 260;
       const invW = compact ? 110 : 150;
       this.root.add(makeButton(this, sceneW / 2 - playW / 2 - 12 - invW / 2, playY, invW, compact ? 40 : 48, 'Inventory', () => this.scene.start('inventory', { characterId: selected.id })));
+      this.root.add(makeButton(this, sceneW / 2 + playW / 2 + 12 + invW / 2, playY, invW, compact ? 40 : 48, 'Таланти', () => this.openTree(selected.id)));
       this.root.add(label(this, sceneW / 2, playY - (compact ? 38 : 50), selected.name, compact ? UI.size.body : UI.size.heading, UI.goldBrightText, true).setOrigin(0.5));
+      // Unspent passive points: a call to action above the hero's name.
+      const { points, specPoints } = unspentPoints(passiveTree, selected);
+      const banner = new PointsBanner(this, () => this.openTree(selected.id), { depth: 5, pinned: false, parent: this.root });
+      banner.setPosition(sceneW / 2, playY - (compact ? 76 : 98), compact ? 34 : 40);
+      banner.setPoints(points, specPoints);
     } else {
       this.root.add(label(this, sceneW / 2, playY, 'Create a character to begin', UI.size.heading, UI.muted).setOrigin(0.5));
     }
@@ -209,6 +219,11 @@ export class MainMenuScene extends Phaser.Scene {
   /** The platform's auth listener (wired in main.ts) handles the result. */
   private async login(): Promise<void> {
     await this.app.platform.showLogin();
+  }
+
+  private openTree(characterId: string): void {
+    const data: PassiveTreeSceneData = { characterId, returnTo: 'main-menu' };
+    this.scene.start('passive-tree', data);
   }
 
   private play(characterId: string): void {

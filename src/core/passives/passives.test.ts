@@ -20,6 +20,7 @@ import {
   spentPoints,
   totalPoints,
   totalSpecPoints,
+  nextSpecMilestone,
   unspentPoints,
   validateAllocation,
 } from './allocation';
@@ -111,6 +112,10 @@ describe('passive graph and points', () => {
   it('gives one point per level above 1 and spec points at milestones', () => {
     expect([1, 2, 5, 40].map((l) => totalPoints(tree, l))).toEqual([0, 1, 4, 39]);
     expect([1, 2, 3, 4, 5, 40].map((l) => totalSpecPoints(tree, l))).toEqual([0, 0, 1, 1, 2, 2]);
+  });
+
+  it('finds the next spec milestone above the level', () => {
+    expect([1, 3, 4, 5].map((l) => nextSpecMilestone(tree, l))).toEqual([3, 5, 5, undefined]);
   });
 
   it('counts spent and unspent points separately for wheel and spec', () => {
@@ -370,5 +375,15 @@ describe('respec', () => {
     expect(changeSpec(tree, h, wallet)).toBeNull();
     expect(wallet).toEqual({});
     expect(h.passives.spec).toBeNull();
+  });
+});
+
+describe('pending mechanics', () => {
+  it('flags nodes whose mechanics are not implemented yet', async () => {
+    const { hasPendingMechanics } = await import('./mechanics');
+    expect(hasPendingMechanics({ id: 'x', name: 'x', type: 'small', cost: 1, pos: { angleDeg: 0, radius: 0 } })).toBe(false);
+    expect(
+      hasPendingMechanics({ id: 'k', name: 'k', type: 'keystone', cost: 3, pos: { angleDeg: 0, radius: 0 }, mechanics: [{ kind: 'alwaysCrit', critMultiplier: 1.3 }] }),
+    ).toBe(true);
   });
 });

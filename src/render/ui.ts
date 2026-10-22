@@ -271,7 +271,7 @@ export function makeCard(scene: Phaser.Scene, x: number, y: number, w: number, h
 }
 
 /** Modal confirmation above everything. */
-export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel: string, onConfirm: () => void): void {
+export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel: string, onConfirm: () => void, cancelLabel = 'Cancel'): void {
   const { width, height } = scene.scale;
   const shade = scene.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.7).setInteractive();
   const w = Math.min(440, width - 32);
@@ -283,7 +283,7 @@ export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel
     close();
     onConfirm();
   }, 'danger');
-  const no = makeButton(scene, width / 2 + 90, height / 2 + 44, 150, 46, 'Cancel', close);
+  const no = makeButton(scene, width / 2 + 90, height / 2 + 44, 150, 46, cancelLabel, close);
   parts.push(shade, panel, text, yes, no);
   for (const p of [shade, panel, text, yes, no]) p.setDepth(1000);
   for (const p of [panel, text, yes, no]) p.setAlpha(0);

@@ -80,6 +80,11 @@ export function totalSpecPoints(tree: PassiveTreeData, level: number): number {
   return tree.points.specMilestones.filter((m) => m <= level).length;
 }
 
+/** The next hero level that grants a spec point, or undefined after the last milestone. */
+export function nextSpecMilestone(tree: PassiveTreeData, level: number): number | undefined {
+  return tree.points.specMilestones.filter((m) => m > level).sort((a, b) => a - b)[0];
+}
+
 function costOf(tree: PassiveTreeData, ids: readonly string[]): number {
   return ids.reduce((sum, id) => sum + (tree.nodes[id]?.cost ?? 0), 0);
 }

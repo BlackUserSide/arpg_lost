@@ -1,7 +1,8 @@
 import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
 import type { Content } from '../core/world/content';
-import { createWorld, getClass, getMob, PLAYER_ID, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { createWorld, getClass, getMob, PLAYER_ID, setLoadoutModifiers, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import { unspentPoints } from '../core/passives/allocation';
 import { equippedWeapon } from '../core/items/equipment';
 import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
 import { heroModifiers } from '../core/progression/hero';
@@ -12,6 +13,9 @@ import { content } from '../data';
 import { passiveTree } from '../data/passives';
 import { getApp } from './app';
 import { Hud } from './hud';
+import { PointsBanner } from './passiveBanner';
+import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
+import { SOLO_MODE, type RunMode } from './runMode';
 import { fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
 import { screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
@@ -78,7 +82,11 @@ interface AreaFx {
   ttl: number;
 }
 
-type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'ESC', Phaser.Input.Keyboard.Key>;
+type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'P' | 'ESC', Phaser.Input.Keyboard.Key>;
+
+const NO_MOVE = vec(0, 0);
+const NO_SKILLS: readonly boolean[] = [false, false, false];
+const HUD_UI_DEPTH = 10010;
 
 export class IsoArenaScene extends Phaser.Scene {
   private readonly content: Content = content;
@@ -104,13 +112,23 @@ export class IsoArenaScene extends Phaser.Scene {
   private textPool: Phaser.GameObjects.Text[] = [];
   private skillWasDown: boolean[] = [];
   private skillBuffer: number[] = [];
+  private mode: RunMode = SOLO_MODE;
+  /** The passive tree is open over the run (the run keeps going only if the mode does not pause on menus). */
+  private treeOpen = false;
+  /** The tab lost focus or was hidden while the tree was open. */
+  private pauseAfterTree = false;
+  private treeButton: Phaser.GameObjects.Container | undefined;
+  private banner!: PointsBanner;
+  /** The current mouse/touch press started on a HUD control, so it must not attack. */
+  private uiPress = false;
 
   constructor() {
     super('iso-arena');
   }
 
-  init(data: { characterId?: string }): void {
+  init(data: { characterId?: string; mode?: RunMode }): void {
     if (data.characterId) this.characterId = data.characterId;
+    this.mode = data.mode ?? SOLO_MODE;
     this.classId = findCharacter(getApp(this).profile, this.characterId)?.classId ?? 'warrior';
     this.runRecorded = false;
   }
@@ -152,7 +170,9 @@ export class IsoArenaScene extends Phaser.Scene {
     }
 
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,ESC') as Keys;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,P,ESC') as Keys;
+    this.input.on('pointerdown', (_p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => (this.uiPress = over.length > 0));
+    this.input.on('pointerup', () => (this.uiPress = false));
 
     this.buildFloor();
     this.fx = this.add.graphics().setDepth(-1000);
@@ -172,17 +192,32 @@ export class IsoArenaScene extends Phaser.Scene {
     this.hud.layout(this.scale.width, this.scale.height);
     this.overlay = undefined;
     this.paused = false;
+    this.treeOpen = false;
+    this.pauseAfterTree = false;
+    this.uiPress = false;
+    this.treeButton = undefined;
+    this.banner = new PointsBanner(this, () => this.openTree(), { depth: HUD_UI_DEPTH, pinned: true });
+    this.layoutTreeUi();
+    this.refreshBanner();
     const relayout = (): void => {
       this.hud.layout(this.scale.width, this.scale.height);
+      this.layoutTreeUi();
       if (this.overlay) this.showOverlay(this.paused ? 'pause' : 'death');
     };
     this.scale.on('resize', relayout);
     // Leaving the tab pauses the run (and tells the portal gameplay stopped).
     const autoPause = (): void => {
-      if (!this.paused && !this.world.player.dead) this.setPaused(true);
+      // With the tree open, remember it: closing the tree must not resume a run nobody is watching.
+      if (this.treeOpen) this.pauseAfterTree = true;
+      else if (!this.paused && !this.world.player.dead) this.setPaused(true);
+    };
+    const back = (): void => {
+      this.pauseAfterTree = false;
     };
     this.game.events.on(Phaser.Core.Events.BLUR, autoPause);
     this.game.events.on(Phaser.Core.Events.HIDDEN, autoPause);
+    this.game.events.on(Phaser.Core.Events.FOCUS, back);
+    this.game.events.on(Phaser.Core.Events.VISIBLE, back);
 
     getApp(this).platform.gameplayStart();
     fadeIn(this);
@@ -190,8 +225,90 @@ export class IsoArenaScene extends Phaser.Scene {
       this.scale.off('resize', relayout);
       this.game.events.off(Phaser.Core.Events.BLUR, autoPause);
       this.game.events.off(Phaser.Core.Events.HIDDEN, autoPause);
+      this.game.events.off(Phaser.Core.Events.FOCUS, back);
+      this.game.events.off(Phaser.Core.Events.VISIBLE, back);
+      if (this.treeOpen) this.scene.stop('passive-tree');
+      this.treeOpen = false;
       this.endRun();
     });
+  }
+
+  /** Talents button (top right) and the unspent points banner under the run info. */
+  private layoutTreeUi(): void {
+    const { width, height } = this.scale;
+    const compact = width < 820 || height < 520;
+    const margin = compact ? 12 : 22;
+    this.treeButton?.destroy();
+    this.treeButton = undefined;
+    if (!findCharacter(getApp(this).profile, this.characterId)) return;
+    const w = compact ? 96 : 150;
+    const h = compact ? 34 : 40;
+    this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? 'Таланти' : 'Таланти (P)', () => this.openTree()), HUD_UI_DEPTH);
+    const bh = compact ? 34 : 40;
+    this.banner.setPosition(width / 2, margin + 36 + 10 + bh / 2, bh);
+  }
+
+  private refreshBanner(): void {
+    const character = findCharacter(getApp(this).profile, this.characterId);
+    if (!character) return;
+    const hero = { classId: character.classId, level: this.world.player.level, passives: character.passives };
+    const { points, specPoints } = unspentPoints(passiveTree, hero);
+    this.banner.setPoints(points, specPoints);
+  }
+
+  /** Opens the passive tree over the run; whether the run pauses is the mode's rule. */
+  private openTree(): void {
+    if (this.treeOpen || this.paused || this.world.player.dead) return;
+    const app = getApp(this);
+    if (!findCharacter(app.profile, this.characterId)) return;
+    this.treeOpen = true;
+    const run: RunTreeHooks = {
+      level: () => this.world.player.level,
+      changed: () => this.applyPassives(true),
+      closed: () => this.closeTree(),
+    };
+    if (this.mode.pauseOnMenus) {
+      app.platform.gameplayStop();
+      this.scene.pause();
+    }
+    const data: PassiveTreeSceneData = { characterId: this.characterId, run };
+    this.scene.launch('passive-tree', data);
+  }
+
+  /** Feeds the changed allocation into the running world (stats update at once) and optionally saves. */
+  private applyPassives(save: boolean): void {
+    const app = getApp(this);
+    const character = findCharacter(app.profile, this.characterId);
+    if (!character) return;
+    // Points spent mid-run come from levels gained in this run: store that progress with them,
+    // otherwise the saved allocation would exceed the saved level and be reset on the next load.
+    character.level = this.world.player.level;
+    character.xp = this.world.player.xp;
+    setLoadoutModifiers(this.world, this.content, heroModifiers(character, itemsData, passiveTree));
+    this.refreshBanner();
+    if (save) app.save();
+  }
+
+  private closeTree(): void {
+    this.treeOpen = false;
+    this.applyPassives(false);
+    const away = this.pauseAfterTree || document.hidden;
+    this.pauseAfterTree = false;
+    if (this.mode.pauseOnMenus) this.scene.resume();
+    if (away && !this.world.player.dead) {
+      // Back to the pause menu instead of live play; gameplay stays stopped for the portal.
+      this.paused = true;
+      if (!this.mode.pauseOnMenus) getApp(this).platform.gameplayStop();
+      this.showOverlay('pause');
+    } else if (this.mode.pauseOnMenus) {
+      getApp(this).platform.gameplayStart();
+    }
+    // Keys and buttons held when the tree opened must not fire now.
+    this.input.keyboard?.resetKeys();
+    this.skillBuffer = [];
+    this.skillWasDown = [];
+    this.uiPress = false;
+    this.accumulator = 0;
   }
 
   private setPaused(paused: boolean): void {
@@ -269,7 +386,7 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   private restartRun(): void {
-    this.scene.restart({ characterId: this.characterId });
+    this.scene.restart({ characterId: this.characterId, mode: this.mode });
   }
 
   private leaveToMenu(): void {
@@ -299,14 +416,21 @@ export class IsoArenaScene extends Phaser.Scene {
 
   override update(_time: number, deltaMs: number): void {
     const dead = this.world.player.dead;
-    if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-      if (dead) this.leaveToMenu();
-      else this.setPaused(!this.paused);
-      return;
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R) && dead) {
-      this.restartRun();
-      return;
+    // While the tree is open (modes that do not pause), its screen owns the keys.
+    if (!this.treeOpen) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
+        if (dead) this.leaveToMenu();
+        else this.setPaused(!this.paused);
+        return;
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.keys.R) && dead) {
+        this.restartRun();
+        return;
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.keys.P) && !this.paused && !dead) {
+        this.openTree();
+        return;
+      }
     }
     if (this.paused) return;
 
@@ -334,6 +458,7 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   private readInput(): PlayerInput {
+    if (this.treeOpen) return { move: NO_MOVE, aim: this.world.player.pos, basicAttack: false, skills: NO_SKILLS };
     const k = this.keys;
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
@@ -350,7 +475,7 @@ export class IsoArenaScene extends Phaser.Scene {
       move: screenDirToWorld(screenMove),
       // Aim at ground level under the cursor; sprites stand on their feet.
       aim: toWorld(vec(aim.x, aim.y)),
-      basicAttack: pointer.leftButtonDown(),
+      basicAttack: pointer.leftButtonDown() && !this.uiPress,
       skills,
     };
   }
@@ -397,6 +522,7 @@ export class IsoArenaScene extends Phaser.Scene {
       }
       case 'levelUp':
         this.showLevelUp(event.level);
+        this.refreshBanner();
         break;
       case 'playerDeath':
         this.playOneShot(this.hero, 'death');
