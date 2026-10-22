@@ -14,6 +14,7 @@ import { passiveTree } from '../data/passives';
 import { getApp } from './app';
 import { CombatFx, STUN_BAR_FLASH, statusLook } from './combatFx';
 import { Hud } from './hud';
+import { SkillFx } from './skillFx';
 import { resourceNames } from './resourceText';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
@@ -154,6 +155,8 @@ export class IsoArenaScene extends Phaser.Scene {
   private paused = false;
   private textPool: Phaser.GameObjects.Text[] = [];
   private combatFx!: CombatFx;
+  /** Level-3 skill effect visuals (ground zones, decoy ghost, split / whirl / slam bursts). */
+  private skillFx!: SkillFx;
   private dotTallies = new Map<number, DotTally>();
   private skillWasDown: boolean[] = [];
   private skillBuffer: number[] = [];
@@ -197,6 +200,7 @@ export class IsoArenaScene extends Phaser.Scene {
           modifiers: heroModifiers(character, itemsData, passiveTree),
           mechanics: heroMechanics(character, passiveTree),
           weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon),
+          skills: character.skills,
         }
       : {};
     // TEMPORARY (until maps, 0.4): the arena's area level follows the hero, so there is no low-area penalty.
@@ -229,6 +233,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.fx = this.add.graphics().setDepth(-1000);
     this.fxTop = this.add.graphics().setDepth(4000);
     this.combatFx = new CombatFx(this);
+    this.skillFx = new SkillFx(this);
     const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
     this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
     this.light = this.createLight();
@@ -240,7 +245,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.cameras.main.setBounds(left - 200, -200, right - left + 400, bottom + 400);
     this.cameras.main.setBackgroundColor('#07070a');
 
-    this.hud = new Hud(this, getClass(this.content, this.classId), this.content.progression);
+    this.hud = new Hud(this, getClass(this.content, this.classId), this.content.progression, this.content.skillLevels);
     this.hud.layout(this.scale.width, this.scale.height);
     this.overlay = undefined;
     this.paused = false;
@@ -459,6 +464,7 @@ export class IsoArenaScene extends Phaser.Scene {
       duration: this.world.time,
       died: this.world.player.dead,
       progress: { level: this.world.player.level, xp: this.world.player.xp },
+      skills: this.world.player.skillProgress,
     });
     this.rewards = grantArenaRewards(app.profile, createRng((Math.random() * 2 ** 32) >>> 0), { kills: this.world.kills, wave: this.world.spawn.wave }, itemsData);
     app.save();
@@ -569,27 +575,45 @@ export class IsoArenaScene extends Phaser.Scene {
           // Chain detonations: a golden tint plus a shock ring, so a chain reads apart from a triggered trap.
           const color = event.chain ? CHAIN_AREA_COLOR : (AREA_COLORS[event.actionId] ?? 0xdde4ff);
           this.areas.push({ ...event, color, ttl: AREA_TTL });
-          if (event.chain) {
-            const s = toScreen(event.origin);
-            this.combatFx.chainBurst(s.x, s.y, event.radius);
+          const s = toScreen(event.origin);
+          if (event.chain) this.combatFx.chainBurst(s.x, s.y, event.radius);
+          if (event.trigger === 'everyNth') {
+            // Cleave's special swing: the spin starts where the hero faces.
+            const ahead = toScreen(vec(event.origin.x + event.facing.x, event.origin.y + event.facing.y));
+            this.skillFx.whirl(s.x, s.y, event.radius, Math.atan2(ahead.y - s.y, ahead.x - s.x));
+          } else if (event.trigger === 'dashLanding') {
+            this.skillFx.slam(s.x, s.y, event.radius);
+            this.cameras.main.shake(90, 0.003);
           }
         }
         break;
+      case 'zoneSpawn':
+        this.skillFx.zoneSpawned(event.zoneId, event.duration);
+        break;
+      case 'zoneExpire':
+        this.skillFx.zoneExpired(event.zoneId);
+        break;
+      case 'decoySpawn': {
+        const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
+        this.skillFx.decoySpawned(event.decoyId, look?.sprite ?? 'knight', Math.max(0, this.hero.row));
+        break;
+      }
+      case 'decoyExpire':
+        this.skillFx.decoyExpired(event.decoyId);
+        break;
+      case 'projectileSplit': {
+        const s = toScreen(event.pos);
+        this.skillFx.split(s.x, s.y - PROJECTILE_HEIGHT);
+        break;
+      }
       case 'trapRemoved': {
         const s = toScreen(event.pos);
         this.combatFx.trapFizzle(s.x, s.y);
         break;
       }
-      case 'dot': {
-        let tally = this.dotTallies.get(event.targetId);
-        if (!tally) {
-          tally = { amount: 0, timer: DOT_NUMBER_INTERVAL, pos: event.pos };
-          this.dotTallies.set(event.targetId, tally);
-        }
-        tally.amount += event.amount;
-        tally.pos = event.pos;
+      case 'dot':
+        this.addDotTally(event.targetId, event.pos, event.amount);
         break;
-      }
       case 'teleport':
         this.areas.push({ origin: event.from, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
         this.areas.push({ origin: event.to, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
@@ -597,9 +621,15 @@ export class IsoArenaScene extends Phaser.Scene {
       case 'mobAttack': {
         const actor = this.mobs.get(event.id);
         if (actor) this.playOneShot(actor, 'attack');
+        if (event.decoyId !== undefined) this.skillFx.decoyStruck(event.decoyId);
         break;
       }
       case 'hit': {
+        if (event.source === 'zone') {
+          // Ground zone ticks read like damage over time: summed per mob into the small DoT numbers.
+          this.addDotTally(event.targetId, event.pos, event.amount);
+          break;
+        }
         const actor = event.targetId === PLAYER_ID ? this.hero : this.mobs.get(event.targetId);
         // Hit reaction only interrupts idle/run, never an attack or skill.
         // A frozen mob holds its pose.
@@ -619,6 +649,9 @@ export class IsoArenaScene extends Phaser.Scene {
         }
         break;
       }
+      case 'skillLevelUp':
+        this.hud.skillLevelUp(event.skillId);
+        break;
       case 'levelUp':
         this.showLevelUp(event.level);
         this.refreshBanner();
@@ -704,7 +737,21 @@ export class IsoArenaScene extends Phaser.Scene {
     this.updateDotNumbers(dt);
   }
 
-  /** Pops a damage number for each mob's ignite damage every DOT_NUMBER_INTERVAL, and once more when it ends. */
+  /** Adds damage-over-time style damage (ignite, ground zone ticks) to the mob's pending small number. */
+  private addDotTally(targetId: number, pos: Vec2, amount: number): void {
+    let tally = this.dotTallies.get(targetId);
+    if (!tally) {
+      tally = { amount: 0, timer: DOT_NUMBER_INTERVAL, pos };
+      this.dotTallies.set(targetId, tally);
+    }
+    tally.amount += amount;
+    tally.pos = pos;
+  }
+
+  /**
+   * Pops a damage number for each mob's ignite damage every DOT_NUMBER_INTERVAL, and once more when it ends.
+   * Ground zone ticks (no ignite) show at once, one small number per tick.
+   */
   private updateDotNumbers(dt: number): void {
     if (this.dotTallies.size === 0) return;
     for (const mob of this.world.mobs) {
@@ -801,6 +848,17 @@ export class IsoArenaScene extends Phaser.Scene {
     const top = this.fxTop.clear();
     const player = this.world.player;
 
+    // Ground zones (fire puddle, ice field) lie on the floor under everything else.
+    for (const zone of this.world.zones) {
+      const p = toScreen(zone.pos);
+      this.skillFx.drawZone(g, zone, p.x, p.y, this.world.time, dt);
+    }
+    for (const decoy of this.world.decoys) {
+      const p = toScreen(decoy.pos);
+      this.skillFx.drawDecoy(g, decoy.id, p.x, p.y, decoy.radius, ORIGIN_Y, dt);
+    }
+    this.skillFx.updateFadingGhosts(dt);
+
     // Ring under the hero so they never get lost in a crowd; orange while buffed.
     const hero = toScreen(this.hero.display);
     g.lineStyle(2, player.buffs.length > 0 ? 0xff9a3c : 0xe8c15a, 0.9).strokeEllipse(hero.x, hero.y, 46, 23);
@@ -853,6 +911,7 @@ export class IsoArenaScene extends Phaser.Scene {
       this.combatFx.drawStunBar(top, actor.sprite.x, actor.sprite.y, actor.stunBarShown, actor.stunBarFlash);
     }
     this.combatFx.drawBursts(g, top, dt);
+    this.skillFx.drawBursts(g, top, dt);
 
     for (const p of this.world.projectiles) {
       const pos = this.interpolated(p.id, p.pos);
@@ -861,6 +920,8 @@ export class IsoArenaScene extends Phaser.Scene {
       const color = p.owner === 'mob' ? MOB_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
       g.fillStyle(0x000000, 0.35).fillEllipse(s.x, s.y, p.radius * 2, p.radius);
       if (p.explodeRadius > 0) {
+        // Exploding projectiles (fireball and its split children) leave a short fading glow behind.
+        top.fillStyle(color, 0.22).fillCircle(tail.x, tail.y - PROJECTILE_HEIGHT, p.radius * 1.3);
         top.fillStyle(color, 0.35).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 2.2);
         top.fillStyle(color, 1).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 1.2);
       } else {

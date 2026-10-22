@@ -5,6 +5,8 @@ import { SLOTS } from '../core/items/types';
 import { createRng } from '../core/rng';
 import { content } from './index';
 import { itemsData } from './items';
+import { arena } from './arena';
+import { skillLevels } from './skillLevels';
 
 const allActions = (): ActionDef[] => Object.values(content.classes).flatMap((c) => [c.basicAttack, ...c.skills]);
 
@@ -154,5 +156,32 @@ describe('item generation with real data', () => {
         }
       }
     }
+  });
+
+  it('skill levels: every class skill has a table sized to the max level, thresholds grow', () => {
+    const { rules, skills } = skillLevels;
+    expect(content.skillLevels).toBe(skillLevels);
+    expect(rules.xpToNext).toHaveLength(rules.maxLevel - 1);
+    rules.xpToNext.forEach((xp, i) => expect(xp).toBeGreaterThan(i === 0 ? 0 : rules.xpToNext[i - 1]!));
+    const skillIds = Object.values(content.classes).flatMap((c) => c.skills.map((s) => s.id));
+    expect(Object.keys(skills).sort()).toEqual([...skillIds].sort());
+    for (const table of Object.values(skills)) {
+      expect(table.perLevel).toHaveLength(rules.maxLevel - 1);
+      expect(table.effect?.level).toBe(rules.maxLevel);
+    }
+  });
+
+  it('skill level pace: level 2 in 3–5 runs and level 3 in 10–15 runs at ~280 arena kills per run', () => {
+    // See the pace math in skillLevels.ts.
+    const xpPerKill = arena.spawn.mobIds.reduce((sum, id) => sum + content.mobs[id]!.xp, 0) / arena.spawn.mobIds.length;
+    const perRun = 280 * xpPerKill * skillLevels.rules.killXpMultiplier;
+    expect(xpPerKill).toBeCloseTo(16 / 6, 10);
+    const [toL2, toL3] = skillLevels.rules.xpToNext as [number, number];
+    const runsToL2 = toL2 / perRun;
+    const runsToL3 = (toL2 + toL3) / perRun;
+    expect(runsToL2).toBeGreaterThanOrEqual(3);
+    expect(runsToL2).toBeLessThanOrEqual(5);
+    expect(runsToL3).toBeGreaterThanOrEqual(10);
+    expect(runsToL3).toBeLessThanOrEqual(15);
   });
 });

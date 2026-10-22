@@ -1,5 +1,5 @@
-// Effective skill definitions: base action data + skill changes (passive tree now; skill level-3 effects and
-// support modifiers later feed the same SkillChangeSet list). Pure; the result is plain ActionDef data,
+// Effective skill definitions: base action data + skill changes (passive tree, then skill levels with their
+// level-3 effects; support modifiers later feed the same SkillChangeSet list). Pure; the result is plain ActionDef data,
 // computed once per loadout (see PlayerState.actions), never per hit.
 
 import type { ActionDef, ClassDef, Delivery, SelfEffect, StatusEffect, StatusId } from '../world/content';
@@ -41,7 +41,8 @@ function applyTotal(base: number, total: ParamTotal | undefined): number {
  * - cooldown: the action cooldown (with charges: the recharge time of one charge).
  * - charges: stored uses (base: granted charges, else the action's, else 1; rounded down, at least 1).
  * - buffDuration: every buff the action applies to its user (not invulnerability).
- * - radius: arc radius (melee swings, novas). Projectile hitboxes and dash hit widths are not "radius".
+ * - radius: arc radius (melee swings, novas) and a dash landing's radius. Projectile hitboxes and dash hit widths
+ *   are not "radius"; nor are ground zones and projectile splits (their own data).
  * - explodeRadius: projectile explosion, trap explosion.
  * - pierce: projectile pierce count (rounded down to a whole number of targets).
  * - range: projectile range, teleport range, trap throw range.
@@ -51,11 +52,21 @@ function applyTotal(base: number, total: ParamTotal | undefined): number {
  */
 function applyDelivery(d: Delivery, p: (param: SkillParam, base: number) => number, grants: SkillGrants): Delivery {
   switch (d.kind) {
-    case 'arc':
-      return { ...d, radius: p('radius', d.radius) };
+    case 'arc': {
+      const everyNth = d.everyNth ?? grants.everyNth;
+      return { ...d, radius: p('radius', d.radius), ...(everyNth ? { everyNth } : {}) };
+    }
     case 'projectile': {
       const explode = d.explodeRadius !== undefined ? { explodeRadius: p('explodeRadius', d.explodeRadius) } : {};
-      return { ...d, range: p('range', d.range), speed: p('projectileSpeed', d.speed), pierce: Math.floor(p('pierce', d.pierce)), ...explode };
+      const split = d.split ?? grants.projectileSplit;
+      return {
+        ...d,
+        range: p('range', d.range),
+        speed: p('projectileSpeed', d.speed),
+        pierce: Math.floor(p('pierce', d.pierce)),
+        ...explode,
+        ...(split ? { split } : {}),
+      };
     }
     case 'trap': {
       const maxActive = grants.maxActiveTraps !== undefined ? Math.min(grants.maxActiveTraps, d.maxActive ?? Infinity) : d.maxActive;
@@ -74,7 +85,10 @@ function applyDelivery(d: Delivery, p: (param: SkillParam, base: number) => numb
     }
     case 'teleport':
       return { ...d, range: p('range', d.range) };
-    case 'dash':
+    case 'dash': {
+      const landing = d.landing ?? grants.dashLanding;
+      return landing ? { ...d, landing: { ...landing, radius: p('radius', landing.radius) } } : d;
+    }
     case 'self':
       return d;
   }
@@ -87,25 +101,37 @@ function isCombatStatus(status: string): status is StatusId {
 }
 
 /**
- * Combined grants of the matching sets: charges = highest, maxActiveTraps = lowest, trapChain / trapAura = first.
+ * Combined grants of the matching sets: charges = highest, maxActiveTraps = lowest, every other rule = first source.
  */
 function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
   let charges: number | undefined;
   let maxActiveTraps: number | undefined;
   let trapChain: SkillGrants['trapChain'];
   let trapAura: SkillGrants['trapAura'];
+  let everyNth: SkillGrants['everyNth'];
+  let dashLanding: SkillGrants['dashLanding'];
+  let projectileSplit: SkillGrants['projectileSplit'];
+  let groundZone: SkillGrants['groundZone'];
   for (const { grants } of sets) {
     if (!grants) continue;
     if (grants.charges !== undefined) charges = Math.max(charges ?? 0, grants.charges);
     if (grants.maxActiveTraps !== undefined) maxActiveTraps = Math.min(maxActiveTraps ?? Infinity, grants.maxActiveTraps);
     trapChain ??= grants.trapChain;
     trapAura ??= grants.trapAura;
+    everyNth ??= grants.everyNth;
+    dashLanding ??= grants.dashLanding;
+    projectileSplit ??= grants.projectileSplit;
+    groundZone ??= grants.groundZone;
   }
   return {
     ...(charges !== undefined ? { charges } : {}),
     ...(maxActiveTraps !== undefined ? { maxActiveTraps } : {}),
     ...(trapChain ? { trapChain } : {}),
     ...(trapAura ? { trapAura } : {}),
+    ...(everyNth ? { everyNth } : {}),
+    ...(dashLanding ? { dashLanding } : {}),
+    ...(projectileSplit ? { projectileSplit } : {}),
+    ...(groundZone ? { groundZone } : {}),
   };
 }
 
@@ -114,6 +140,7 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
  * modifiers are added first, grants (SkillGrants) set their base values, then every param is recomputed from the
  * base value with all matching changes summed (add and increased combine like stats). Returns `action` itself when nothing matches.
  * Added statuses that combat does not implement are skipped. Duration changes also scale a freeze's bossDuration.
+ * Stat modifiers of the sets (SkillChangeSet.modifiers) are appended to ActionDef.modifiers (the action's own).
  */
 export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]): ActionDef {
   const matching = sets.filter((s) => skillMatches(action, s));
@@ -121,6 +148,8 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
 
   const totals = new Map<SkillParam, ParamTotal>();
   const buffModifiers: Modifier[] = [];
+  const ownModifiers: Modifier[] = [...(action.modifiers ?? [])];
+  const addedSelfEffects: SelfEffect[] = [];
   const addedOnHit: StatusEffect[] = [];
   const perStatus = new Map<string, ParamTotal>();
   for (const set of matching) {
@@ -137,6 +166,8 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
       perStatus.set(c.status, t);
     }
     buffModifiers.push(...(set.buffModifiers ?? []));
+    ownModifiers.push(...(set.modifiers ?? []));
+    addedSelfEffects.push(...(set.addSelfEffects ?? []));
     for (const s of set.addOnHit ?? []) {
       const status = s.status;
       if (!isCombatStatus(status)) continue;
@@ -166,10 +197,12 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
     const boss = e.bossDuration !== undefined ? { bossDuration: applyTotal(e.bossDuration, total) } : {};
     return { ...e, duration: applyTotal(e.duration, total), ...boss };
   });
-  const selfEffects = action.selfEffects?.map((e): SelfEffect => {
+  const scaledSelfEffects = action.selfEffects?.map((e): SelfEffect => {
     if (e.kind !== 'buff') return e;
     return { ...e, duration: p('buffDuration', e.duration), modifiers: [...e.modifiers, ...buffModifiers] };
   });
+  const selfEffects = addedSelfEffects.length > 0 ? [...(scaledSelfEffects ?? []), ...addedSelfEffects] : scaledSelfEffects;
+  const zone = action.zone ?? grants.groundZone;
 
   return {
     ...action,
@@ -178,6 +211,8 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
     delivery: applyDelivery(action.delivery, p, grants),
     ...(onHit.length > 0 ? { onHit } : {}),
     ...(selfEffects ? { selfEffects } : {}),
+    ...(ownModifiers.length > 0 ? { modifiers: ownModifiers } : {}),
+    ...(zone ? { zone } : {}),
   };
 }
 

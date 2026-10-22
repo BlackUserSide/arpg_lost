@@ -1,7 +1,17 @@
 import * as Phaser from 'phaser';
 import { xpToNextLevel, type ProgressionRules } from '../core/progression/levels';
 import type { ActionDef, ClassDef } from '../core/world/content';
-import { actionCost, canAfford, chargeInfo, lifeRecoveryPool, playerStat, type ActionSet, type WorldState } from '../core/world/world';
+import {
+  actionCost,
+  canAfford,
+  chargeInfo,
+  lifeRecoveryPool,
+  playerStat,
+  skillLevelInfo,
+  type ActionSet,
+  type SkillLevelData,
+  type WorldState,
+} from '../core/world/world';
 import { skillIcon } from './hudIcons';
 import { resourceNames } from './resourceText';
 import { frameTexture, label, makeFrame, UI } from './ui';
@@ -39,6 +49,13 @@ const FALLBACK_LOOK: ResourceLook = { deep: 0x3a1a5a, bright: 0xa070e0, text: '#
 const GAIN_GLOW = 0.35;
 /** Smallest jump (resource points) that counts as a gain for the glow. */
 const GAIN_GLOW_MIN = 0.5;
+/** Seconds a skill slot glows after the skill levels up. */
+const SKILL_LEVEL_GLOW = 1.1;
+/** Skill level pips: filled / empty diamond colours, and the skill XP bar fill. */
+const PIP_ON = 0xf3d58a;
+const PIP_OFF = 0x2e2414;
+const PIP_RIM = 0xc89a3a;
+const SKILL_XP = 0x7fc8e8;
 
 interface Orb {
   ring: Phaser.GameObjects.Image;
@@ -69,6 +86,16 @@ interface Slot {
   x: number;
   y: number;
   size: number;
+  /** Class skill with a level (pips + skill XP bar under the frame); false for the basic attack. */
+  levelled: boolean;
+  /** Skill level / XP last read from world.player.skillProgress (-1 = not read yet). */
+  shownLevel: number;
+  shownXp: number;
+  maxLevel: number;
+  /** Fill of the skill XP bar (0..1); NaN at max level (bar drawn full in gold). */
+  xpFrac: number;
+  /** Level-up glow, SKILL_LEVEL_GLOW → 0 seconds. */
+  levelGlow: number;
 }
 
 function orbRingTexture(scene: Phaser.Scene, r: number): string {
@@ -121,6 +148,9 @@ export class Hud {
   private readonly liquid: Phaser.GameObjects.Graphics;
   private readonly shutters: Phaser.GameObjects.Graphics;
   private readonly xpBar: Phaser.GameObjects.Graphics;
+  /** Skill level pips, skill XP bars and level-up glows under / around the skill slots. */
+  private readonly skillLevelGfx: Phaser.GameObjects.Graphics;
+  private compact = false;
   private readonly levelText: Phaser.GameObjects.Text;
   private xpRect = { x: 0, y: 0, w: 0, h: 0 };
   private levelPulse = 0;
@@ -150,10 +180,12 @@ export class Hud {
     private readonly scene: Phaser.Scene,
     private readonly classDef: ClassDef,
     private readonly progression: ProgressionRules,
+    private readonly skillLevels: SkillLevelData | undefined,
   ) {
     this.liquid = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH);
     this.shutters = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 2);
     this.xpBar = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH);
+    this.skillLevelGfx = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 2);
     this.levelText = label(scene, 0, 0, '', 15, UI.goldBrightText, true).setOrigin(1, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
     this.levelText.setStroke('#000', 4);
     this.life = this.createOrb(0x6a0d0d, 0xd23a2a);
@@ -176,7 +208,27 @@ export class Hud {
       const chargeBadge = scene.add.circle(0, 0, 10, 0x1a1408, 0.92).setStrokeStyle(2, 0xc89a3a, 1).setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
       const chargeText = label(scene, 0, 0, '', 13, UI.goldBrightText, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 4).setVisible(false);
       chargeText.setStroke('#000', 3);
-      return { action, frame, icon, key, cdText, costText, lifeCost: false, chargeBadge, chargeText, shownCharges: -1, x: 0, y: 0, size: 56 };
+      return {
+        action,
+        frame,
+        icon,
+        key,
+        cdText,
+        costText,
+        lifeCost: false,
+        chargeBadge,
+        chargeText,
+        shownCharges: -1,
+        x: 0,
+        y: 0,
+        size: 56,
+        levelled: i > 0 && skillLevels !== undefined,
+        shownLevel: -1,
+        shownXp: -1,
+        maxLevel: 1,
+        xpFrac: Number.NaN,
+        levelGlow: 0,
+      };
     });
     this.infoFrame = makeFrame(scene, 0, 0, 240, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
     this.info = label(scene, 0, 0, '', 15, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
@@ -186,6 +238,7 @@ export class Hud {
 
   layout(width: number, height: number): void {
     const compact = width < 820 || height < 520;
+    this.compact = compact;
     const r = compact ? 38 : 54;
     const margin = compact ? 12 : 22;
     this.placeOrb(this.life, margin + r + 6, height - margin - r - 6, r);
@@ -196,10 +249,12 @@ export class Hud {
     const size = compact ? 48 : 60;
     const gap = compact ? 6 : 10;
     const total = this.slots.length * size + (this.slots.length - 1) * gap;
+    // Strip under the frames for the skill level row (pips + skill XP bar), clear of the key caption.
+    const levelStrip = this.skillLevels ? (compact ? 10 : 13) : 0;
     this.slots.forEach((slot, i) => {
       slot.size = size;
       slot.x = width / 2 - total / 2 + size / 2 + i * (size + gap);
-      slot.y = height - margin - size / 2;
+      slot.y = height - margin - levelStrip - size / 2;
       slot.frame.setTexture(frameTexture(this.scene, size, size, 'secondary')).setPosition(slot.x, slot.y);
       slot.icon.setPosition(slot.x, slot.y).setDisplaySize(size - 10, size - 10);
       slot.key.setPosition(slot.x, slot.y + size / 2 - 2);
@@ -215,7 +270,7 @@ export class Hud {
     this.resourceNote.setPosition(this.resource.x, this.resource.y);
     // XP bar spans the skill bar, just above it; level number to its left.
     const barH = compact ? 6 : 8;
-    this.xpRect = { x: width / 2 - total / 2, y: height - margin - size - (compact ? 10 : 14) - barH, w: total, h: barH };
+    this.xpRect = { x: width / 2 - total / 2, y: height - margin - levelStrip - size - (compact ? 10 : 14) - barH, w: total, h: barH };
     this.levelText.setPosition(this.xpRect.x - 8, this.xpRect.y + barH / 2).setFontSize(compact ? 13 : 15);
 
     const infoW = compact ? 200 : 240;
@@ -313,7 +368,71 @@ export class Hud {
     const seconds = Math.floor(world.time);
     this.info.setText(`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}    Kills ${world.kills}    Wave ${world.spawn.wave}`);
     this.drawXp(world, dt);
+    this.drawSkillLevels(world, dt);
     this.updateBuffs(world);
+  }
+
+  /** Brief glow on the slot of a skill that just levelled up (WorldEvent skillLevelUp). */
+  skillLevelUp(skillId: string): void {
+    for (const slot of this.slots) if (slot.levelled && slot.action.id === skillId) slot.levelGlow = SKILL_LEVEL_GLOW;
+  }
+
+  /**
+   * Under each class skill: one diamond pip per level (filled up to the current level) and a thin bar of XP to the
+   * next level (full gold at max level). Read-only over world.player.skillProgress.
+   */
+  private drawSkillLevels(world: WorldState, dt: number): void {
+    const data = this.skillLevels;
+    const g = this.skillLevelGfx.clear();
+    if (!data) return;
+    const pip = this.compact ? 3 : 3.5;
+    const step = this.compact ? 8 : 9;
+    const barH = this.compact ? 3 : 4;
+    for (const slot of this.slots) {
+      if (!slot.levelled) continue;
+      const progress = world.player.skillProgress[slot.action.id];
+      const level = progress?.level ?? 1;
+      const xp = progress?.xp ?? 0;
+      if (level !== slot.shownLevel || xp !== slot.shownXp) {
+        // Only on change: skillLevelInfo builds objects.
+        slot.shownLevel = level;
+        slot.shownXp = xp;
+        const info = skillLevelInfo(slot.action.id, progress, data);
+        slot.maxLevel = info.maxLevel;
+        slot.xpFrac = Number.isFinite(info.xpToNext) && info.xpToNext > 0 ? Phaser.Math.Clamp(info.xp / info.xpToNext, 0, 1) : Number.NaN;
+      }
+      slot.levelGlow = Math.max(0, slot.levelGlow - dt);
+      const glow = slot.levelGlow / SKILL_LEVEL_GLOW;
+      const half = slot.size / 2;
+      const rowY = slot.y + half + (this.compact ? 7 : 9);
+      const atMax = Number.isNaN(slot.xpFrac);
+      const pipsW = (slot.maxLevel - 1) * step;
+      // Left-aligned: the key caption sits bottom-centre on the frame.
+      const firstPip = slot.x - half + 2 + pip;
+      for (let l = 1; l <= slot.maxLevel; l++) {
+        const px = firstPip + (l - 1) * step;
+        const on = l <= slot.shownLevel;
+        // The newest pip swells while the slot glows.
+        const r = on && l === slot.shownLevel ? pip * (1 + glow * 0.6) : pip;
+        diamond(g, px, rowY, r + 1.2);
+        g.fillStyle(0x000000, 0.85).fillPath();
+        diamond(g, px, rowY, r);
+        g.fillStyle(on ? PIP_ON : PIP_OFF, 1).fillPath();
+        if (!on) g.lineStyle(1, PIP_RIM, 1).strokePath();
+      }
+      // XP to the next level; at max level the bar stays full in gold.
+      const bx = firstPip + pipsW + pip + 4;
+      const bw = slot.x + half - bx;
+      const by = rowY - barH / 2;
+      g.fillStyle(0x000000, 0.8).fillRect(bx - 1, by - 1, bw + 2, barH + 2);
+      g.fillStyle(PIP_OFF, 1).fillRect(bx, by, bw, barH);
+      g.fillStyle(atMax ? PIP_ON : SKILL_XP, 1).fillRect(bx, by, atMax ? bw : bw * slot.xpFrac, barH);
+      if (glow > 0) {
+        // Soft golden ring around the frame, fading out.
+        g.lineStyle(3, 0xffe08a, 0.9 * glow).strokeRoundedRect(slot.x - half - 3, slot.y - half - 3, slot.size + 6, slot.size + 6, 6);
+        g.fillStyle(0xfff2c0, 0.22 * glow).fillRect(slot.x - half + 4, slot.y - half + 4, slot.size - 8, slot.size - 8);
+      }
+    }
   }
 
   /** Flashes the XP bar and level number after a level-up. */
@@ -424,5 +543,15 @@ export class Hud {
     if (f < 1) g.lineStyle(2, bright, 0.9).strokePoints(points.slice(0, steps + 1), false);
     else g.fillStyle(bright, 0.25).fillCircle(x, y + r * 0.3, r * 0.6);
   }
+}
+
+/** Path of a diamond (rotated square) with half-diagonal `r`; the caller fills / strokes it. */
+function diamond(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number): void {
+  g.beginPath();
+  g.moveTo(x, y - r);
+  g.lineTo(x + r, y);
+  g.lineTo(x, y + r);
+  g.lineTo(x - r, y);
+  g.closePath();
 }
 

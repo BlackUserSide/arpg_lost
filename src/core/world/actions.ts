@@ -6,8 +6,9 @@ import type { ActionDef } from './content';
 import { applyLeech } from './experience';
 import { actionReady, spendCharge } from './charges';
 import { actionCost, canPay, counterAttackStats, critStats } from './passiveEffects';
-import { applyStatus, conditionTarget, fillStunBar, updateTrapAuras } from './statuses';
+import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './statuses';
 import { resourceOnHeroHit, startResourceUse } from './resource';
+import { spawnDecoy, spawnZone } from './zones';
 import type { Modifier } from '../stats/types';
 import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState, type Trap } from './state';
 
@@ -21,7 +22,7 @@ export function findAction(ctx: Ctx, id: string): ActionDef {
 
 /** Seconds the player is busy after starting this action. */
 export function useTime(ctx: Ctx, action: ActionDef): number {
-  const mods = allModifiers(ctx.classDef, ctx.world.player);
+  const mods = withActionModifiers(allModifiers(ctx.classDef, ctx.world.player), action);
   if (action.tags.includes('attack')) {
     const rate = computeStat(ctx.world.player.weapon.attacksPerSecond, mods, 'attackSpeed', action.tags);
     return rate > 0 ? 1 / rate : Infinity;
@@ -29,6 +30,11 @@ export function useTime(ctx: Ctx, action: ActionDef): number {
   const base = action.castTime ?? 0;
   if (!action.tags.includes('spell')) return base;
   return base / Math.max(0.01, computeStat(1, mods, 'castSpeed', action.tags));
+}
+
+/** The hero's modifiers plus the action's own (ActionDef.modifiers: skill level, later supports). */
+function withActionModifiers(mods: readonly Modifier[], action: ActionDef): readonly Modifier[] {
+  return action.modifiers && action.modifiers.length > 0 ? [...mods, ...action.modifiers] : mods;
 }
 
 export function pickAction(ctx: Ctx): ActionDef | undefined {
@@ -66,9 +72,16 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
 
   const delivery = action.delivery;
   switch (delivery.kind) {
-    case 'arc':
-      hitArc(ctx, action, player.pos, player.facing, delivery.radius, delivery.angleDeg, delivery.maxTargets);
+    case 'arc': {
+      const special = delivery.everyNth !== undefined && countUse(player, action.id) % Math.max(1, Math.floor(delivery.everyNth.every)) === 0;
+      const angleDeg = special && delivery.everyNth ? delivery.everyNth.angleDeg : delivery.angleDeg;
+      hitArc(ctx, action, player.pos, player.facing, delivery.radius, angleDeg, {
+        ...(delivery.maxTargets !== undefined ? { maxTargets: delivery.maxTargets } : {}),
+        ...(special ? { trigger: 'everyNth' as const } : {}),
+      });
+      if (action.zone) spawnZone(ctx, action, player.pos, delivery.radius, heroConditionalModifiers(ctx.classDef, player));
       break;
+    }
     case 'projectile': {
       const castModifiers = heroConditionalModifiers(ctx.classDef, player);
       const spread = (delivery.spreadDeg * Math.PI) / 180;
@@ -137,13 +150,27 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
   }
 
   for (const effect of action.selfEffects ?? []) {
-    if (effect.kind === 'invulnerable') {
-      player.invulnerable = Math.max(player.invulnerable, effect.duration);
-    } else {
-      player.buffs = player.buffs.filter((b) => b.id !== effect.id);
-      player.buffs.push({ id: effect.id, modifiers: effect.modifiers, remaining: effect.duration });
+    switch (effect.kind) {
+      case 'invulnerable':
+        player.invulnerable = Math.max(player.invulnerable, effect.duration);
+        break;
+      case 'buff':
+        player.buffs = player.buffs.filter((b) => b.id !== effect.id);
+        player.buffs.push({ id: effect.id, modifiers: effect.modifiers, remaining: effect.duration });
+        break;
+      case 'decoy':
+        // Where the hero stood when the action started: a dash has not moved them yet (updateMotion runs next step).
+        spawnDecoy(ctx, effect, player.pos, player.radius);
+        break;
     }
   }
+}
+
+/** Counts one more use of the action for its use rhythm (PlayerState.useCounts); returns the new count. */
+function countUse(player: PlayerState, actionId: string): number {
+  const count = (player.useCounts[actionId] ?? 0) + 1;
+  player.useCounts[actionId] = count;
+  return count;
 }
 
 /**
@@ -166,10 +193,15 @@ export function placeTrap(ctx: Ctx, trap: Trap, maxActive: number | undefined): 
     }
   }
   world.traps.push(trap);
-  if (removed) updateTrapAuras(ctx);
+  if (removed) updateAuraSlows(ctx);
 }
 
-/** Advances a dash: moves the player and hits enemies along the path once. Returns true while dashing. */
+/**
+ * Advances a dash: moves the player and hits enemies along the path once. Returns true while dashing.
+ * When the dash ends (distance covered or blocked by the arena edge) and its delivery has a landing, everyone
+ * around the hero is hit once more at the landing's effectiveness ('area' event with trigger 'dashLanding'),
+ * including targets already hit on the way. A dash cut short by the hero's death has no landing.
+ */
 export function updateMotion(ctx: Ctx, dt: number): boolean {
   const { world, content } = ctx;
   const player = world.player;
@@ -192,23 +224,45 @@ export function updateMotion(ctx: Ctx, dt: number): boolean {
       damageMob(ctx, action, mob);
     }
   }
-  if (motion.remaining <= 0 || blocked) player.motion = undefined;
+  if (motion.remaining <= 0 || blocked) {
+    player.motion = undefined;
+    const delivery = motion.action.delivery;
+    if (delivery.kind === 'dash' && delivery.landing && !player.dead) {
+      hitArc(ctx, motion.action, player.pos, player.facing, delivery.landing.radius, 360, {
+        trigger: 'dashLanding',
+        effectiveness: delivery.landing.effectiveness,
+      });
+    }
+  }
   return true;
 }
 
-export function hitArc(
-  ctx: Ctx,
-  action: ActionDef,
-  origin: Vec2,
-  facing: Vec2,
-  radius: number,
-  angleDeg: number,
-  maxTargets?: number,
-  castModifiers?: readonly Modifier[],
-  chain = false,
-): void {
+export interface HitArcOptions {
+  readonly maxTargets?: number;
+  /** Cast-time hero conditions of a delayed hit (see damageMob). */
+  readonly castModifiers?: readonly Modifier[];
+  /** Marks the 'area' event of a chain-detonated trap. */
+  readonly chain?: boolean;
+  /** What set off the area, for render ('area' event `trigger`). */
+  readonly trigger?: 'everyNth' | 'dashLanding';
+  /** Scales the rolled damage of every hit (see damageMob). */
+  readonly effectiveness?: number;
+}
+
+/** Hits every living mob in the sector (closest first, up to maxTargets). Returns the ids of the mobs it hit, in order. */
+export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, radius: number, angleDeg: number, opts: HitArcOptions = {}): number[] {
   const { world, content, events } = ctx;
-  events.push({ type: 'area', actionId: action.id, origin, facing, radius, angleDeg, ...(chain ? { chain: true as const } : {}) });
+  const { maxTargets, castModifiers, chain = false, trigger, effectiveness = 1 } = opts;
+  events.push({
+    type: 'area',
+    actionId: action.id,
+    origin,
+    facing,
+    radius,
+    angleDeg,
+    ...(chain ? { chain: true as const } : {}),
+    ...(trigger ? { trigger } : {}),
+  });
   const halfAngleCos = Math.cos(((angleDeg / 2) * Math.PI) / 180);
   const targets = world.mobs
     .filter((mob) => mob.life > 0)
@@ -220,15 +274,29 @@ export function hitArc(
     })
     .sort((a, b) => a.dist - b.dist || a.mob.id - b.mob.id)
     .slice(0, maxTargets ?? Infinity);
-  for (const { mob } of targets) damageMob(ctx, action, mob, castModifiers);
+  for (const { mob } of targets) damageMob(ctx, action, mob, castModifiers, effectiveness);
+  return targets.map(({ mob }) => mob.id);
+}
+
+export interface ExplodeOptions {
+  /** Marks the 'area' event of a chain-detonated trap. */
+  readonly chain?: boolean;
+  /**
+   * Cast snapshot for the ground zone left behind, when the explosion's hits carry hit-only modifiers on top of it
+   * (a projectile's distanceDamage). Omit: the explosion's `castModifiers`.
+   */
+  readonly zoneModifiers?: readonly Modifier[];
 }
 
 /**
- * Circle damage at a point (projectile explosions, traps); `castModifiers` as in damageMob. `chain` marks the
- * 'area' event of a chain-detonated trap.
+ * Circle damage at a point (projectile explosions, traps); `castModifiers` as in damageMob. Leaves the action's
+ * ground zone there (ActionDef.zone) with the cast snapshot (opts.zoneModifiers). Returns the ids of the mobs hit.
  */
-export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, castModifiers?: readonly Modifier[], chain = false): void {
-  hitArc(ctx, action, pos, ctx.world.player.facing, radius, 360, undefined, castModifiers, chain);
+export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, castModifiers?: readonly Modifier[], opts: ExplodeOptions = {}): number[] {
+  const { chain = false, zoneModifiers = castModifiers ?? [] } = opts;
+  const hit = hitArc(ctx, action, pos, ctx.world.player.facing, radius, 360, { ...(castModifiers ? { castModifiers } : {}), chain });
+  if (action.zone) spawnZone(ctx, action, pos, radius, zoneModifiers);
+  return hit;
 }
 
 /**
@@ -248,7 +316,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
   if (!action.damage && !(action.onHit && action.onHit.length > 0)) return;
   const def = getMob(content, mob.defId);
   const before = conditionTarget(mob);
-  const mods = allModifiers(classDef, world.player, before, castModifiers);
+  const mods = withActionModifiers(allModifiers(classDef, world.player, before, castModifiers), action);
   let raw: DamageByType | undefined;
   let removed = 0;
   if (action.damage) {

@@ -9,6 +9,7 @@ import { heroDeathExplosions } from './deathExplosions';
 import { gainKillXp } from './experience';
 import { decayStunBar, tickIgnite } from './statuses';
 import { resourceOnHeroHitTaken } from './resource';
+import { mobTarget } from './zones';
 import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
@@ -33,39 +34,42 @@ export function updateMobs(ctx: Ctx, dt: number): void {
     if (disabled) continue;
     mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor);
 
-    const toPlayer = normalize(sub(player.pos, mob.pos));
-    if (toPlayer.x !== 0 || toPlayer.y !== 0) mob.facing = toPlayer;
-    const gap = distance(player.pos, mob.pos) - player.radius - def.radius;
+    // The hero, or a decoy taunting this mob (mobTarget): the mob chases and attacks it the same way.
+    const target = mobTarget(world, mob, def.boss === true);
+    const toTarget = normalize(sub(target.pos, mob.pos));
+    if (toTarget.x !== 0 || toTarget.y !== 0) mob.facing = toTarget;
+    const gap = distance(target.pos, mob.pos) - target.radius - def.radius;
     const maxStep = def.moveSpeed * speedFactor * dt;
 
     if (def.preferredRange !== undefined) {
       // Ranged: close in to preferred range, back off if the player gets too close.
-      if (gap > def.preferredRange) mob.pos = add(mob.pos, scale(toPlayer, Math.min(maxStep, gap - def.preferredRange)));
-      else if (gap < def.preferredRange * 0.6) mob.pos = add(mob.pos, scale(toPlayer, -maxStep));
+      if (gap > def.preferredRange) mob.pos = add(mob.pos, scale(toTarget, Math.min(maxStep, gap - def.preferredRange)));
+      else if (gap < def.preferredRange * 0.6) mob.pos = add(mob.pos, scale(toTarget, -maxStep));
     } else if (gap > def.attack.range * 0.8) {
-      mob.pos = add(mob.pos, scale(toPlayer, Math.min(maxStep, gap)));
+      mob.pos = add(mob.pos, scale(toTarget, Math.min(maxStep, gap)));
     }
 
     if (gap <= def.attack.range && mob.attackTimer <= 0 && !player.dead) {
       mob.attackTimer = def.attack.interval;
-      events.push({ type: 'mobAttack', id: mob.id });
+      events.push({ type: 'mobAttack', id: mob.id, ...(target.decoy ? { decoyId: target.decoy.id } : {}) });
       if (def.attack.projectile) {
         world.projectiles.push({
           id: world.nextId++,
           owner: 'mob',
           sourceId: def.id,
-          pos: add(mob.pos, scale(toPlayer, def.radius)),
-          dir: toPlayer,
+          pos: add(mob.pos, scale(toTarget, def.radius)),
+          dir: toTarget,
           speed: def.attack.projectile.speed,
           radius: def.attack.projectile.radius,
-          remaining: def.attack.range + player.radius + def.radius,
+          remaining: def.attack.range + target.radius + def.radius,
           travelled: 0,
           pierceLeft: 0,
           explodeRadius: 0,
           hitIds: [],
           castModifiers: [],
         });
-      } else {
+      } else if (!target.decoy) {
+        // A melee swing at a decoy does nothing (it has no life): the mob just wastes its attack.
         hitPlayer(ctx, def, mob);
       }
     }

@@ -5,12 +5,14 @@ import { performAction, pickAction, updateMotion } from './actions';
 import type { PassiveMechanic } from '../passives/types';
 import type { Modifier } from '../stats/types';
 import { levelModifiers } from '../progression/levels';
+import { classSkillProgress, type SkillProgress } from '../skills/levels';
 import type { Content, WeaponDef } from './content';
 import { decayLeech, spawnPools } from './experience';
 import { advanceCombatIdle, spawnCombatIdle, tickResource } from './resource';
 import { syncCharges, tickCooldowns } from './charges';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
+import { updateDecoys, updateZones } from './zones';
 import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
@@ -32,6 +34,15 @@ export {
   type StatSource,
 } from './passiveEffects';
 export { resolveAction, resolveActions, skillMatches, type ActionSet } from '../skills/params';
+export {
+  classSkillProgress,
+  isLevelEffectPending,
+  skillLevelInfo,
+  skillXpToNext,
+  type SkillLevelData,
+  type SkillLevelInfo,
+  type SkillProgress,
+} from '../skills/levels';
 
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
 const TIME_EPSILON = 1e-9;
@@ -44,6 +55,11 @@ export interface Loadout {
   readonly weapon?: WeaponDef;
   /** Passive tree mechanics (keystones, spec effects); see heroMechanics. */
   readonly mechanics?: readonly PassiveMechanic[];
+  /**
+   * Stored skill progress per skill id (CharacterRecord.skills); missing skills start at level 1, 0 XP
+   * (sanitized by classSkillProgress). Ignored without Content.skillLevels.
+   */
+  readonly skills?: Readonly<Record<string, Readonly<SkillProgress>>>;
 }
 
 /** `areaLevel` defaults to the hero's level. */
@@ -53,6 +69,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
   const gearModifiers = [...(loadout.modifiers ?? [])];
   const levelMods = levelModifiers(level, content.progression);
   const mechanics = [...(loadout.mechanics ?? [])];
+  const skillProgress = content.skillLevels ? classSkillProgress(classDef, loadout.skills, content.skillLevels.rules) : {};
   const player: PlayerState = {
     id: PLAYER_ID,
     classId,
@@ -67,13 +84,15 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     actionTimer: 0,
     cooldowns: {},
     charges: {},
+    useCounts: {},
     level,
     xp: loadout.xp ?? 0,
     gearModifiers,
     modifiers: [...gearModifiers, ...levelMods],
     levelModifiers: levelMods,
     mechanics,
-    ...deriveFromMechanics(classDef, mechanics),
+    skillProgress,
+    ...deriveFromMechanics(content, classDef, { mechanics, skillProgress }),
     stillTime: 0,
     leechRecent: 0,
     counterCooldown: 0,
@@ -93,10 +112,13 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     mobs: [],
     projectiles: [],
     traps: [],
+    zones: [],
+    decoys: [],
     spawn: { timer: content.arena.spawn.firstDelay, wave: 0 },
     kills: 0,
     areaLevel,
     xpGained: 0,
+    skillXpGained: 0,
   };
 }
 
@@ -113,6 +135,9 @@ export function step(world: WorldState, input: PlayerInput, content: Content, dt
   updateMobs(ctx, dt);
   updateProjectiles(ctx, dt);
   updateTraps(ctx, dt);
+  // Zones and decoys created this step (by the hero, projectiles or traps) already count this step's dt.
+  updateZones(ctx, dt);
+  updateDecoys(ctx, dt);
   removeDeadMobs(ctx);
   updateSpawner(ctx, dt);
 

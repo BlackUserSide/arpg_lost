@@ -1,8 +1,8 @@
 // Skill parameter changes: one vocabulary for every source that alters a skill's definition
-// (passive tree nodes now; skill level-3 effects and support modifiers later, docs/design/skill-modifiers.md).
+// (passive tree nodes, skill levels and their level-3 effects; support modifiers later, docs/design/skill-modifiers.md).
 
 import type { DamageType, Modifier, SkillTag } from '../stats/types';
-import type { Delivery, StatusId, TrapAura, TrapChain } from '../world/content';
+import type { ArcEveryNth, DashLanding, Delivery, GroundZoneDef, ProjectileSplit, SelfEffect, StatusId, TrapAura, TrapChain } from '../world/content';
 
 /**
  * Skill parameters a change can target. Each maps onto fields of the action definition
@@ -52,7 +52,8 @@ export interface AddedStatus {
 /**
  * Rules a change set grants to its skills (absolute values, not deltas). Applied before param changes, so e.g. a
  * later `charges` +1 change adds to granted charges. Several sources: charges take the highest, maxActiveTraps the
- * lowest (the strictest cap), trapChain / trapAura the first source. Trap rules are ignored on non-trap actions.
+ * lowest (the strictest cap), every other rule the first source; a rule the action already has in its data wins.
+ * Delivery rules are ignored on other deliveries (trap rules on non-traps, everyNth on non-arcs, ...).
  */
 export interface SkillGrants {
   readonly charges?: number;
@@ -60,6 +61,14 @@ export interface SkillGrants {
   readonly maxActiveTraps?: number;
   readonly trapChain?: TrapChain;
   readonly trapAura?: TrapAura;
+  /** Arc actions: every N-th use swings a different angle (Cleave level 3: a 360° circle). */
+  readonly everyNth?: ArcEveryNth;
+  /** Dash actions: an area hit where the dash ends (Shield Charge level 3). Its radius follows the `radius` param. */
+  readonly dashLanding?: DashLanding;
+  /** Projectile actions: split into child projectiles where it explodes (Fireball level 3). */
+  readonly projectileSplit?: ProjectileSplit;
+  /** Any action with an area: leaves a ground zone (Explosive Trap / Frost Nova level 3). */
+  readonly groundZone?: GroundZoneDef;
 }
 
 /**
@@ -74,8 +83,16 @@ export interface SkillChangeSet {
   readonly deliveries?: readonly Delivery['kind'][];
   readonly grants?: SkillGrants;
   readonly changes?: readonly SkillParamChange[];
+  /**
+   * Stat modifiers of the skill itself: they apply only to the matching action's own uses and hits (damage, crit,
+   * attack / cast speed, on-hit status stats), on top of the hero's modifiers; their tags still have to match the
+   * action. Skill levels use them for "+N% more damage per level"; supports will too.
+   */
+  readonly modifiers?: readonly Modifier[];
   /** Extra modifiers granted by every buff the skill applies to its user. */
   readonly buffModifiers?: readonly Modifier[];
+  /** Extra self effects the skill applies when used (e.g. a decoy: Roll level 3). Not scaled by buffDuration. */
+  readonly addSelfEffects?: readonly SelfEffect[];
   /** Extra statuses applied on hit. */
   readonly addOnHit?: readonly AddedStatus[];
   /**

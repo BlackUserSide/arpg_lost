@@ -2,6 +2,7 @@ import { clamp } from '../math';
 import type { PassiveMechanic } from '../passives/types';
 import { areaXpMultiplier, grantXp, levelModifiers, mobXp, type ProgressionRules } from '../progression/levels';
 import type { Modifier } from '../stats/types';
+import { grantSkillXp, newSkillProgress, skillKillXp } from '../skills/levels';
 import type { ClassDef, Content } from './content';
 import { syncCharges } from './charges';
 import { levelUpResource, spawnResource } from './resource';
@@ -90,8 +91,44 @@ function restorePools(classDef: ClassDef, player: PlayerState, before: PoolSnaps
   player.resource = before.resource * maxResource;
 }
 
-/** Grants XP for a kill; each level-up rebuilds level stats, fully restores life and shield and applies the resource level-up rule. */
+/**
+ * Grants XP for a kill (mob base XP): hero XP (each level-up rebuilds level stats, fully restores life and shield
+ * and applies the resource level-up rule) and skill XP (gainSkillXp).
+ */
 export function gainKillXp(ctx: Ctx, baseXp: number): void {
+  gainSkillXp(ctx, baseXp);
+  gainHeroXp(ctx, baseXp);
+}
+
+/**
+ * Skill XP for a kill: every class skill (all are on the bar) gets skillKillXp(baseXp), whatever killed the mob
+ * (basic attack included; the basic attack itself has no level). Each skill level gained emits 'skillLevelUp';
+ * the effective actions are then rebuilt from the next use, like a passive change mid-run (running cooldowns keep
+ * their time, charges follow via syncCharges, flying projectiles / traps / a running dash keep their snapshot).
+ * Pools are not touched.
+ */
+function gainSkillXp(ctx: Ctx, baseXp: number): void {
+  const { world, content, classDef, events } = ctx;
+  const data = content.skillLevels;
+  if (!data) return;
+  const amount = skillKillXp(baseXp, data.rules);
+  if (amount <= 0) return;
+  const player = world.player;
+  world.skillXpGained += amount;
+  let changed = false;
+  for (const skill of classDef.skills) {
+    const progress = (player.skillProgress[skill.id] ??= newSkillProgress());
+    const before = progress.level;
+    if (grantSkillXp(progress, amount, data.rules) === 0) continue;
+    changed = true;
+    for (let level = before + 1; level <= progress.level; level++) events.push({ type: 'skillLevelUp', skillId: skill.id, level });
+  }
+  if (!changed) return;
+  Object.assign(player, deriveFromMechanics(content, classDef, player));
+  syncCharges(player, false);
+}
+
+function gainHeroXp(ctx: Ctx, baseXp: number): void {
   const { world, content, classDef, events } = ctx;
   const player = world.player;
   const rules = content.progression;
@@ -127,7 +164,7 @@ export function setLoadoutModifiers(
     // snapshot they were created with (geometry, tags, crit, on-hit statuses and their durations).
     // Stat modifiers (gear, passives) still apply live to their hits.
     // Charges follow too (syncCharges: stored charges are kept / capped, running recharges keep their time).
-    Object.assign(player, deriveFromMechanics(classDef, player.mechanics));
+    Object.assign(player, deriveFromMechanics(content, classDef, player));
     syncCharges(player, false);
   }
   rebuildModifiers(player, content.progression);

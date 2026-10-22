@@ -57,4 +57,16 @@ describe('profile', () => {
     applyRunResult(p, 'c1', { kills: 30, duration: 120, died: true, progress: { level: 3, xp: 42 } });
     expect(p.characters[0]).toMatchObject({ level: 3, xp: 42 });
   });
+
+  it('stores skill levels from the run, keeping other per-skill fields', () => {
+    const p = createProfile();
+    createCharacter(p, { name: 'Aria', classId: 'mage' }, rules, classes);
+    const c = p.characters[0]!;
+    expect(c.skills).toEqual({});
+    c.skills.teleport = Object.assign({ level: 1, xp: 0 }, { supports: ['x'] });
+    applyRunResult(p, 'c1', { kills: 30, duration: 120, died: true, skills: { fireball: { level: 2, xp: 140 }, teleport: { level: 1, xp: 750 } } });
+    expect(c.skills).toEqual({ fireball: { level: 2, xp: 140 }, teleport: { level: 1, xp: 750, supports: ['x'] } });
+    applyRunResult(p, 'c1', { kills: 0, duration: 10, died: false });
+    expect(c.skills.fireball).toEqual({ level: 2, xp: 140 });
+  });
 });
