@@ -9,7 +9,9 @@ export type DamageSpec =
   | { readonly source: 'weapon'; readonly effectiveness: number }
   | { readonly source: 'skill'; readonly base: BaseDamage; readonly critChance: number };
 
-export type StatusId = 'stun' | 'slow';
+/** Statuses combat implements. */
+export const STATUS_IDS = ['stun', 'slow'] as const;
+export type StatusId = (typeof STATUS_IDS)[number];
 
 export interface StatusEffect {
   readonly status: StatusId;

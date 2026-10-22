@@ -2,8 +2,9 @@ import { clamp, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { PassiveMechanic } from '../passives/types';
 import type { Modifier, StatId, Tag } from '../stats/types';
-import type { ClassDef, Content, MobDef, WeaponDef } from './content';
-import { activeConditionalModifiers, deriveStat, type ConditionState, type ConditionTarget } from './passiveEffects';
+import type { ActionDef, ClassDef, Content, MobDef, WeaponDef } from './content';
+import type { ActionSet } from '../skills/params';
+import { activeConditionalModifiers, deriveStat, hasStateMechanics, type ConditionState, type ConditionTarget } from './passiveEffects';
 
 export const PLAYER_ID = 0;
 
@@ -16,6 +17,8 @@ export interface Buff {
 /** Forced movement from a dash-like action. */
 export interface Motion {
   readonly actionId: string;
+  /** The effective action as it was when the dash started; its hits use this (see Projectile.action). */
+  readonly action: ActionDef;
   readonly dir: Vec2;
   readonly speed: number;
   readonly hitRadius: number;
@@ -46,6 +49,12 @@ export interface PlayerState {
   levelModifiers: Modifier[];
   /** Passive tree mechanics brought into the run (keystones, spec effects); see passiveEffects.ts. */
   mechanics: readonly PassiveMechanic[];
+  /**
+   * Effective basic attack and skills: class data with the skill changes of `mechanics` applied
+   * (core/skills/params). Derived plain data, rebuilt whenever the mechanics change (createWorld,
+   * setLoadoutModifiers). The simulation reads actions from here, never from the class data.
+   */
+  actions: ActionSet;
   /** Seconds since the player last changed position (walk, dash, teleport). 0 at spawn. */
   stillTime: number;
   /**
@@ -78,6 +87,12 @@ export interface Projectile {
   readonly owner: 'player' | 'mob';
   /** Action id (player) or mob def id (mob). */
   readonly sourceId: string;
+  /**
+   * Player projectiles: the effective action (plain data) as it was when fired. Its hits use this snapshot, so
+   * damage, tags, crit and on-hit statuses (incl. durations) come from cast time even if the loadout changes
+   * mid-flight. Omitted for mob projectiles.
+   */
+  readonly action?: ActionDef;
   pos: Vec2;
   readonly dir: Vec2;
   readonly speed: number;
@@ -96,9 +111,14 @@ export interface Projectile {
 export interface Trap {
   readonly id: number;
   readonly actionId: string;
+  /** The effective action as it was when thrown (see Projectile.action). */
+  readonly action: ActionDef;
   readonly pos: Vec2;
   armTimer: number;
   lifetime: number;
+  /** Trigger and explosion radii locked when the trap was thrown (effective skill params at that moment). */
+  readonly triggerRadius: number;
+  readonly explodeRadius: number;
   /** Hero-wide conditional modifiers locked when the trap was thrown (see Projectile.castModifiers). */
   readonly castModifiers: readonly Modifier[];
 }
@@ -170,16 +190,21 @@ export function baseModifiers(player: PlayerState): readonly Modifier[] {
 }
 
 function hasConditionalMechanics(player: PlayerState): boolean {
-  return player.mechanics.some((m) => m.kind === 'conditionalModifiers');
+  return hasStateMechanics(player.mechanics);
 }
 
-/** Hero state for conditions; max life (a full stat derivation) is computed only if a lifeBelow condition asks. */
+/** Hero state for conditions; pool maximums (full stat derivations) are computed only if a mechanic asks. */
 function conditionState(classDef: ClassDef, player: PlayerState, base: readonly Modifier[]): ConditionState {
+  const source = { baseStats: classDef.baseStats, modifiers: base, levelModifiers: player.levelModifiers, mechanics: player.mechanics };
   return {
     stillTime: player.stillTime,
     life: player.life,
+    energyShield: player.energyShield,
     get maxLife(): number {
-      return deriveStat({ baseStats: classDef.baseStats, modifiers: base, levelModifiers: player.levelModifiers, mechanics: player.mechanics }, 'life');
+      return deriveStat(source, 'life');
+    },
+    get maxEnergyShield(): number {
+      return deriveStat(source, 'energyShield');
     },
   };
 }

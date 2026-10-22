@@ -2,6 +2,7 @@
 // Plain data: the tree lives in src/data/passives.ts, the hero's allocation is saved JSON.
 
 import type { StatusId } from '../world/content';
+import type { SkillParamChange } from '../skills/types';
 import type { DamageType, Modifier, SkillTag } from '../stats/types';
 
 /**
@@ -31,25 +32,8 @@ export type PassiveCondition =
 /** Statuses passives refer to; `ignite` and `freeze` do not exist in combat yet. */
 export type PassiveStatusId = StatusId | 'ignite' | 'freeze';
 
-/** Skill parameters a passive can change. Implemented in a later phase. */
-export type SkillParam =
-  | 'cooldown'
-  | 'buffDuration'
-  | 'radius'
-  | 'explodeRadius'
-  | 'pierce'
-  | 'range'
-  | 'projectileSpeed'
-  | 'armTime'
-  | 'triggerRadius'
-  | 'statusDuration';
-
-/** `add` is an absolute delta, `increased` a fraction of the base value (0.25 = +25%). */
-export interface SkillParamChange {
-  readonly param: SkillParam;
-  readonly add?: number;
-  readonly increased?: number;
-}
+/** Skill parameter vocabulary is shared with skill level effects and support modifiers (core/skills). */
+export type { SkillParam, SkillParamChange } from '../skills/types';
 
 /**
  * Mechanics that do not fit stat modifiers. Each kind is implemented by core in a later phase;
@@ -77,7 +61,10 @@ export type PassiveMechanic =
   | { readonly kind: 'conditionalModifiers'; readonly condition: PassiveCondition; readonly modifiers: readonly Modifier[] }
   /** More damage per fraction of missing life: more = min(max, missingLifeFraction × perMissingLife). */
   | { readonly kind: 'moreDamagePerMissingLife'; readonly perMissingLife: number; readonly max: number }
-  /** Changes skill parameters / adds effects. Matches by skill id and/or by tags (all must be present). */
+  /**
+   * Changes skill parameters / adds effects: a SkillChangeSet (core/skills/types), resolved once per loadout.
+   * Matches by skill id and/or by tags (all must be present); with neither, every action incl. the basic attack.
+   */
   | {
       readonly kind: 'skillParams';
       readonly skillIds?: readonly string[];

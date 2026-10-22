@@ -6,12 +6,16 @@
 // - alwaysCrit: hits always crit with a fixed multiplier (see critStats).
 // - lifeToEnergyShield: base life (class + levels) becomes flat ES, max life is fixed, life regen feeds ES.
 // - conditionalModifiers: movedWithin / stationaryFor / lifeBelow / targetHasStatus (stun, slow).
+// - moreDamagePerMissingLife: hero-state "more" damage from missing life (see missingLifeModifier).
+// - skillParams: converted to SkillChangeSets (skillChangeSets) and resolved once per loadout (core/skills).
+// - stunBonus: stun duration part (stunDurationMultiplier); fill is for stunBar (pending).
 // - lifeLeech: hits restore a fraction of damage dealt, capped per second (see leechStats, applyLeech).
 // - lifePotionEffectiveness: data only until potions exist (see lifePotionMultiplier).
 // Glass Cannon needs no mechanic: it is plain `more` damage / damageTaken modifiers.
 
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind } from '../passives/types';
 import { computeStat } from '../stats/modifiers';
+import type { SkillChangeSet } from '../skills/types';
 import type { Modifier, StatId, Tag } from '../stats/types';
 
 type MechanicOf<K extends PassiveMechanicKind> = Extract<PassiveMechanic, { kind: K }>;
@@ -76,6 +80,9 @@ export interface ConditionState {
   readonly life: number;
   /** Max life computed without conditional modifiers (avoids self-reference). */
   readonly maxLife: number;
+  readonly energyShield: number;
+  /** Max energy shield computed without conditional modifiers. */
+  readonly maxEnergyShield: number;
 }
 
 /** Target state for per-hit conditions; omitted for hero-wide stats. */
@@ -114,10 +121,29 @@ export function isTargetCondition(condition: PassiveCondition): boolean {
   return condition.kind === 'targetHasStatus';
 }
 
+/** True if some mechanic adds modifiers that depend on live hero / target state (see activeConditionalModifiers). */
+export function hasStateMechanics(mechanics: readonly PassiveMechanic[]): boolean {
+  return mechanics.some((m) => m.kind === 'conditionalModifiers' || m.kind === 'moreDamagePerMissingLife');
+}
+
 /**
- * Modifiers of conditionalModifiers mechanics whose condition holds.
- * Without a target only hero conditions are checked; with a target only target conditions are
- * (hero conditions are already part of the hero-wide modifier list).
+ * moreDamagePerMissingLife: more damage = min(max, missingFraction × perMissingLife), where life and energy
+ * shield count as one pool (designer decision 2026-10-22): missingFraction = 1 − (life + ES) / (maxLife + maxES).
+ * Undefined when the pool is full. Under lifeToEnergyShield (life fixed at 1) it therefore works off ES.
+ * Under bloodMagic, paying skills with life raises the bonus (the designed combo).
+ */
+export function missingLifeModifier(m: MechanicOf<'moreDamagePerMissingLife'>, state: ConditionState): Modifier | undefined {
+  const maxPool = state.maxLife + state.maxEnergyShield;
+  if (maxPool <= 0) return undefined;
+  const missing = Math.min(1, Math.max(0, 1 - (state.life + state.energyShield) / maxPool));
+  const value = Math.min(m.max, missing * m.perMissingLife);
+  return value > 0 ? { stat: 'damage', kind: 'more', value } : undefined;
+}
+
+/**
+ * Modifiers of state-dependent mechanics that apply now: conditionalModifiers whose condition holds, and
+ * moreDamagePerMissingLife. Without a target only hero state is checked; with a target only target conditions
+ * are (hero state is already part of the hero-wide modifier list).
  */
 export function activeConditionalModifiers(
   mechanics: readonly PassiveMechanic[],
@@ -126,6 +152,11 @@ export function activeConditionalModifiers(
 ): Modifier[] {
   const result: Modifier[] = [];
   for (const m of mechanics) {
+    if (m.kind === 'moreDamagePerMissingLife') {
+      const mod = target === undefined ? missingLifeModifier(m, state) : undefined;
+      if (mod) result.push(mod);
+      continue;
+    }
     if (m.kind !== 'conditionalModifiers') continue;
     if (isTargetCondition(m.condition) !== (target !== undefined)) continue;
     if (conditionHolds(m.condition, state, target)) result.push(...m.modifiers);
@@ -192,4 +223,30 @@ export function lifePotionMultiplier(mechanics: readonly PassiveMechanic[]): num
   let result = 1;
   for (const m of mechanics) if (m.kind === 'lifePotionEffectiveness') result *= m.multiplier;
   return Math.max(0, result);
+}
+
+/**
+ * Passive mechanics that change skills, as skill change sets for the effective-skill resolver (core/skills/params.ts):
+ * - skillParams as is. Tag-matched nodes (Sniper projectile nodes) also change the basic attack, e.g. the
+ *   ranger's bolt (designer decision 2026-10-22).
+ * - stunBonus.durationIncreased as a stun duration change on every action. It adds to the skill's statusDuration
+ *   in one sum, like increased (designer decision 2026-10-22), and is locked into the action at cast time.
+ */
+export function skillChangeSets(mechanics: readonly PassiveMechanic[]): SkillChangeSet[] {
+  const sets: SkillChangeSet[] = [];
+  for (const m of mechanics) {
+    if (m.kind === 'skillParams') sets.push(m);
+    else if (m.kind === 'stunBonus' && m.durationIncreased !== 0) sets.push({ statusDurations: [{ status: 'stun', increased: m.durationIncreased }] });
+  }
+  return sets;
+}
+
+/**
+ * Multiplier on stun durations from stunBonus: 1 + Σ durationIncreased (never below 0). Skill stuns get it via
+ * skillChangeSets; this is for stuns that do not come from an action (the stun bar, when implemented).
+ */
+export function stunDurationMultiplier(mechanics: readonly PassiveMechanic[]): number {
+  let increased = 0;
+  for (const m of mechanics) if (m.kind === 'stunBonus') increased += m.durationIncreased;
+  return Math.max(0, 1 + increased);
 }

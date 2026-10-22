@@ -485,7 +485,7 @@ export class IsoArenaScene extends Phaser.Scene {
     switch (event.type) {
       case 'action': {
         // Consume the buffered press so a tap fires the skill once.
-        const slot = getClass(this.content, this.classId).skills.findIndex((s) => s.id === event.actionId);
+        const slot = this.world.player.actions.skills.findIndex((s) => s.id === event.actionId);
         if (slot >= 0) this.skillBuffer[slot] = 0;
         this.hero.facing = event.facing;
         this.playOneShot(this.hero, ACTION_ANIMS[event.actionId] ?? 'attack');
@@ -667,6 +667,8 @@ export class IsoArenaScene extends Phaser.Scene {
       const p = toScreen(trap.pos);
       const armed = trap.armTimer <= 0;
       const pulse = armed ? 0.6 + 0.4 * Math.sin(this.world.time * 10) : 0.4;
+      // Trigger zone (radius locked on the trap when thrown); a world circle of radius r is a 2r x r ellipse on screen.
+      g.lineStyle(1, armed ? 0xff7a3a : 0x888888, armed ? 0.25 + 0.3 * pulse : 0.25).strokeEllipse(p.x, p.y, trap.triggerRadius * 2, trap.triggerRadius);
       g.fillStyle(armed ? 0xff5a1a : 0x777777, pulse).fillEllipse(p.x, p.y, 22, 11);
       g.lineStyle(1, 0x000000, 0.8).strokeEllipse(p.x, p.y, 22, 11);
     }

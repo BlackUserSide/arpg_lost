@@ -8,10 +8,11 @@ import { actionCost, canPay, critStats } from './passiveEffects';
 import type { Modifier } from '../stats/types';
 import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState } from './state';
 
+/** The hero's effective action (class data + skill changes, see PlayerState.actions). */
 export function findAction(ctx: Ctx, id: string): ActionDef {
-  const { classDef } = ctx;
-  const action = [classDef.basicAttack, ...classDef.skills].find((a) => a.id === id);
-  if (!action) throw new Error(`Unknown action for ${classDef.id}: ${id}`);
+  const { basicAttack, skills } = ctx.world.player.actions;
+  const action = basicAttack.id === id ? basicAttack : skills.find((a) => a.id === id);
+  if (!action) throw new Error(`Unknown action for ${ctx.classDef.id}: ${id}`);
   return action;
 }
 
@@ -28,15 +29,16 @@ export function useTime(ctx: Ctx, action: ActionDef): number {
 }
 
 export function pickAction(ctx: Ctx): ActionDef | undefined {
-  const { classDef, input, world } = ctx;
+  const { input, world } = ctx;
   const player = world.player;
-  for (let i = 0; i < classDef.skills.length; i++) {
-    const skill = classDef.skills[i];
+  const { basicAttack, skills } = player.actions;
+  for (let i = 0; i < skills.length; i++) {
+    const skill = skills[i];
     if (!skill || !input.skills[i]) continue;
     if ((player.cooldowns[skill.id] ?? 0) > 0 || !canAfford(player, skill)) continue;
     return skill;
   }
-  return input.basicAttack && canAfford(player, classDef.basicAttack) ? classDef.basicAttack : undefined;
+  return input.basicAttack && canAfford(player, basicAttack) ? basicAttack : undefined;
 }
 
 /** True if the player can pay the action's cost now (mana, or life under blood magic: life must stay above 0). */
@@ -73,6 +75,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
           id: world.nextId++,
           owner: 'player',
           sourceId: action.id,
+          action,
           pos: add(player.pos, scale(dir, player.radius)),
           dir,
           speed: delivery.speed,
@@ -89,6 +92,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
     case 'dash':
       player.motion = {
         actionId: action.id,
+        action,
         dir: player.facing,
         speed: delivery.speed,
         hitRadius: delivery.hitRadius,
@@ -109,9 +113,12 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
       world.traps.push({
         id: world.nextId++,
         actionId: action.id,
+        action,
         pos: clampToArena(add(player.pos, scale(player.facing, dist)), 0, content),
         armTimer: delivery.armTime,
         lifetime: delivery.lifetime,
+        triggerRadius: delivery.triggerRadius,
+        explodeRadius: delivery.explodeRadius,
         castModifiers: heroConditionalModifiers(ctx.classDef, player),
       });
       break;
@@ -145,7 +152,7 @@ export function updateMotion(ctx: Ctx, dt: number): boolean {
   motion.remaining -= stepLen;
 
   if (motion.hitRadius > 0) {
-    const action = findAction(ctx, motion.actionId);
+    const action = motion.action;
     for (const mob of world.mobs) {
       if (mob.life <= 0 || motion.hitIds.includes(mob.id)) continue;
       if (distance(mob.pos, player.pos) > motion.hitRadius + getMob(content, mob.defId).radius) continue;
@@ -226,6 +233,7 @@ function applyStatus(ctx: Ctx, mob: MobState, effect: StatusEffect): void {
   if (effect.chance !== undefined && !ctx.rng.chance(effect.chance)) return;
   switch (effect.status) {
     case 'stun':
+      // stunBonus is already folded into the action's stun durations (skillChangeSets), locked at cast time.
       mob.stun = Math.max(mob.stun, effect.duration);
       break;
     case 'slow': {

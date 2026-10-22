@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { xpToNextLevel, type ProgressionRules } from '../core/progression/levels';
 import type { ActionDef, ClassDef } from '../core/world/content';
-import { actionCost, canAfford, lifeRecoveryPool, playerStat, type WorldState } from '../core/world/world';
+import { actionCost, canAfford, lifeRecoveryPool, playerStat, type ActionSet, type WorldState } from '../core/world/world';
 import { skillIcon } from './hudIcons';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
@@ -25,6 +25,7 @@ interface Orb {
 }
 
 interface Slot {
+  /** Effective action bound to the slot (world.player.actions; refreshed when the loadout changes). */
   action: ActionDef;
   frame: Phaser.GameObjects.Image;
   icon: Phaser.GameObjects.Image;
@@ -101,6 +102,8 @@ export class Hud {
   private time = 0;
   /** Mechanics list the slot costs were computed for (the world replaces the array on change). */
   private costsFor: unknown;
+  /** Action set the slots were bound to (the world replaces it when the loadout changes). */
+  private actionsFor: ActionSet | undefined;
   /** Caption on the mana orb when skills cost life instead (max mana 0). */
   private readonly manaNote: Phaser.GameObjects.Text;
 
@@ -194,6 +197,15 @@ export class Hud {
     this.life.text.setText(shieldIsPool ? `${Math.ceil(p.energyShield)}` : `${Math.ceil(p.life)}`);
     this.mana.text.setText(`${Math.floor(p.mana)}`);
 
+    if (this.actionsFor !== p.actions) {
+      // Effective skills (cooldowns etc. after passives) are resolved by core; slot order = class order.
+      this.actionsFor = p.actions;
+      const actions = [p.actions.basicAttack, ...p.actions.skills];
+      this.slots.forEach((slot, i) => {
+        slot.action = actions[i] ?? slot.action;
+      });
+      this.costsFor = undefined;
+    }
     if (this.costsFor !== p.mechanics) {
       // Prices only change with the hero's mechanics, not every frame.
       this.costsFor = p.mechanics;
@@ -210,8 +222,9 @@ export class Hud {
       slot.icon.setAlpha(cd > 0.05 || unaffordable ? 0.45 : 1);
       if (unaffordable) slot.icon.setTint(slot.lifeCost ? 0xb86a6a : 0x6a7ab8);
       else slot.icon.clearTint();
-      if (cd > 0.05 && slot.action.cooldown > 0) {
-        const frac = Math.min(1, cd / slot.action.cooldown);
+      if (cd > 0.05) {
+        // A mid-run swap can shorten the cooldown below what is still running: never divide by less than the remainder.
+        const frac = Math.min(1, cd / Math.max(slot.action.cooldown, cd));
         s.fillStyle(0x000000, 0.6);
         s.slice(slot.x, slot.y, (slot.size - 10) / 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac, false);
         s.fillPath();
@@ -260,7 +273,7 @@ export class Hud {
     if (!first) return;
     const size = 30;
     buffs.forEach((buff, i) => {
-      const source = this.classDef.skills.find((a) => a.selfEffects?.some((e) => e.kind === 'buff' && e.id === buff.id));
+      const source = world.player.actions.skills.find((a) => a.selfEffects?.some((e) => e.kind === 'buff' && e.id === buff.id));
       const x = first.x - first.size / 2 + size / 2 + i * (size + 6);
       const y = first.y - first.size / 2 - size / 2 - 28; // above the XP bar
       const icon = this.scene.add.image(x, y, skillIcon(this.scene, source?.id ?? buff.id)).setDisplaySize(size, size).setScrollFactor(0).setDepth(DEPTH);

@@ -185,7 +185,7 @@ export function formatMechanic(m: PassiveMechanic): string[] {
     case 'conditionalModifiers':
       return [`${conditionText(m.condition)}: ${formatModifiers(m.modifiers).join(', ')}`];
     case 'moreDamagePerMissingLife':
-      return [`${pct(m.perMissingLife / 100)} більше урону за кожен 1% втраченого життя, максимум ${pct(m.max)}`];
+      return [`${pct(m.perMissingLife / 100)} більше урону за кожен 1% втраченого життя й ЕЩ, максимум ${pct(m.max)}`];
     case 'skillParams': {
       const target = skillTarget(m.skillIds, m.tags);
       const lines: string[] = [];

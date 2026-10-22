@@ -7,6 +7,8 @@ import type { Modifier } from '../stats/types';
 import { levelModifiers } from '../progression/levels';
 import type { Content, WeaponDef } from './content';
 import { decayLeech, refillPools } from './experience';
+import { skillChangeSets } from './passiveEffects';
+import { resolveActions } from '../skills/params';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { allModifiers, clampToArena, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
@@ -14,7 +16,18 @@ import { allModifiers, clampToArena, getClass, movePlayer, playerStat, PLAYER_ID
 export * from './state';
 export { applyLeech, recoverLife, recoverMana, setLoadoutModifiers } from './experience';
 export { canAfford } from './actions';
-export { actionCost, deriveStat, leechStats, lifePotionMultiplier, lifeRecoveryPool, type ActionCost, type StatSource } from './passiveEffects';
+export {
+  actionCost,
+  deriveStat,
+  leechStats,
+  lifePotionMultiplier,
+  lifeRecoveryPool,
+  skillChangeSets,
+  stunDurationMultiplier,
+  type ActionCost,
+  type StatSource,
+} from './passiveEffects';
+export { resolveAction, resolveActions, skillMatches, type ActionSet } from '../skills/params';
 
 /** What the hero brings into the run: level, equipment and passives as modifiers (see heroModifiers), plus the weapon. */
 export interface Loadout {
@@ -32,6 +45,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
   const level = loadout.level ?? 1;
   const gearModifiers = [...(loadout.modifiers ?? [])];
   const levelMods = levelModifiers(level, content.progression);
+  const mechanics = [...(loadout.mechanics ?? [])];
   const player: PlayerState = {
     id: PLAYER_ID,
     classId,
@@ -48,7 +62,8 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     gearModifiers,
     modifiers: [...gearModifiers, ...levelMods],
     levelModifiers: levelMods,
-    mechanics: [...(loadout.mechanics ?? [])],
+    mechanics,
+    actions: resolveActions(classDef, skillChangeSets(mechanics)),
     stillTime: 0,
     leechRecent: 0,
     weapon: loadout.weapon ?? classDef.weapon,

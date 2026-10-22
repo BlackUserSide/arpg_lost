@@ -6,10 +6,8 @@
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveNodeDef, PassiveStatusId } from './types';
 
 export const PENDING_MECHANICS: ReadonlySet<PassiveMechanicKind> = new Set<PassiveMechanicKind>([
-  'moreDamagePerMissingLife',
-  'skillParams',
+  // Also the consumer of stunBonus.fillIncreased (stunBonus itself is live: its duration part applies to all stuns).
   'stunBar',
-  'stunBonus',
   'counterAttack',
   'distanceDamage',
   'trapCharges',
@@ -31,6 +29,8 @@ export function isConditionPending(condition: PassiveCondition): boolean {
 
 export function isMechanicPending(mechanic: PassiveMechanic): boolean {
   if (mechanic.kind === 'conditionalModifiers') return isConditionPending(mechanic.condition);
+  // Skill changes work; statuses combat lacks are skipped when added on hit, so such a node is still pending.
+  if (mechanic.kind === 'skillParams') return (mechanic.addOnHit ?? []).some((s) => PENDING_STATUSES.has(s.status));
   return PENDING_MECHANICS.has(mechanic.kind);
 }
 

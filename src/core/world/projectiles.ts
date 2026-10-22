@@ -1,5 +1,5 @@
 import { add, distance, scale } from '../math';
-import { damageMob, explode, findAction } from './actions';
+import { damageMob, explode } from './actions';
 import { hitPlayer } from './mobs';
 import { getMob, insideArena, type Ctx, type Projectile } from './state';
 
@@ -26,7 +26,8 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
       return false;
     }
   } else {
-    const action = findAction(ctx, p.sourceId);
+    const action = p.action;
+    if (!action) throw new Error('Player projectile without an action snapshot: ' + p.sourceId);
     for (const mob of world.mobs) {
       if (mob.life <= 0 || p.hitIds.includes(mob.id)) continue;
       if (distance(p.pos, mob.pos) > p.radius + getMob(content, mob.defId).radius) continue;
@@ -41,7 +42,7 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
   }
 
   if (p.remaining <= 0 || !insideArena(p.pos, content)) {
-    if (p.owner === 'player' && p.explodeRadius > 0) explode(ctx, findAction(ctx, p.sourceId), p.pos, p.explodeRadius, p.castModifiers);
+    if (p.action && p.explodeRadius > 0) explode(ctx, p.action, p.pos, p.explodeRadius, p.castModifiers);
     return false;
   }
   return true;
@@ -52,9 +53,7 @@ export function updateTraps(ctx: Ctx, dt: number): void {
   world.traps = world.traps.filter((trap) => {
     trap.armTimer = Math.max(0, trap.armTimer - dt);
     trap.lifetime -= dt;
-    const action = findAction(ctx, trap.actionId);
-    if (action.delivery.kind !== 'trap') return false;
-    const { triggerRadius, explodeRadius } = action.delivery;
+    const { action, triggerRadius, explodeRadius } = trap;
     const triggered =
       trap.armTimer <= 0 &&
       world.mobs.some((mob) => mob.life > 0 && distance(mob.pos, trap.pos) <= triggerRadius + getMob(content, mob.defId).radius);

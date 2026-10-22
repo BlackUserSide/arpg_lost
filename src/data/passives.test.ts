@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { classStart, findPath, neighbors, passiveModifiers, validateAllocation } from '../core/passives/allocation';
 import { respecCost } from '../core/passives/respec';
+import { resolveActions, type ActionSet } from '../core/skills/params';
+import type { ActionDef } from '../core/world/content';
+import { skillChangeSets } from '../core/world/passiveEffects';
 import type { PassiveHero, PassiveMechanic, PassiveNodeDef } from '../core/passives/types';
 import { DAMAGE_TYPES, SKILL_TAGS, STAT_IDS, type Modifier } from '../core/stats/types';
 import { content } from './index';
@@ -226,5 +229,39 @@ describe('passive tree data', () => {
     expect([20, 40].map((l) => respecCost(tree, l, 'wheel'))).toEqual([20, 40]);
     expect([20, 40].map((l) => respecCost(tree, l, 'spec'))).toEqual([30, 60]);
     expect(respecCost(tree, 10, 'node')).toBe(2);
+  });
+});
+
+describe('spec skill-parameter nodes resolve to the design doc numbers', () => {
+  const resolveFor = (classId: string, nodeIds: readonly string[]): ActionSet => {
+    const mechanics = nodeIds.flatMap((id) => tree.nodes[id]!.mechanics ?? []);
+    return resolveActions(content.classes[classId]!, skillChangeSets(mechanics));
+  };
+  const skill = (set: ActionSet, id: string): ActionDef => [set.basicAttack, ...set.skills].find((a) => a.id === id)!;
+
+  it('warrior: Bloody Cry 6 → 9 s (+20% attack speed), Shield Ready cooldown 4 → 3 s', () => {
+    const set = resolveFor('warrior', ['bz_b2', 'gd_c1']);
+    const buff = skill(set, 'battle_cry').selfEffects?.find((e) => e.kind === 'buff');
+    expect(buff).toMatchObject({ duration: 9 });
+    expect(buff?.kind === 'buff' ? buff.modifiers : []).toContainEqual({ stat: 'attackSpeed', kind: 'increased', value: 0.2 });
+    expect(skill(set, 'shield_charge').cooldown).toBe(3);
+  });
+
+  it('ranger: pierce +1, range +25% (bolt 620 → 775), arm 0.5 → 0.25 s, explosion 110 → 137.5, roll 3 → 2.5 s', () => {
+    const set = resolveFor('ranger', ['sn_a1', 'sn_b2', 'tr_a1', 'tr_a2', 'tr_c1']);
+    expect(skill(set, 'ranger_bolt').delivery).toMatchObject({ pierce: 1, range: 775, speed: 900 });
+    expect(skill(set, 'volley').delivery).toMatchObject({ pierce: 1, range: 650 });
+    expect(skill(set, 'explosive_trap').delivery).toMatchObject({ armTime: 0.25, triggerRadius: 50, explodeRadius: 137.5 });
+    expect(skill(set, 'roll').cooldown).toBe(2.5);
+  });
+
+  it('mage: Inferno fireball explosion 80 → 96; Blizzard nova 150 → 180, 3 → 2.5 s; Icy Grip slow 2.5 → 3.5 s; Cold Blood slows', () => {
+    const set = resolveFor('mage', ['py_a2', 'cr_entry', 'cr_a2', 'cr_b2']);
+    expect(skill(set, 'fireball').delivery).toMatchObject({ explodeRadius: 96 });
+    const nova = skill(set, 'frost_nova');
+    expect(nova.delivery).toMatchObject({ radius: 180 });
+    expect(nova.cooldown).toBe(2.5);
+    expect(nova.onHit?.[0]?.duration).toBeCloseTo(3.5, 9);
+    expect(skill(set, 'wand_bolt').onHit).toEqual([{ status: 'slow', duration: 2, magnitude: 0.2 }]);
   });
 });

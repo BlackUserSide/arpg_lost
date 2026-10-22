@@ -406,8 +406,19 @@ describe('pending mechanics', () => {
       { kind: 'conditionalModifiers', condition: { kind: 'stationaryFor', seconds: 0.5 }, modifiers: [] },
       { kind: 'conditionalModifiers', condition: { kind: 'lifeBelow', fraction: 0.5 }, modifiers: [] },
       { kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'stun' }, modifiers: [] },
+      { kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'slow' }, modifiers: [] },
+      { kind: 'moreDamagePerMissingLife', perMissingLife: 0.6, max: 0.45 },
+      { kind: 'stunBonus', fillIncreased: 0.3, durationIncreased: 0.3 },
+      { kind: 'skillParams', skillIds: ['roll'], changes: [{ param: 'cooldown', add: -0.5 }] },
+      { kind: 'skillParams', skillIds: ['wand_bolt'], addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.2 }] },
     ];
     expect(implemented.filter(isMechanicPending)).toEqual([]);
+  });
+
+  it('skill changes that add a status combat does not have yet stay pending', async () => {
+    const { isMechanicPending } = await import('./mechanics');
+    expect(isMechanicPending({ kind: 'skillParams', addOnHit: [{ status: 'ignite', duration: 3 }] })).toBe(true);
+    expect(isMechanicPending({ kind: 'skillParams', addOnHit: [{ status: 'slow', duration: 1 }, { status: 'freeze', duration: 1 }] })).toBe(true);
   });
 
   it('conditions on statuses combat does not have yet stay pending', async () => {

@@ -3,7 +3,8 @@ import type { PassiveMechanic } from '../passives/types';
 import { areaXpMultiplier, grantXp, levelModifiers, mobXp, type ProgressionRules } from '../progression/levels';
 import type { Modifier } from '../stats/types';
 import type { ClassDef, Content } from './content';
-import { leechStats, lifeRecoveryPool } from './passiveEffects';
+import { resolveActions } from '../skills/params';
+import { leechStats, lifeRecoveryPool, skillChangeSets } from './passiveEffects';
 import { getClass, playerStat, type Ctx, type PlayerState, type WorldState } from './state';
 
 export function refillPools(classDef: ClassDef, player: PlayerState): void {
@@ -106,7 +107,14 @@ export function setLoadoutModifiers(
   const classDef = getClass(content, player.classId);
   const before = snapshotPools(classDef, player);
   player.gearModifiers = [...modifiers];
-  if (mechanics) player.mechanics = [...mechanics];
+  if (mechanics) {
+    player.mechanics = [...mechanics];
+    // Effective skills follow the mechanics from the next use. Running cooldowns keep their remaining time
+    // (designer decision 2026-10-22). Flying projectiles, thrown traps and a running dash keep the action
+    // snapshot they were created with (geometry, tags, crit, on-hit statuses and their durations).
+    // Stat modifiers (gear, passives) still apply live to their hits.
+    player.actions = resolveActions(classDef, skillChangeSets(player.mechanics));
+  }
   rebuildModifiers(player, content.progression);
   if (!player.dead) restorePools(classDef, player, before);
 }

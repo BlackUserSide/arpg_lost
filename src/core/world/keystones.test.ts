@@ -14,6 +14,7 @@ import {
   leechStats,
   lifePotionMultiplier,
   lifeRecoveryPool,
+  type ConditionState,
 } from './passiveEffects';
 import { applyDamageTaken } from '../combat/damage';
 import {
@@ -199,7 +200,7 @@ describe('passiveEffects: pure rules', () => {
   });
 
   it('conditions: moving / standing are complementary; life and target status', () => {
-    const state = (stillTime: number, life = 100): { stillTime: number; life: number; maxLife: number } => ({ stillTime, life, maxLife: 100 });
+    const state = (stillTime: number, life = 100): ConditionState => ({ stillTime, life, maxLife: 100, energyShield: 0, maxEnergyShield: 0 });
     const moved = { kind: 'movedWithin', seconds: 0.5 } as const;
     const still = { kind: 'stationaryFor', seconds: 0.5 } as const;
     expect([conditionHolds(moved, state(0)), conditionHolds(still, state(0))]).toEqual([true, false]);
@@ -220,7 +221,7 @@ describe('passiveEffects: pure rules', () => {
       { kind: 'conditionalModifiers', condition: { kind: 'movedWithin', seconds: 0.5 }, modifiers: more(0.3) },
       { kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'stun' }, modifiers: more(0.25) },
     ];
-    const state = { stillTime: 0, life: 1, maxLife: 1 };
+    const state: ConditionState = { stillTime: 0, life: 1, maxLife: 1, energyShield: 0, maxEnergyShield: 0 };
     expect(activeConditionalModifiers(mechanics, state)).toEqual(more(0.3));
     expect(activeConditionalModifiers(mechanics, state, { stun: 1, slow: 0 })).toEqual(more(0.25));
     expect(activeConditionalModifiers(mechanics, state, { stun: 0, slow: 0 })).toEqual([]);
