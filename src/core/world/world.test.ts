@@ -393,7 +393,7 @@ describe('world: experience', () => {
     expect(world.player.xp).toBe(5);
   });
 
-  it('setLoadoutModifiers swaps loadout modifiers mid-run and clamps pools to the new maximums', () => {
+  it('setLoadoutModifiers swaps loadout modifiers mid-run, keeping pool fill fractions', () => {
     const content = makeContent(undefined, {}, { life: 100 });
     const world = createWorld(content, 'hero', 1, { level: 3, modifiers: [{ stat: 'life', kind: 'increased', value: 0.5 }] });
     expect(world.player.life).toBe(180);
@@ -404,8 +404,12 @@ describe('world: experience', () => {
       { stat: 'life', kind: 'flat', value: 20 },
     ]);
     expect(world.player.life).toBe(150);
+    // Full life stays full when max life grows: (100 + 20) * 2.
     setLoadoutModifiers(world, content, [{ stat: 'life', kind: 'increased', value: 1 }]);
-    expect(world.player.life).toBe(150);
+    expect(world.player.life).toBe(240);
+    world.player.life = 60;
+    setLoadoutModifiers(world, content, []);
+    expect(world.player.life).toBe(30);
   });
 });
 

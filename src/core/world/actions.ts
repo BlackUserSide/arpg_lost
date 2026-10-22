@@ -3,7 +3,9 @@ import { resolveHit } from '../combat/hit';
 import { add, distance, dot, normalize, rotate, scale, sub, type Vec2 } from '../math';
 import { computeStat } from '../stats/modifiers';
 import type { ActionDef, StatusEffect } from './content';
-import { allModifiers, clampToArena, getMob, type Ctx, type MobState } from './state';
+import { actionCost, canPay, critStats } from './passiveEffects';
+import type { Modifier } from '../stats/types';
+import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState } from './state';
 
 export function findAction(ctx: Ctx, id: string): ActionDef {
   const { classDef } = ctx;
@@ -14,7 +16,7 @@ export function findAction(ctx: Ctx, id: string): ActionDef {
 
 /** Seconds the player is busy after starting this action. */
 export function useTime(ctx: Ctx, action: ActionDef): number {
-  const mods = allModifiers(ctx.world.player);
+  const mods = allModifiers(ctx.classDef, ctx.world.player);
   if (action.tags.includes('attack')) {
     const rate = computeStat(ctx.world.player.weapon.attacksPerSecond, mods, 'attackSpeed', action.tags);
     return rate > 0 ? 1 / rate : Infinity;
@@ -30,16 +32,27 @@ export function pickAction(ctx: Ctx): ActionDef | undefined {
   for (let i = 0; i < classDef.skills.length; i++) {
     const skill = classDef.skills[i];
     if (!skill || !input.skills[i]) continue;
-    if ((player.cooldowns[skill.id] ?? 0) > 0 || player.mana < skill.manaCost) continue;
+    if ((player.cooldowns[skill.id] ?? 0) > 0 || !canAfford(player, skill)) continue;
     return skill;
   }
-  return input.basicAttack ? classDef.basicAttack : undefined;
+  return input.basicAttack && canAfford(player, classDef.basicAttack) ? classDef.basicAttack : undefined;
+}
+
+/** True if the player can pay the action's cost now (mana, or life under blood magic: life must stay above 0). */
+export function canAfford(player: PlayerState, action: ActionDef): boolean {
+  return canPay(player, actionCost(player.mechanics, action.manaCost));
+}
+
+function payCost(player: PlayerState, action: ActionDef): void {
+  const cost = actionCost(player.mechanics, action.manaCost);
+  if (cost.pool === 'life') player.life -= cost.amount;
+  else player.mana -= cost.amount;
 }
 
 export function performAction(ctx: Ctx, action: ActionDef): void {
   const { world, content, events, input } = ctx;
   const player = world.player;
-  player.mana -= action.manaCost;
+  payCost(player, action);
   if (action.cooldown > 0) player.cooldowns[action.id] = action.cooldown;
   player.actionTimer = useTime(ctx, action);
   events.push({ type: 'action', actionId: action.id, facing: player.facing });
@@ -50,6 +63,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
       hitArc(ctx, action, player.pos, player.facing, delivery.radius, delivery.angleDeg, delivery.maxTargets);
       break;
     case 'projectile': {
+      const castModifiers = heroConditionalModifiers(ctx.classDef, player);
       const spread = (delivery.spreadDeg * Math.PI) / 180;
       for (let i = 0; i < delivery.count; i++) {
         const offset = delivery.count > 1 ? -spread / 2 + (spread * i) / (delivery.count - 1) : 0;
@@ -66,6 +80,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
           pierceLeft: delivery.pierce,
           explodeRadius: delivery.explodeRadius ?? 0,
           hitIds: [],
+          castModifiers,
         });
       }
       break;
@@ -84,7 +99,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
       const offset = sub(input.aim, player.pos);
       const dist = Math.min(delivery.range, distance(input.aim, player.pos));
       const from = player.pos;
-      player.pos = clampToArena(add(player.pos, scale(normalize(offset), dist)), player.radius, content);
+      movePlayer(player, clampToArena(add(player.pos, scale(normalize(offset), dist)), player.radius, content));
       events.push({ type: 'teleport', from, to: player.pos });
       break;
     }
@@ -96,6 +111,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
         pos: clampToArena(add(player.pos, scale(player.facing, dist)), 0, content),
         armTimer: delivery.armTime,
         lifetime: delivery.lifetime,
+        castModifiers: heroConditionalModifiers(ctx.classDef, player),
       });
       break;
     }
@@ -124,7 +140,7 @@ export function updateMotion(ctx: Ctx, dt: number): boolean {
   const target = add(player.pos, scale(motion.dir, stepLen));
   const clamped = clampToArena(target, player.radius, content);
   const blocked = clamped.x !== target.x || clamped.y !== target.y;
-  player.pos = clamped;
+  movePlayer(player, clamped);
   motion.remaining -= stepLen;
 
   if (motion.hitRadius > 0) {
@@ -148,6 +164,7 @@ export function hitArc(
   radius: number,
   angleDeg: number,
   maxTargets?: number,
+  castModifiers?: readonly Modifier[],
 ): void {
   const { world, content, events } = ctx;
   events.push({ type: 'area', actionId: action.id, origin, facing, radius, angleDeg });
@@ -162,18 +179,23 @@ export function hitArc(
     })
     .sort((a, b) => a.dist - b.dist || a.mob.id - b.mob.id)
     .slice(0, maxTargets ?? Infinity);
-  for (const { mob } of targets) damageMob(ctx, action, mob);
+  for (const { mob } of targets) damageMob(ctx, action, mob, castModifiers);
 }
 
-/** Circle damage at a point (projectile explosions, traps). */
-export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number): void {
-  hitArc(ctx, action, pos, ctx.world.player.facing, radius, 360);
+/** Circle damage at a point (projectile explosions, traps); `castModifiers` as in damageMob. */
+export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, castModifiers?: readonly Modifier[]): void {
+  hitArc(ctx, action, pos, ctx.world.player.facing, radius, 360, undefined, castModifiers);
 }
 
-export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState): void {
-  const { world, content, rng, events } = ctx;
+/**
+ * Resolves one player hit on a mob. Instant hits evaluate hero conditions now (cast == hit); delayed hits
+ * (projectiles, traps) pass `castModifiers`, the hero conditions locked when the action fired.
+ * Target conditions (stunned / slowed target) are always evaluated at the hit.
+ */
+export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifiers?: readonly Modifier[]): void {
+  const { world, content, classDef, rng, events } = ctx;
   if (action.damage) {
-    const mods = allModifiers(world.player);
+    const mods = allModifiers(classDef, world.player, mob, castModifiers);
     let rolled: DamageByType;
     let baseCrit: number;
     if (action.damage.source === 'weapon') {
@@ -184,8 +206,10 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState): void {
       baseCrit = action.damage.critChance;
     }
     const damage = computeDamage(rolled, mods, action.tags);
-    const critChance = computeStat(baseCrit, mods, 'critChance', action.tags);
-    const critMultiplier = computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', action.tags);
+    const { critChance, critMultiplier } = critStats(world.player.mechanics, {
+      critChance: computeStat(baseCrit, mods, 'critChance', action.tags),
+      critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', action.tags),
+    });
     const def = getMob(content, mob.defId);
     const hit = resolveHit(rng, { damage, critChance, critMultiplier }, { armour: def.armour, resistances: def.resistances }, content.combat);
     mob.life -= hit.total;

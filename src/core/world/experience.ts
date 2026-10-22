@@ -1,7 +1,9 @@
 import { clamp } from '../math';
+import type { PassiveMechanic } from '../passives/types';
 import { areaXpMultiplier, grantXp, levelModifiers, mobXp, type ProgressionRules } from '../progression/levels';
 import type { Modifier } from '../stats/types';
 import type { ClassDef, Content } from './content';
+import { lifeRecoveryPool } from './passiveEffects';
 import { getClass, playerStat, type Ctx, type PlayerState, type WorldState } from './state';
 
 export function refillPools(classDef: ClassDef, player: PlayerState): void {
@@ -12,7 +14,66 @@ export function refillPools(classDef: ClassDef, player: PlayerState): void {
 
 /** Permanent modifiers = loadout (gear, passives) + level stats. */
 function rebuildModifiers(player: PlayerState, rules: ProgressionRules): void {
-  player.modifiers = [...player.gearModifiers, ...levelModifiers(player.level, rules)];
+  player.levelModifiers = levelModifiers(player.level, rules);
+  player.modifiers = [...player.gearModifiers, ...player.levelModifiers];
+}
+
+type Pool = 'life' | 'energyShield' | 'mana';
+
+/** Current fill of each pool as a fraction of its max, taken before a loadout / mechanic change. */
+interface PoolSnapshot {
+  readonly main: Pool;
+  /** Fraction of the main pool (life, or ES under lifeToEnergyShield). */
+  readonly mainFraction: number;
+  /** Under lifeToEnergyShield: (ES + life) / (maxES + maxLife); otherwise the life fraction. */
+  readonly survivalFraction: number;
+  readonly energyShield: number;
+  readonly mana: number;
+}
+
+/** Fraction of a pool; a pool with max 0 counts as `ifEmpty` (it starts there and regenerates). */
+function fraction(value: number, max: number, ifEmpty: number): number {
+  return max > 0 ? clamp(value / max, 0, 1) : ifEmpty;
+}
+
+function snapshotPools(classDef: ClassDef, player: PlayerState): PoolSnapshot {
+  const main = lifeRecoveryPool(player.mechanics);
+  const maxLife = playerStat(classDef, player, 'life');
+  const maxShield = playerStat(classDef, player, 'energyShield');
+  const maxMana = playerStat(classDef, player, 'mana');
+  const lifeFraction = fraction(player.life, maxLife, 1);
+  return {
+    main,
+    // The main pool keeps the hero alive: a 0-max main pool counts as full rather than killing on the swap.
+    mainFraction: main === 'life' ? lifeFraction : fraction(player.energyShield, maxShield, 1),
+    survivalFraction: main === 'life' ? lifeFraction : fraction(player.energyShield + player.life, maxShield + maxLife, 1),
+    energyShield: fraction(player.energyShield, maxShield, 0),
+    mana: fraction(player.mana, maxMana, 0),
+  };
+}
+
+/**
+ * Re-applies pool fractions after the maximums changed (designer decision: fill fractions are kept).
+ * - The main pool gets the old main pool's fraction, even if the main pool itself switched
+ *   (taking Crystal Shell at 40% life gives 40% ES; removing it at 40% ES gives 40% life).
+ * - Leaving lifeToEnergyShield, the fixed life counts as part of the old pool: (ES + life) / (maxES + maxLife).
+ *   Otherwise a hero alive at 0 ES / 1 life would get 0 life without dying.
+ * - Under lifeToEnergyShield life is always at its fixed max.
+ * - Secondary ES (no lifeToEnergyShield) and mana keep their own fractions. A pool whose old max was 0
+ *   (no ES before; mana under bloodMagic) starts at 0 and regenerates, so a swap never refills a pool.
+ */
+function restorePools(classDef: ClassDef, player: PlayerState, before: PoolSnapshot): void {
+  const maxLife = playerStat(classDef, player, 'life');
+  const maxShield = playerStat(classDef, player, 'energyShield');
+  const maxMana = playerStat(classDef, player, 'mana');
+  if (lifeRecoveryPool(player.mechanics) === 'energyShield') {
+    player.life = maxLife;
+    player.energyShield = before.mainFraction * maxShield;
+  } else {
+    player.life = before.survivalFraction * maxLife;
+    player.energyShield = before.energyShield * maxShield;
+  }
+  player.mana = before.mana * maxMana;
 }
 
 /** Grants XP for a kill; each level-up rebuilds level stats and fully restores life, shield and mana. */
@@ -30,15 +91,43 @@ export function gainKillXp(ctx: Ctx, baseXp: number): void {
 }
 
 /**
- * Replaces the loadout modifiers mid-run (e.g. passives allocated while the tree is open in combat).
- * Current life / shield / mana keep their values, clamped to the new maximums.
+ * Replaces the loadout mid-run (e.g. passives allocated while the tree is open in combat).
+ * `mechanics` (passive tree mechanics, see heroMechanics) are replaced only when given.
+ * Life / shield / mana keep their fill fractions of the new maximums (see restorePools); this never refills.
+ * Level-ups do not go through here: they fully restore the pools (gainKillXp, docs/design/progression.md).
  */
-export function setLoadoutModifiers(world: WorldState, content: Content, modifiers: readonly Modifier[]): void {
+export function setLoadoutModifiers(
+  world: WorldState,
+  content: Content,
+  modifiers: readonly Modifier[],
+  mechanics?: readonly PassiveMechanic[],
+): void {
   const player = world.player;
   const classDef = getClass(content, player.classId);
+  const before = snapshotPools(classDef, player);
   player.gearModifiers = [...modifiers];
+  if (mechanics) player.mechanics = [...mechanics];
   rebuildModifiers(player, content.progression);
-  player.life = clamp(player.life, 0, playerStat(classDef, player, 'life'));
-  player.energyShield = clamp(player.energyShield, 0, playerStat(classDef, player, 'energyShield'));
-  player.mana = clamp(player.mana, 0, playerStat(classDef, player, 'mana'));
+  if (!player.dead) restorePools(classDef, player, before);
+}
+
+/**
+ * Restores life (life potions, life gain effects). Under lifeToEnergyShield it restores energy shield instead.
+ * Returns the amount actually restored.
+ */
+export function recoverLife(classDef: ClassDef, player: PlayerState, amount: number): number {
+  if (player.dead || amount <= 0) return 0;
+  const pool = lifeRecoveryPool(player.mechanics);
+  const max = playerStat(classDef, player, pool);
+  const before = player[pool];
+  player[pool] = clamp(before + amount, 0, Math.max(before, max));
+  return player[pool] - before;
+}
+
+/** Restores mana (mana potions). Does nothing under bloodMagic (max mana is 0). Returns the amount restored. */
+export function recoverMana(classDef: ClassDef, player: PlayerState, amount: number): number {
+  if (player.dead || amount <= 0) return 0;
+  const before = player.mana;
+  player.mana = clamp(before + amount, 0, Math.max(before, playerStat(classDef, player, 'mana')));
+  return player.mana - before;
 }

@@ -49,6 +49,7 @@ export function updateMobs(ctx: Ctx, dt: number): void {
           pierceLeft: 0,
           explodeRadius: 0,
           hitIds: [],
+          castModifiers: [],
         });
       } else {
         hitPlayer(ctx, def);

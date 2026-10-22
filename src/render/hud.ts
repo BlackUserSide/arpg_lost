@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { xpToNextLevel, type ProgressionRules } from '../core/progression/levels';
 import type { ActionDef, ClassDef } from '../core/world/content';
-import { playerStat, type WorldState } from '../core/world/world';
+import { actionCost, canAfford, lifeRecoveryPool, playerStat, type WorldState } from '../core/world/world';
 import { skillIcon } from './hudIcons';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
@@ -10,6 +10,9 @@ import { frameTexture, label, makeFrame, UI } from './ui';
 
 const DEPTH = 10000;
 const SLOT_KEYS = ['LMB', 'RMB', 'Q', 'E'];
+/** Energy shield colours, used when the shield fills the life orb. */
+const SHIELD_DEEP = 0x1d4f7a;
+const SHIELD_BRIGHT = 0x9fd8ff;
 
 interface Orb {
   ring: Phaser.GameObjects.Image;
@@ -27,6 +30,10 @@ interface Slot {
   icon: Phaser.GameObjects.Image;
   key: Phaser.GameObjects.Text;
   cdText: Phaser.GameObjects.Text;
+  /** Life price shown when skills cost life (Blood Magic); empty otherwise. */
+  costText: Phaser.GameObjects.Text;
+  /** The action is paid with life. */
+  lifeCost: boolean;
   x: number;
   y: number;
   size: number;
@@ -92,6 +99,10 @@ export class Hud {
   private infoFrame: Phaser.GameObjects.Image;
   private buffIcons: Phaser.GameObjects.GameObject[] = [];
   private time = 0;
+  /** Mechanics list the slot costs were computed for (the world replaces the array on change). */
+  private costsFor: unknown;
+  /** Caption on the mana orb when skills cost life instead (max mana 0). */
+  private readonly manaNote: Phaser.GameObjects.Text;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -112,10 +123,14 @@ export class Hud {
       key.setStroke('#000', 3);
       const cdText = label(scene, 0, 0, '', 18, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 3);
       cdText.setStroke('#000', 4);
-      return { action, frame, icon, key, cdText, x: 0, y: 0, size: 56 };
+      const costText = label(scene, 0, 0, '', 12, '#ff8a7a', true).setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH + 3);
+      costText.setStroke('#000', 3);
+      return { action, frame, icon, key, cdText, costText, lifeCost: false, x: 0, y: 0, size: 56 };
     });
     this.infoFrame = makeFrame(scene, 0, 0, 240, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
     this.info = label(scene, 0, 0, '', 15, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+    this.manaNote = label(scene, 0, 0, 'скіли за\nжиття', 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
+    this.manaNote.setStroke('#000', 3);
   }
 
   layout(width: number, height: number): void {
@@ -136,7 +151,9 @@ export class Hud {
       slot.icon.setPosition(slot.x, slot.y).setDisplaySize(size - 10, size - 10);
       slot.key.setPosition(slot.x, slot.y + size / 2 - 2);
       slot.cdText.setPosition(slot.x, slot.y);
+      slot.costText.setPosition(slot.x - size / 2 + 4, slot.y - size / 2 + 3);
     });
+    this.manaNote.setPosition(this.mana.x, this.mana.y);
     // XP bar spans the skill bar, just above it; level number to its left.
     const barH = compact ? 6 : 8;
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - size - (compact ? 10 : 14) - barH, w: total, h: barH };
@@ -156,24 +173,42 @@ export class Hud {
     const maxShield = playerStat(this.classDef, p, 'energyShield');
 
     const g = this.liquid.clear();
-    this.drawOrb(g, this.life, maxLife > 0 ? p.life / maxLife : 0);
-    this.drawOrb(g, this.mana, maxMana > 0 ? p.mana / maxMana : 0);
-    if (maxShield > 0 && p.energyShield > 0) {
+    // Crystal Shell leaves 1 life: energy shield is the real pool, so it fills the life orb.
+    const shieldIsPool = lifeRecoveryPool(p.mechanics) === 'energyShield' && maxShield > 0;
+    if (shieldIsPool) this.drawOrb(g, this.life, p.energyShield / maxShield, SHIELD_DEEP, SHIELD_BRIGHT);
+    else this.drawOrb(g, this.life, maxLife > 0 ? p.life / maxLife : 0);
+    // Blood Magic: no mana at all; the orb greys out and says skills cost life.
+    const noMana = maxMana <= 0;
+    if (noMana) g.fillStyle(0x1a1719, 1).fillCircle(this.mana.x, this.mana.y, this.mana.r);
+    else this.drawOrb(g, this.mana, p.mana / maxMana);
+    this.mana.ring.setAlpha(noMana ? 0.45 : 1);
+    this.mana.text.setVisible(!noMana);
+    this.manaNote.setVisible(noMana);
+    if (!shieldIsPool && maxShield > 0 && p.energyShield > 0) {
       // Energy shield: a pale arc hugging the life orb.
       g.lineStyle(5, 0x9fd8ff, 0.95);
       g.beginPath();
       g.arc(this.life.x, this.life.y, this.life.r - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (p.energyShield / maxShield));
       g.strokePath();
     }
-    this.life.text.setText(`${Math.ceil(p.life)}`);
+    this.life.text.setText(shieldIsPool ? `${Math.ceil(p.energyShield)}` : `${Math.ceil(p.life)}`);
     this.mana.text.setText(`${Math.floor(p.mana)}`);
 
+    if (this.costsFor !== p.mechanics) {
+      // Prices only change with the hero's mechanics, not every frame.
+      this.costsFor = p.mechanics;
+      for (const slot of this.slots) {
+        const cost = actionCost(p.mechanics, slot.action.manaCost);
+        slot.lifeCost = cost.pool === 'life';
+        slot.costText.setText(slot.lifeCost && cost.amount > 0 ? `♥${Math.round(cost.amount)}` : '');
+      }
+    }
     const s = this.shutters.clear();
     for (const slot of this.slots) {
       const cd = p.cooldowns[slot.action.id] ?? 0;
-      const noMana = p.mana < slot.action.manaCost;
-      slot.icon.setAlpha(cd > 0.05 || noMana ? 0.45 : 1);
-      if (noMana) slot.icon.setTint(0x6a7ab8);
+      const unaffordable = !canAfford(p, slot.action);
+      slot.icon.setAlpha(cd > 0.05 || unaffordable ? 0.45 : 1);
+      if (unaffordable) slot.icon.setTint(slot.lifeCost ? 0xb86a6a : 0x6a7ab8);
       else slot.icon.clearTint();
       if (cd > 0.05 && slot.action.cooldown > 0) {
         const frac = Math.min(1, cd / slot.action.cooldown);
@@ -250,8 +285,8 @@ export class Hud {
     orb.text.setPosition(x, y + r * 0.15).setFontSize(r > 45 ? 18 : 14);
   }
 
-  /** Liquid filled up to `frac`, with a gently moving surface. */
-  private drawOrb(g: Phaser.GameObjects.Graphics, orb: Orb, frac: number): void {
+  /** Liquid filled up to `frac`, with a gently moving surface. Colours default to the orb's own. */
+  private drawOrb(g: Phaser.GameObjects.Graphics, orb: Orb, frac: number, deep = orb.deep, bright = orb.bright): void {
     const { x, y, r } = orb;
     g.fillStyle(0x07060a, 1).fillCircle(x, y, r);
     const f = Phaser.Math.Clamp(frac, 0, 1);
@@ -269,10 +304,10 @@ export class Hud {
       const dx = -r + (2 * r * i) / steps;
       points.push(new Phaser.Math.Vector2(x + dx, y + Math.sqrt(Math.max(0, r * r - dx * dx))));
     }
-    g.fillStyle(orb.deep, 1).fillPoints(points, true);
+    g.fillStyle(deep, 1).fillPoints(points, true);
     // Bright surface line.
-    if (f < 1) g.lineStyle(2, orb.bright, 0.9).strokePoints(points.slice(0, steps + 1), false);
-    else g.fillStyle(orb.bright, 0.25).fillCircle(x, y + r * 0.3, r * 0.6);
+    if (f < 1) g.lineStyle(2, bright, 0.9).strokePoints(points.slice(0, steps + 1), false);
+    else g.fillStyle(bright, 0.25).fillCircle(x, y + r * 0.3, r * 0.6);
   }
 }
 

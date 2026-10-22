@@ -2,12 +2,13 @@ import * as Phaser from 'phaser';
 import { equippedWeapon } from '../core/items/equipment';
 import { equipFromStash, salvageFromStash, SALVAGE_CURRENCY, unequipToStash, type InventoryError } from '../core/items/inventory';
 import type { EquipSlot, Item } from '../core/items/types';
-import { heroModifiers } from '../core/progression/hero';
+import { heroMechanics, heroModifiers } from '../core/progression/hero';
+import { critStats } from '../core/world/passiveEffects';
 import { levelModifiers, xpToNextLevel } from '../core/progression/levels';
 import { findCharacter, type CharacterRecord } from '../core/progression/profile';
 import { computeStat } from '../core/stats/modifiers';
 import type { StatId } from '../core/stats/types';
-import { getClass } from '../core/world/world';
+import { deriveStat, getClass, type StatSource } from '../core/world/world';
 import { content } from '../data';
 import { itemsData } from '../data/items';
 import { passiveTree } from '../data/passives';
@@ -227,16 +228,24 @@ export class InventoryScene extends Phaser.Scene {
 
   private buildStats(character: CharacterRecord, x: number, y: number, w: number): void {
     const classDef = getClass(content, character.classId);
-    const mods = [...heroModifiers(character, itemsData, passiveTree), ...levelModifiers(character.level, content.progression)];
+    const levelMods = levelModifiers(character.level, content.progression);
+    const mods = [...heroModifiers(character, itemsData, passiveTree), ...levelMods];
+    const mechanics = heroMechanics(character, passiveTree);
+    // Keystones (Blood Magic, Crystal Shell, ...) change derived stats; core owns that math.
+    const source: StatSource = { baseStats: classDef.baseStats, modifiers: mods, levelModifiers: levelMods, mechanics };
     const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
     this.root.add(heading(this, x, y, 'Attributes', 18));
     const fmt = (v: number, kind: 'int' | 'pct' | 'dec'): string => (kind === 'pct' ? `${Math.round(v * 100)}%` : kind === 'dec' ? (Math.round(v * 10) / 10).toFixed(1) : String(Math.round(v)));
-    const rows: Array<[string, string]> = STAT_ROWS.map(([stat, name, kind]) => [name, fmt(computeStat(classDef.baseStats[stat] ?? 0, mods, stat), kind)]);
+    const rows: Array<[string, string]> = STAT_ROWS.map(([stat, name, kind]) => [name, fmt(deriveStat(source, stat), kind)]);
     const dmg = Object.entries(weapon.damage).map(([type, r]) => `${r.min}–${r.max} ${type.slice(0, 4)}`).join(', ');
     rows.push(['Weapon', dmg]);
     rows.push(['Attacks/sec', computeStat(weapon.attacksPerSecond, mods, 'attackSpeed', ['attack']).toFixed(2)]);
-    rows.push(['Crit chance', `${(computeStat(weapon.critChance, mods, 'critChance', ['attack']) * 100).toFixed(1)}%`]);
-    rows.push(['Move speed', String(Math.round(computeStat(classDef.baseStats.movementSpeed ?? 0, mods, 'movementSpeed')))]);
+    const crit = critStats(mechanics, {
+      critChance: computeStat(weapon.critChance, mods, 'critChance', ['attack']),
+      critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', ['attack']),
+    });
+    rows.push(['Crit chance', `${(crit.critChance * 100).toFixed(1)}% ×${crit.critMultiplier.toFixed(2)}`]);
+    rows.push(['Move speed', String(Math.round(deriveStat(source, 'movementSpeed')))]);
     rows.forEach(([name, value], i) => {
       this.root.add(label(this, x, y + 30 + i * 20, name, UI.size.small, UI.muted));
       this.root.add(label(this, x + w, y + 30 + i * 20, value, UI.size.small, UI.text, true).setOrigin(1, 0));

@@ -3,8 +3,8 @@
 
 import { equipmentModifiers, type Equipment } from '../items/equipment';
 import type { ItemsData } from '../items/types';
-import { passiveModifiers } from '../passives/allocation';
-import type { PassiveAllocation, PassiveTreeData } from '../passives/types';
+import { passiveMechanics, passiveModifiers } from '../passives/allocation';
+import type { PassiveAllocation, PassiveMechanic, PassiveTreeData } from '../passives/types';
 import type { Modifier } from '../stats/types';
 
 export interface HeroLoadoutSource {
@@ -18,4 +18,9 @@ export interface HeroLoadoutSource {
  */
 export function heroModifiers(hero: HeroLoadoutSource, items: ItemsData, tree: PassiveTreeData): Modifier[] {
   return [...equipmentModifiers(hero.equipment, items), ...passiveModifiers(tree, hero.passives)];
+}
+
+/** Passive tree mechanics the hero brings into a run (Loadout.mechanics / setLoadoutModifiers). */
+export function heroMechanics(hero: Pick<HeroLoadoutSource, 'passives'>, tree: PassiveTreeData): PassiveMechanic[] {
+  return passiveMechanics(tree, hero.passives);
 }

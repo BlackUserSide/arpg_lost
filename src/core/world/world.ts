@@ -2,16 +2,19 @@ import { add, clamp, normalize, scale, sub, vec } from '../math';
 import { createRng } from '../rng';
 import { computeStat } from '../stats/modifiers';
 import { performAction, pickAction, updateMotion } from './actions';
+import type { PassiveMechanic } from '../passives/types';
 import type { Modifier } from '../stats/types';
 import { levelModifiers } from '../progression/levels';
 import type { Content, WeaponDef } from './content';
 import { refillPools } from './experience';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
-import { allModifiers, clampToArena, getClass, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
+import { allModifiers, clampToArena, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
-export { setLoadoutModifiers } from './experience';
+export { recoverLife, recoverMana, setLoadoutModifiers } from './experience';
+export { canAfford } from './actions';
+export { actionCost, deriveStat, lifeRecoveryPool, type ActionCost, type StatSource } from './passiveEffects';
 
 /** What the hero brings into the run: level, equipment and passives as modifiers (see heroModifiers), plus the weapon. */
 export interface Loadout {
@@ -19,6 +22,8 @@ export interface Loadout {
   readonly xp?: number;
   readonly modifiers?: readonly Modifier[];
   readonly weapon?: WeaponDef;
+  /** Passive tree mechanics (keystones, spec effects); see heroMechanics. */
+  readonly mechanics?: readonly PassiveMechanic[];
 }
 
 /** `areaLevel` defaults to the hero's level. */
@@ -26,6 +31,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
   const classDef = getClass(content, classId);
   const level = loadout.level ?? 1;
   const gearModifiers = [...(loadout.modifiers ?? [])];
+  const levelMods = levelModifiers(level, content.progression);
   const player: PlayerState = {
     id: PLAYER_ID,
     classId,
@@ -40,7 +46,10 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     level,
     xp: loadout.xp ?? 0,
     gearModifiers,
-    modifiers: [...gearModifiers, ...levelModifiers(level, content.progression)],
+    modifiers: [...gearModifiers, ...levelMods],
+    levelModifiers: levelMods,
+    mechanics: [...(loadout.mechanics ?? [])],
+    stillTime: 0,
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
@@ -89,6 +98,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
 
   player.buffs = player.buffs.filter((b) => (b.remaining -= dt) > 0);
   player.invulnerable = Math.max(0, player.invulnerable - dt);
+  player.stillTime += dt;
 
   const maxLife = playerStat(classDef, player, 'life');
   const maxShield = playerStat(classDef, player, 'energyShield');
@@ -98,7 +108,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   player.mana = clamp(player.mana + playerStat(classDef, player, 'manaRegen') * dt, 0, maxMana);
 
   player.actionTimer = Math.max(0, player.actionTimer - dt);
-  const recovery = computeStat(1, allModifiers(player), 'cooldownRecovery');
+  const recovery = computeStat(1, allModifiers(classDef, player), 'cooldownRecovery');
   for (const id of Object.keys(player.cooldowns)) {
     player.cooldowns[id] = Math.max(0, (player.cooldowns[id] ?? 0) - dt * recovery);
   }
@@ -107,7 +117,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
 
   const move = normalize(input.move);
   const speed = playerStat(classDef, player, 'movementSpeed');
-  player.pos = clampToArena(add(player.pos, scale(move, speed * dt)), player.radius, content);
+  movePlayer(player, clampToArena(add(player.pos, scale(move, speed * dt)), player.radius, content));
 
   const aimDir = normalize(sub(input.aim, player.pos));
   if (aimDir.x !== 0 || aimDir.y !== 0) player.facing = aimDir;

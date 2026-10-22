@@ -31,17 +31,17 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
       if (mob.life <= 0 || p.hitIds.includes(mob.id)) continue;
       if (distance(p.pos, mob.pos) > p.radius + getMob(content, mob.defId).radius) continue;
       if (p.explodeRadius > 0) {
-        explode(ctx, action, p.pos, p.explodeRadius);
+        explode(ctx, action, p.pos, p.explodeRadius, p.castModifiers);
         return false;
       }
       p.hitIds.push(mob.id);
-      damageMob(ctx, action, mob);
+      damageMob(ctx, action, mob, p.castModifiers);
       if (--p.pierceLeft < 0) return false;
     }
   }
 
   if (p.remaining <= 0 || !insideArena(p.pos, content)) {
-    if (p.owner === 'player' && p.explodeRadius > 0) explode(ctx, findAction(ctx, p.sourceId), p.pos, p.explodeRadius);
+    if (p.owner === 'player' && p.explodeRadius > 0) explode(ctx, findAction(ctx, p.sourceId), p.pos, p.explodeRadius, p.castModifiers);
     return false;
   }
   return true;
@@ -59,7 +59,7 @@ export function updateTraps(ctx: Ctx, dt: number): void {
       trap.armTimer <= 0 &&
       world.mobs.some((mob) => mob.life > 0 && distance(mob.pos, trap.pos) <= triggerRadius + getMob(content, mob.defId).radius);
     if (triggered || trap.lifetime <= 0) {
-      explode(ctx, action, trap.pos, explodeRadius);
+      explode(ctx, action, trap.pos, explodeRadius, trap.castModifiers);
       return false;
     }
     return true;

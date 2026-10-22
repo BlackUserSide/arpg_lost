@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemsData } from '../items/types';
-import { heroModifiers } from '../progression/hero';
+import { heroMechanics, heroModifiers } from '../progression/hero';
 import {
   allocatableNodes,
   allocate,
@@ -25,7 +25,7 @@ import {
   validateAllocation,
 } from './allocation';
 import { changeSpec, refundNode, refundWheel, respecCost } from './respec';
-import type { PassiveHero, PassiveNodeDef, PassiveTreeData } from './types';
+import type { PassiveHero, PassiveMechanic, PassiveNodeDef, PassiveTreeData } from './types';
 
 /*
  Test tree:
@@ -313,6 +313,13 @@ describe('modifiers and mechanics', () => {
     const items = { bases: {}, affixes: [], rules: {} } as unknown as ItemsData;
     expect(heroModifiers({ equipment: {}, passives: { nodes: ['n1'], spec: null, specNodes: [] } }, items, tree)).toEqual([{ stat: 'life', kind: 'increased', value: 0.1 }]);
   });
+
+  it('heroMechanics returns the mechanics of allocated nodes', () => {
+    expect(heroMechanics({ passives: { nodes: ['n1', 'k1'], spec: 'sa', specNodes: ['sa_e', 'sa_k'] } }, tree)).toEqual([
+      { kind: 'bloodMagic', lifePerMana: 1 },
+      { kind: 'freezeDuration', increased: 0.5 },
+    ]);
+  });
 });
 
 describe('respec', () => {
@@ -381,9 +388,29 @@ describe('respec', () => {
 describe('pending mechanics', () => {
   it('flags nodes whose mechanics are not implemented yet', async () => {
     const { hasPendingMechanics } = await import('./mechanics');
+    const node = (mechanics: PassiveMechanic[]): PassiveNodeDef => ({ id: 'k', name: 'k', type: 'keystone', cost: 3, pos: { angleDeg: 0, radius: 0 }, mechanics });
     expect(hasPendingMechanics({ id: 'x', name: 'x', type: 'small', cost: 1, pos: { angleDeg: 0, radius: 0 } })).toBe(false);
-    expect(
-      hasPendingMechanics({ id: 'k', name: 'k', type: 'keystone', cost: 3, pos: { angleDeg: 0, radius: 0 }, mechanics: [{ kind: 'alwaysCrit', critMultiplier: 1.3 }] }),
-    ).toBe(true);
+    expect(hasPendingMechanics(node([{ kind: 'freezeDuration', increased: 0.5 }]))).toBe(true);
+    expect(hasPendingMechanics(node([{ kind: 'alwaysCrit', critMultiplier: 1.3 }, { kind: 'freezeDuration', increased: 0.5 }]))).toBe(true);
+  });
+
+  it('the four wheel keystone mechanics are implemented', async () => {
+    const { isMechanicPending } = await import('./mechanics');
+    const implemented: PassiveMechanic[] = [
+      { kind: 'bloodMagic', lifePerMana: 1 },
+      { kind: 'alwaysCrit', critMultiplier: 1.3 },
+      { kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true },
+      { kind: 'conditionalModifiers', condition: { kind: 'movedWithin', seconds: 0.5 }, modifiers: [] },
+      { kind: 'conditionalModifiers', condition: { kind: 'stationaryFor', seconds: 0.5 }, modifiers: [] },
+      { kind: 'conditionalModifiers', condition: { kind: 'lifeBelow', fraction: 0.5 }, modifiers: [] },
+      { kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'stun' }, modifiers: [] },
+    ];
+    expect(implemented.filter(isMechanicPending)).toEqual([]);
+  });
+
+  it('conditions on statuses combat does not have yet stay pending', async () => {
+    const { isMechanicPending } = await import('./mechanics');
+    expect(isMechanicPending({ kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'freeze' }, modifiers: [] })).toBe(true);
+    expect(isMechanicPending({ kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'ignite' }, modifiers: [] })).toBe(true);
   });
 });

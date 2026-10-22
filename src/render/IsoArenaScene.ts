@@ -5,7 +5,7 @@ import { createWorld, getClass, getMob, PLAYER_ID, setLoadoutModifiers, step, ty
 import { unspentPoints } from '../core/passives/allocation';
 import { equippedWeapon } from '../core/items/equipment';
 import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
-import { heroModifiers } from '../core/progression/hero';
+import { heroMechanics, heroModifiers } from '../core/progression/hero';
 import { applyRunResult, findCharacter } from '../core/progression/profile';
 import { createRng } from '../core/rng';
 import { itemsData } from '../data/items';
@@ -147,6 +147,7 @@ export class IsoArenaScene extends Phaser.Scene {
           level: character.level,
           xp: character.xp,
           modifiers: heroModifiers(character, itemsData, passiveTree),
+          mechanics: heroMechanics(character, passiveTree),
           weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon),
         }
       : {};
@@ -284,7 +285,7 @@ export class IsoArenaScene extends Phaser.Scene {
     // otherwise the saved allocation would exceed the saved level and be reset on the next load.
     character.level = this.world.player.level;
     character.xp = this.world.player.xp;
-    setLoadoutModifiers(this.world, this.content, heroModifiers(character, itemsData, passiveTree));
+    setLoadoutModifiers(this.world, this.content, heroModifiers(character, itemsData, passiveTree), heroMechanics(character, passiveTree));
     this.refreshBanner();
     if (save) app.save();
   }
