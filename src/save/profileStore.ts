@@ -2,12 +2,14 @@ import { createAllocation, validateAllocation } from '../core/passives/allocatio
 import type { PassiveAllocation, PassiveTreeData } from '../core/passives/types';
 import { createProfile, type Profile } from '../core/progression/profile';
 import { passiveTree } from '../data/passives';
+import { skillLevels } from '../data/skillLevels';
+import { readSkillProgress, type SkillLevelRules, type SkillProgress } from '../core/skills/levels';
 import type { KeyValueStorage } from '../platform/platform';
 
 // Versioned profile persistence. Bump SAVE_VERSION and add a migration whenever the Profile shape changes.
 
 export const SAVE_KEY = 'arpg.profile';
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 interface SaveFile {
   version: number;
@@ -42,6 +44,11 @@ const migrations: Record<number, (profile: unknown) => unknown> = {
       characters: (p.characters ?? []).map((c) => ({ ...c, equipment: equipment(c.equipment) })),
       ...(p.stash ? { stash: { ...p.stash, items: (p.stash.items ?? []).map((item) => v4Item(item)) } } : {}),
     };
+  },
+  // v5: skill levels. Characters get an empty skill record: every skill starts at level 1 with 0 XP.
+  4: (data) => {
+    const p = data as { characters?: Array<Record<string, unknown>> };
+    return { ...p, characters: (p.characters ?? []).map((c) => ({ skills: {}, ...c })) };
   },
 };
 
@@ -81,7 +88,7 @@ export interface LoadResult {
 }
 
 /** `tree` is used to validate passive allocations; a character with an invalid one gets a free full reset. */
-export function loadProfile(storage: KeyValueStorage, tree: PassiveTreeData = passiveTree): LoadResult {
+export function loadProfile(storage: KeyValueStorage, tree: PassiveTreeData = passiveTree, skillRules: SkillLevelRules = skillLevels.rules): LoadResult {
   const raw = storage.getItem(SAVE_KEY);
   if (!raw) return { profile: createProfile() };
   try {
@@ -93,7 +100,7 @@ export function loadProfile(storage: KeyValueStorage, tree: PassiveTreeData = pa
       if (!migrate) throw new Error(`No migration from version ${v}`);
       data = migrate(data);
     }
-    const profile = normalize(data);
+    const profile = normalize(data, skillRules);
     resetInvalidPassives(profile, tree);
     return { profile };
   } catch {
@@ -109,19 +116,33 @@ export function saveProfile(storage: KeyValueStorage, profile: Profile): void {
 }
 
 /** Fills fields missing from older or partial saves with defaults. */
-function normalize(data: unknown): Profile {
+function normalize(data: unknown, skillRules: SkillLevelRules): Profile {
   if (typeof data !== 'object' || data === null) throw new Error('Profile is not an object');
   const base = createProfile();
   const p = data as Partial<Profile>;
   if (!Array.isArray(p.characters)) throw new Error('Profile has no characters array');
   return {
-    characters: p.characters.map((c) => ({ ...c, equipment: c.equipment ?? {}, passives: normalizePassives(c.passives) })),
+    characters: p.characters.map((c) => ({ ...c, equipment: c.equipment ?? {}, passives: normalizePassives(c.passives), skills: normalizeSkills(c.skills, skillRules) })),
     stash: p.stash ?? base.stash,
     currency: p.currency ?? base.currency,
     records: { ...base.records, ...p.records },
     nextCharacterId: p.nextCharacterId ?? p.characters.length + 1,
     nextItemId: p.nextItemId ?? 1,
   };
+}
+
+/**
+ * Skill records with level / xp sanitized (readSkillProgress: level clamped to 1..max, XP ≥ 0); malformed entries
+ * are dropped (the skill reads as level 1). Other per-skill fields are kept for later additions (support slots).
+ */
+function normalizeSkills(raw: unknown, rules: SkillLevelRules): Record<string, SkillProgress> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, SkillProgress> = {};
+  for (const [id, record] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof record !== 'object' || record === null || Array.isArray(record)) continue;
+    out[id] = { ...(record as object), ...readSkillProgress(record, rules) };
+  }
+  return out;
 }
 
 /** Fills a partial or malformed allocation with defaults (missing / non-array fields become empty). */

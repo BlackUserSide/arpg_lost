@@ -5,6 +5,7 @@ import type { Equipment } from '../items/equipment';
 import type { Item } from '../items/types';
 import { createAllocation } from '../passives/allocation';
 import type { PassiveAllocation } from '../passives/types';
+import type { SkillProgress } from '../skills/levels';
 
 export interface ProfileRules {
   readonly maxCharacters: number;
@@ -29,6 +30,11 @@ export interface CharacterRecord {
   stats: CharacterStats;
   equipment: Equipment;
   passives: PassiveAllocation;
+  /**
+   * Per class skill id: level and XP (docs/design/classes.md «Рівні скілів»). A missing skill is level 1, 0 XP
+   * (read through classSkillProgress / skillLevelInfo). Support slots will join level / xp in these records.
+   */
+  skills: Record<string, SkillProgress>;
 }
 
 export interface ProfileRecords {
@@ -59,6 +65,8 @@ export interface RunResult {
   readonly clearTime?: number;
   /** Hero level and XP at the end of the run (XP is kept on death). */
   readonly progress?: { readonly level: number; readonly xp: number };
+  /** Skill levels and XP at the end of the run, per skill id (PlayerState.skillProgress; kept on death). */
+  readonly skills?: Readonly<Record<string, Readonly<SkillProgress>>>;
 }
 
 export type CreateCharacterError = 'limit' | 'name-length' | 'name-chars' | 'unknown-class';
@@ -101,6 +109,7 @@ export function createCharacter(
     stats: { runs: 0, deaths: 0, kills: 0, longestRun: 0 },
     equipment: {},
     passives: createAllocation(),
+    skills: {},
   };
   profile.characters.push(character);
   return { ok: true, character };
@@ -127,6 +136,10 @@ export function applyRunResult(profile: Profile, characterId: string, run: RunRe
   if (run.progress) {
     character.level = run.progress.level;
     character.xp = run.progress.xp;
+  }
+  // Only level / xp are replaced, so other per-skill fields (support slots later) are kept.
+  for (const [id, progress] of Object.entries(run.skills ?? {})) {
+    character.skills[id] = { ...character.skills[id], level: progress.level, xp: progress.xp };
   }
 
   const records = profile.records;

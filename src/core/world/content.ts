@@ -2,6 +2,7 @@ import type { CombatConfig } from '../combat/config';
 import type { BaseDamage } from '../combat/damage';
 import type { WeaponType } from '../items/types';
 import type { ProgressionRules } from '../progression/levels';
+import type { SkillLevelData } from '../skills/levels';
 import type { DamageType, ElementalType, Modifier, SkillTag, StatId } from '../stats/types';
 
 /** Where the action's damage comes from. Attacks scale weapon damage; spells have their own base damage. */
@@ -67,7 +68,7 @@ export interface TrapAura {
 /** How the action reaches its targets. */
 export type Delivery =
   /** Sector in front of the actor (360° = circle around the actor), closest first. */
-  | { readonly kind: 'arc'; readonly radius: number; readonly angleDeg: number; readonly maxTargets?: number }
+  | { readonly kind: 'arc'; readonly radius: number; readonly angleDeg: number; readonly maxTargets?: number; readonly everyNth?: ArcEveryNth }
   /** `count` projectiles fanned over `spreadDeg`. Explodes on first hit / end of range if explodeRadius is set. */
   | {
       readonly kind: 'projectile';
@@ -78,9 +79,10 @@ export type Delivery =
       readonly radius: number;
       readonly pierce: number;
       readonly explodeRadius?: number;
+      readonly split?: ProjectileSplit;
     }
   /** Moves the actor along the facing; enemies within hitRadius of the path are hit once. */
-  | { readonly kind: 'dash'; readonly distance: number; readonly speed: number; readonly hitRadius: number }
+  | { readonly kind: 'dash'; readonly distance: number; readonly speed: number; readonly hitRadius: number; readonly landing?: DashLanding }
   /** Instantly moves to the aim point, at most `range` away. */
   | { readonly kind: 'teleport'; readonly range: number }
   /**
@@ -107,7 +109,13 @@ export type Delivery =
 
 export type SelfEffect =
   | { readonly kind: 'buff'; readonly id: string; readonly modifiers: readonly Modifier[]; readonly duration: number }
-  | { readonly kind: 'invulnerable'; readonly duration: number };
+  | { readonly kind: 'invulnerable'; readonly duration: number }
+  /**
+   * Leaves a decoy where the hero stands when the action starts (before a dash moves them). While it lasts, every
+   * mob within tauntRadius of it targets the decoy instead of the hero (see Decoy). Bosses only for the first
+   * `bossTauntDuration` seconds (omit: the whole duration; 0: never).
+   */
+  | { readonly kind: 'decoy'; readonly id: string; readonly duration: number; readonly tauntRadius: number; readonly bossTauntDuration?: number };
 
 /** Basic attack or skill. */
 export interface ActionDef {
@@ -130,6 +138,68 @@ export interface ActionDef {
   readonly delivery: Delivery;
   readonly onHit?: readonly StatusEffect[];
   readonly selfEffects?: readonly SelfEffect[];
+  /**
+   * Stat modifiers of this action only (from skill changes: skill levels, later supports), added to the hero's
+   * modifiers for its use time and its hits. Usually absent in class data; see SkillChangeSet.modifiers.
+   */
+  readonly modifiers?: readonly Modifier[];
+  /**
+   * Ground zone left where the action's area resolves: at the hero for arc actions (novas, swings), at the
+   * explosion for projectiles and traps. Usually granted by skill changes (SkillGrants.groundZone).
+   */
+  readonly zone?: GroundZoneDef;
+}
+
+/** Every `every`-th use of an arc action swings `angleDeg` instead (PlayerState.useCounts counts the uses). */
+export interface ArcEveryNth {
+  readonly every: number;
+  readonly angleDeg: number;
+}
+
+/**
+ * When a dash ends (full distance or blocked), everyone within `radius` (+ their radius) of the hero is hit by the
+ * dash action at `effectiveness` × its damage, with its on-hit statuses (stuns follow the usual boss rules).
+ */
+export interface DashLanding {
+  readonly radius: number;
+  readonly effectiveness: number;
+}
+
+/**
+ * Where a hero projectile explodes (or, without explodeRadius, at the hit that consumes it), it splits into
+ * `count` child projectiles fanned over `spreadDeg` around its direction. Children deal damageMultiplier × the
+ * parent's damage, keep its tags, modifiers, on-hit statuses and cast snapshot, never split again and leave no
+ * zone. They pass through (no contact hit with) the targets the parent's impact / explosion already hit, but
+ * their own explosion, set off by another target or at the end of their range, can still splash those targets.
+ * No split outside the arena.
+ */
+export interface ProjectileSplit {
+  readonly count: number;
+  readonly spreadDeg: number;
+  readonly speed: number;
+  readonly range: number;
+  readonly radius: number;
+  readonly explodeRadius?: number;
+  readonly damageMultiplier: number;
+}
+
+/**
+ * A ground zone (fire puddle, ice field; later supports and elites). Hero-side: it affects mobs only.
+ * - tick: every `interval` seconds (first tick one interval after it appears) each living mob inside takes
+ *   `damage` (rolled once per tick) scaled by the hero's increased / more damage modifiers (not flat added
+ *   damage) with the action's tags and own modifiers; mitigated, no crit, no leech, no resource, no stun bar (a
+ *   damage over time, like ignite). The action's ignite on-hit statuses (hero ignite sources) may apply; other
+ *   on-hit statuses do not. See updateZones (zones.ts).
+ * - slow: mobs inside are slowed like by a trap aura (MobState.auraSlow).
+ */
+export interface GroundZoneDef {
+  /** Kind for render ('fire_puddle', 'ice_field'). */
+  readonly id: string;
+  readonly duration: number;
+  /** Omit: the radius of the area that left the zone. */
+  readonly radius?: number;
+  readonly tick?: { readonly interval: number; readonly damage: BaseDamage };
+  readonly slow?: number;
 }
 
 export interface WeaponDef {
@@ -244,4 +314,6 @@ export interface Content {
   readonly mobs: Readonly<Record<string, MobDef>>;
   readonly arena: ArenaDef;
   readonly progression: ProgressionRules;
+  /** Skill levels and XP (docs/design/classes.md «Рівні скілів»). Absent: skills stay at level 1 and gain no XP. */
+  readonly skillLevels?: SkillLevelData;
 }

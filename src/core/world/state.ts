@@ -4,6 +4,7 @@ import type { PassiveMechanic } from '../passives/types';
 import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
 import type { ActionDef, ClassDef, Content, MobDef, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
 import { resolveActions, type ActionSet } from '../skills/params';
+import { skillLevelChangeSets, type SkillProgress } from '../skills/levels';
 import {
   activeConditionalModifiers,
   deriveStat,
@@ -70,9 +71,19 @@ export interface PlayerState {
    * (see chargeInfo in charges.ts).
    */
   charges: Record<string, number>;
+  /**
+   * Uses so far this run per action id, counted only for actions with a use rhythm (arc everyNth); never reset
+   * during the run. The n-th use is the special one when n % every === 0.
+   */
+  useCounts: Record<string, number>;
   level: number;
   /** XP towards the next level. */
   xp: number;
+  /**
+   * Level and XP of every class skill (all of them are on the bar), keyed by skill id; filled at spawn from
+   * Loadout.skills. Kills add skill XP (gainKillXp); a skill level-up rebuilds `actions`. Saved via RunResult.skills.
+   */
+  skillProgress: Record<string, SkillProgress>;
   /** Modifiers brought into the run (items, passives); level stats are added on top. */
   gearModifiers: readonly Modifier[];
   /** Permanent modifiers: gear + level. Rebuilt on level-up. */
@@ -82,9 +93,10 @@ export interface PlayerState {
   /** Passive tree mechanics brought into the run (keystones, spec effects); see passiveEffects.ts. */
   mechanics: readonly PassiveMechanic[];
   /**
-   * Effective basic attack and skills: class data with the skill changes of `mechanics` applied
-   * (core/skills/params). Derived plain data, rebuilt whenever the mechanics change (createWorld,
-   * setLoadoutModifiers). The simulation reads actions from here, never from the class data.
+   * Effective basic attack and skills: class data with the skill changes of `mechanics` and then of the skill
+   * levels (`skillProgress`) applied (core/skills/params). Derived plain data, rebuilt whenever either changes
+   * (createWorld, setLoadoutModifiers, skill level-up). The simulation reads actions from here, never from the
+   * class data.
    */
   actions: ActionSet;
   /** Stun bar rules of `mechanics` (stunBarStats), cached with `actions`; undefined without a stunBar mechanic. */
@@ -142,9 +154,9 @@ export interface MobState {
   /** Seconds since the last hero hit that filled the stun bar (stunBar decay delay). */
   stunBarIdle: number;
   /**
-   * Slow from armed trap auras (TrapAura), as a magnitude (0 = none). Recomputed every step by updateTraps from the
-   * traps around the mob, so it lasts exactly while the mob stays in range (applied to movement on the next
-   * step's mob update). Own slot like freezeSlow: never merges into `slow`; the strongest active slow applies,
+   * Slow from armed trap auras (TrapAura) and slowing ground zones, as a magnitude (0 = none). Recomputed every
+   * step (updateAuraSlows) from the traps and zones around the mob, so it lasts exactly while the mob stays in
+   * range (applied to movement on the next step's mob update). Own slot like freezeSlow: never merges into `slow`; the strongest active slow applies,
    * and while it is > 0 the mob counts as slowed (conditions, freeze-if-slowed). Render may read it directly.
    */
   auraSlow: number;
@@ -199,6 +211,41 @@ export interface Trap {
   readonly castModifiers: readonly Modifier[];
 }
 
+/** A hero ground zone on the floor (GroundZoneDef): damages and / or slows mobs inside. */
+export interface GroundZone {
+  readonly id: number;
+  /** Action that left it (its snapshot below). */
+  readonly actionId: string;
+  /** GroundZoneDef.id: what render draws ('fire_puddle', 'ice_field'). */
+  readonly kind: string;
+  readonly pos: Vec2;
+  readonly radius: number;
+  /** Seconds left. */
+  remaining: number;
+  /** Seconds until the next damage tick (unused without a tick). */
+  tickTimer: number;
+  /** The effective action when the zone appeared (damage tags, own modifiers, ignite sources, zone def). */
+  readonly action: ActionDef;
+  /** Hero conditional modifiers locked at cast time (see Projectile.castModifiers). */
+  readonly castModifiers: readonly Modifier[];
+}
+
+/**
+ * A hero decoy (SelfEffect 'decoy'): mobs within tauntRadius target it instead of the hero. It has no life: hits
+ * on it do nothing, it lasts its duration. Mob projectiles that touch it are absorbed.
+ */
+export interface Decoy {
+  readonly id: number;
+  /** SelfEffect id: what render draws. */
+  readonly kind: string;
+  readonly pos: Vec2;
+  readonly radius: number;
+  readonly tauntRadius: number;
+  remaining: number;
+  /** Seconds bosses are still taunted (counts down with `remaining`; ≤ 0: bosses ignore the decoy). */
+  bossTauntRemaining: number;
+}
+
 export interface WorldState {
   time: number;
   rngState: number;
@@ -207,12 +254,16 @@ export interface WorldState {
   mobs: MobState[];
   projectiles: Projectile[];
   traps: Trap[];
+  zones: GroundZone[];
+  decoys: Decoy[];
   spawn: { timer: number; wave: number };
   kills: number;
   /** Level of the area (map level); scales mob XP. */
   readonly areaLevel: number;
   /** Total XP earned this run. */
   xpGained: number;
+  /** Skill XP each class skill was offered this run (the same amount goes to every skill; max-level skills drop it). */
+  skillXpGained: number;
 }
 
 export interface PlayerInput {
@@ -243,6 +294,8 @@ export type WorldEvent =
       sourceMobId?: number;
       /** A trap set off by another trap's explosion (chain detonation). */
       chain?: true;
+      /** What set off this area: the special N-th swing of an arc (Cleave circle), or a dash landing. */
+      trigger?: 'everyNth' | 'dashLanding';
     }
   /** A hero trap vanished without exploding: the oldest one, removed because the active-trap cap was reached. */
   | { type: 'trapRemoved'; trapId: number; pos: Vec2; reason: 'limit' }
@@ -258,11 +311,22 @@ export type WorldEvent =
   /** Damage over time dealt this step (one event per mob per step; aggregate for damage numbers). */
   | { type: 'dot'; targetId: number; pos: Vec2; amount: number; status: StatusId }
   | { type: 'teleport'; from: Vec2; to: Vec2 }
-  | { type: 'mobAttack'; id: number }
-  | { type: 'hit'; targetId: number; pos: Vec2; amount: number; isCrit: boolean }
+  /** Mob `id` attacked; `decoyId` is set when its target was a decoy (not the hero). */
+  | { type: 'mobAttack'; id: number; decoyId?: number }
+  /** `source` 'zone': a ground zone damage tick (`zoneId`); omitted for ordinary hits. */
+  | { type: 'hit'; targetId: number; pos: Vec2; amount: number; isCrit: boolean; source?: 'zone'; zoneId?: number }
+  /** A ground zone appeared; it lasts `duration` seconds (see GroundZone). */
+  | { type: 'zoneSpawn'; zoneId: number; kind: string; actionId: string; pos: Vec2; radius: number; duration: number }
+  | { type: 'zoneExpire'; zoneId: number }
+  | { type: 'decoySpawn'; decoyId: number; kind: string; pos: Vec2; radius: number; duration: number }
+  | { type: 'decoyExpire'; decoyId: number }
+  /** A hero projectile split (ProjectileSplit) at `pos` into the child projectiles `childIds`. */
+  | { type: 'projectileSplit'; projectileId: number; actionId: string; pos: Vec2; childIds: number[] }
   | { type: 'spawn'; id: number }
   | { type: 'death'; id: number; pos: Vec2 }
   | { type: 'levelUp'; level: number }
+  /** A class skill reached `level` (one event per level gained); its effective action has already changed. */
+  | { type: 'skillLevelUp'; skillId: string; level: number }
   | { type: 'playerDeath' };
 
 /** Everything a system needs during one step. */
@@ -287,9 +351,17 @@ export function getMob(content: Content, id: string): MobDef {
   return def;
 }
 
-/** What the hero's passive mechanics derive once per loadout (PlayerState.actions, PlayerState.stunBarStats). */
-export function deriveFromMechanics(classDef: ClassDef, mechanics: readonly PassiveMechanic[]): Pick<PlayerState, 'actions' | 'stunBarStats'> {
-  return { actions: resolveActions(classDef, skillChangeSets(mechanics)), stunBarStats: stunBarStats(mechanics) };
+/**
+ * What the hero's passive mechanics and skill levels derive once per loadout (PlayerState.actions,
+ * PlayerState.stunBarStats). Change sets: passive tree first, then skill levels (incl. level effects).
+ */
+export function deriveFromMechanics(
+  content: Content,
+  classDef: ClassDef,
+  player: Pick<PlayerState, 'mechanics' | 'skillProgress'>,
+): Pick<PlayerState, 'actions' | 'stunBarStats'> {
+  const sets = [...skillChangeSets(player.mechanics), ...skillLevelChangeSets(classDef, player.skillProgress, content.skillLevels)];
+  return { actions: resolveActions(classDef, sets), stunBarStats: stunBarStats(player.mechanics) };
 }
 
 /** Permanent modifiers and buffs, without conditional (passive mechanic) modifiers. */

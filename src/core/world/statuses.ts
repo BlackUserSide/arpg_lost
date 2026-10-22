@@ -202,12 +202,12 @@ export function tickIgnite(ctx: Ctx, mob: MobState, dt: number): void {
 }
 
 /**
- * Trap auras: each living mob gets auraSlow = the strongest slow of the armed traps whose aura.radius (+ the mob's
- * radius) reaches it, else 0. Recomputed every step, so the slow ends on the step after the mob leaves the range
- * (or the trap explodes). A trap removed by the active-trap cap drops its aura at once (placeTrap calls this).
- * Movement reads it on the next step's mob update.
+ * Area slows: each living mob gets auraSlow = the strongest slow of the armed trap auras and slowing ground zones
+ * whose radius (+ the mob's radius) reaches it, else 0. Recomputed every step (after traps and zones update), so
+ * the slow ends on the step after the mob leaves the range (or the trap explodes / the zone expires). A trap removed
+ * by the active-trap cap drops its aura at once (placeTrap calls this). Movement reads it on the next step's mob update.
  */
-export function updateTrapAuras(ctx: Ctx): void {
+export function updateAuraSlows(ctx: Ctx): void {
   const { world, content } = ctx;
   for (const mob of world.mobs) {
     let slow = 0;
@@ -216,6 +216,11 @@ export function updateTrapAuras(ctx: Ctx): void {
       for (const trap of world.traps) {
         if (!trap.aura || trap.armTimer > 0) continue;
         if (distance(mob.pos, trap.pos) <= trap.aura.radius + reach) slow = Math.max(slow, trap.aura.slow);
+      }
+      for (const zone of world.zones) {
+        const zoneSlow = zone.action.zone?.slow;
+        if (zoneSlow === undefined || zone.remaining <= 0) continue;
+        if (distance(mob.pos, zone.pos) <= zone.radius + reach) slow = Math.max(slow, zoneSlow);
       }
     }
     mob.auraSlow = slow;
