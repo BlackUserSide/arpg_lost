@@ -7,7 +7,7 @@ import { getApp, type App } from './app';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
-import { CLASS_LOOKS, loadSprites, ORIGIN_Y, textureKey } from './sprites';
+import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { confirmDialog, fadeIn, heading, label, makeAvatar, makeButton, makeCard, makeFrame, UI } from './ui';
 
 const AVATAR_KEY = 'user-avatar';
@@ -162,7 +162,7 @@ export class MainMenuScene extends Phaser.Scene {
     if (look) {
       // Portrait: front-facing idle frame, cropped by the row height.
       const portrait = this.add
-        .sprite(left + h * 0.5, y + h / 2 - 6, textureKey(look.sprite, 'idle'), 6 * 4)
+        .sprite(left + h * 0.5, y + h / 2 - 6, textureKey(look.sprite, 'idle'), spriteFrame(look.sprite, 'idle', 6, 0))
         .setOrigin(0.5, ORIGIN_Y)
         .setScale((h - 10) / 66);
       portrait.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
