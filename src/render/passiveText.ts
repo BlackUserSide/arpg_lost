@@ -212,6 +212,7 @@ export function formatMechanic(m: PassiveMechanic): string[] {
       return [
         `Кожне влучання наповнює шкалу оглушення ворога на ${pct(m.baseFill)} + урон / макс. життя ворога × ${pct(m.damageFill)}`,
         `Повна шкала оглушує на ${num(m.stunDuration)} с (бос: наповнення ×${num(m.bossFillFactor)}, ${num(m.bossStunDuration)} с)`,
+        `Без ударів ${num(m.decayDelay)} с шкала спадає на ${pct(m.decayPerSecond)}/с`,
       ];
     case 'stunBonus':
       return [`${signedPct(m.fillIncreased)} наповнення шкали оглушення`, `${signedPct(m.durationIncreased)} тривалості оглушень`];

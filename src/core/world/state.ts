@@ -62,6 +62,8 @@ export interface PlayerState {
    * second. Leech is allowed while it is below one second's worth of cap. 0 at spawn.
    */
   leechRecent: number;
+  /** Seconds until counterAttack can trigger again (its internal cooldown); 0 = ready. */
+  counterCooldown: number;
   /** Equipped weapon, or the class default. */
   weapon: WeaponDef;
   buffs: Buff[];
@@ -93,6 +95,18 @@ export interface MobState {
    * While it runs the boss counts as frozen (and as slowed).
    */
   freezeSlow: number;
+  /**
+   * Bosses only: the strong slow that replaces an ordinary stun (CombatConfig.bossStunSlow), own slot like
+   * `freezeSlow`. While it runs the boss counts as stunned (and as slowed). The stun bar's stun is a real stun.
+   */
+  stunSlow: number;
+  /**
+   * Stun bar fill (stunBar mechanic), 0..1 where 1 = full; a full bar stuns and resets to 0. Decays after
+   * stunBarIdle reaches the mechanic's decayDelay (no events while decaying). Render may read it directly (max is 1).
+   */
+  stunBar: number;
+  /** Seconds since the last hero hit that filled the stun bar (stunBar decay delay). */
+  stunBarIdle: number;
 }
 
 export interface Projectile {
@@ -179,8 +193,15 @@ export type WorldEvent =
       damageType?: DamageType;
       sourceMobId?: number;
     }
-  /** A status was applied to (or refreshed on) a living mob; `duration` is its new remaining time. */
-  | { type: 'status'; targetId: number; pos: Vec2; status: StatusId; duration: number }
+  /**
+   * A status was applied to (or refreshed on) a living mob; `duration` is its new remaining time. `source`
+   * 'stunBar': the stun of a full stun bar (omitted for statuses from hits).
+   */
+  | { type: 'status'; targetId: number; pos: Vec2; status: StatusId; duration: number; source?: 'stunBar' }
+  /** A hero hit changed a living mob's stun bar; `value` is the new fill (0..1; 0 after a full bar stunned and reset). */
+  | { type: 'stunBar'; targetId: number; value: number }
+  /** The hero retaliated (counterAttack) with `actionId` (the basic attack) at `targetId`; `facing` points at it. */
+  | { type: 'counter'; actionId: string; targetId: number; facing: Vec2 }
   /** Damage over time dealt this step (one event per mob per step; aggregate for damage numbers). */
   | { type: 'dot'; targetId: number; pos: Vec2; amount: number; status: StatusId }
   | { type: 'teleport'; from: Vec2; to: Vec2 }

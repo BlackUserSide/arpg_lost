@@ -77,7 +77,10 @@ export type PassiveMechanic =
       /** Duration changes for one on-hit status only (see SkillChangeSet.statusDurations). */
       readonly statusDurations?: NonNullable<SkillChangeSet['statusDurations']>;
     }
-  /** Hits fill the target's stun bar by baseFill + damage / maxLife × damageFill; full bar stuns and resets. */
+  /**
+   * Hits fill the target's stun bar by baseFill + damage / maxLife × damageFill; full bar stuns and resets.
+   * After decayDelay seconds without a hero hit on that mob the bar drains decayPerSecond (fraction of a full bar) per second.
+   */
   | {
       readonly kind: 'stunBar';
       readonly baseFill: number;
@@ -85,6 +88,8 @@ export type PassiveMechanic =
       readonly stunDuration: number;
       readonly bossFillFactor: number;
       readonly bossStunDuration: number;
+      readonly decayDelay: number;
+      readonly decayPerSecond: number;
     }
   /** Increased stun bar fill and stun duration (all stuns). */
   | { readonly kind: 'stunBonus'; readonly fillIncreased: number; readonly durationIncreased: number }

@@ -11,7 +11,8 @@ export type DamageSpec =
 
 /**
  * Statuses combat implements (on MobState):
- * - stun / freeze: the mob cannot move or attack. Bosses are never frozen (see CombatConfig.bossFreezeSlow).
+ * - stun / freeze: the mob cannot move or attack. Bosses are never frozen (see CombatConfig.bossFreezeSlow) and
+ *   ordinary stuns only slow them (CombatConfig.bossStunSlow); only a full stun bar stuns a boss.
  * - slow: speed (movement and attack timer) reduced by its magnitude.
  * - ignite: fire damage over time; does not stack, the strongest (highest damage per second) applies.
  */
@@ -132,7 +133,10 @@ export interface MobDef {
   readonly moveSpeed: number;
   /** Ranged mobs try to stay at this distance from the player. */
   readonly preferredRange?: number;
-  /** Bosses are not frozen (a freeze becomes a strong slow) and a slowed boss counts as frozen for conditions. */
+  /**
+   * Bosses are not frozen or stunned (each becomes a strong slow; while it runs the boss counts as frozen /
+   * stunned for conditions). Exception: a full stun bar stuns a boss (bossFillFactor, bossStunDuration).
+   */
   readonly boss?: boolean;
   readonly attack: {
     readonly damage: BaseDamage;

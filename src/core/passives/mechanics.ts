@@ -6,9 +6,6 @@
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveNodeDef } from './types';
 
 export const PENDING_MECHANICS: ReadonlySet<PassiveMechanicKind> = new Set<PassiveMechanicKind>([
-  // Also the consumer of stunBonus.fillIncreased (stunBonus itself is live: its duration part applies to all stuns).
-  'stunBar',
-  'counterAttack',
   'distanceDamage',
   'trapCharges',
   'trapAura',

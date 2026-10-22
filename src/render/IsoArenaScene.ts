@@ -12,7 +12,7 @@ import { itemsData } from '../data/items';
 import { content } from '../data';
 import { passiveTree } from '../data/passives';
 import { getApp } from './app';
-import { CombatFx, statusLook } from './combatFx';
+import { CombatFx, STUN_BAR_FLASH, statusLook } from './combatFx';
 import { Hud } from './hud';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
@@ -44,6 +44,8 @@ const SNAP_DISTANCE = 80;
 const MOB_SMOOTHING = 22;
 /** Below this speed (world units/s) an actor is considered standing. */
 const MOVING_SPEED = 8;
+/** How fast the displayed stun bar catches up with the core fill (1/s, exponential). */
+const STUN_BAR_SMOOTHING = 18;
 /** Ignite damage is summed per mob and shown as one number this often (seconds). */
 const DOT_NUMBER_INTERVAL = 0.5;
 
@@ -71,6 +73,10 @@ interface Actor {
   oneShot: { anim: string; elapsed: number } | undefined;
   /** Frozen as of the last synced frame (mobs only): holds its pose, no hit reaction. */
   frozen: boolean;
+  /** Displayed stun bar fill (mobs only), easing towards MobState.stunBar. */
+  stunBarShown: number;
+  /** Remaining full-bar flash after the stun bar stunned this mob (seconds, visual only). */
+  stunBarFlash: number;
 }
 
 interface Corpse {
@@ -145,6 +151,9 @@ export class IsoArenaScene extends Phaser.Scene {
   private banner!: PointsBanner;
   /** The current mouse/touch press started on a HUD control, so it must not attack. */
   private uiPress = false;
+  /** The hero's counter-attack animation and the direction it faces while it plays (core keeps the hero's facing). */
+  private counterShot: Actor['oneShot'];
+  private counterFacing: Vec2 = vec(1, 0);
 
   constructor() {
     super('iso-arena');
@@ -190,6 +199,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.dotTallies.clear();
     this.skillWasDown = [];
     this.skillBuffer = [];
+    this.counterShot = undefined;
 
     for (const [set, anims] of Object.entries(SPRITE_SETS)) {
       for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
@@ -517,6 +527,25 @@ export class IsoArenaScene extends Phaser.Scene {
         this.playOneShot(this.hero, ACTION_ANIMS[event.actionId] ?? 'attack');
         break;
       }
+      case 'counter': {
+        // Free retaliation: the basic attack animation toward the attacker plus a golden slash and shield pop.
+        this.counterFacing = event.facing;
+        this.counterShot = this.playOneShot(this.hero, ACTION_ANIMS[event.actionId] ?? 'attack');
+        const from = toScreen(this.world.player.pos);
+        const toward = toScreen(vec(this.world.player.pos.x + event.facing.x, this.world.player.pos.y + event.facing.y));
+        this.combatFx.counter(from.x, from.y, toward.x - from.x, toward.y - from.y);
+        break;
+      }
+      case 'status':
+        if (event.source === 'stunBar') {
+          const actor = this.mobs.get(event.targetId);
+          if (actor) {
+            actor.stunBarFlash = STUN_BAR_FLASH;
+            actor.stunBarShown = 0;
+            this.combatFx.stunBarBurst(actor.sprite.x, actor.sprite.y);
+          }
+        }
+        break;
       case 'area':
         if (event.source === 'deathExplosion') {
           const s = toScreen(event.origin);
@@ -581,7 +610,7 @@ export class IsoArenaScene extends Phaser.Scene {
 
   private createActor(set: string, pos: Vec2): Actor {
     const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y);
-    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false };
+    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0 };
   }
 
   /** Remembers where everything was before a sim step, for interpolation. */
@@ -608,15 +637,17 @@ export class IsoArenaScene extends Phaser.Scene {
     return d > SNAP_DISTANCE ? 0 : d / DT;
   }
 
-  private playOneShot(actor: Actor, anim: string): void {
-    if (actor.oneShot?.anim === 'death') return;
+  private playOneShot(actor: Actor, anim: string): Actor['oneShot'] {
+    if (actor.oneShot?.anim === 'death') return undefined;
     actor.oneShot = { anim, elapsed: 0 };
+    return actor.oneShot;
   }
 
   private syncActors(dt: number): void {
     const player = this.world.player;
     const classDef = getClass(this.content, this.classId);
-    if (!player.dead) this.hero.facing = player.motion ? player.motion.dir : player.facing;
+    if (this.counterShot && this.hero.oneShot !== this.counterShot) this.counterShot = undefined;
+    if (!player.dead) this.hero.facing = this.counterShot ? this.counterFacing : player.motion ? player.motion.dir : player.facing;
     this.hero.display = this.interpolated(PLAYER_ID, player.pos);
     this.updateActor(this.hero, dt, this.speedOf(PLAYER_ID, player.pos), classDef.baseStats.movementSpeed ?? 200);
     this.hero.sprite.setAlpha(player.invulnerable > 0 ? 0.55 : 1);
@@ -638,8 +669,9 @@ export class IsoArenaScene extends Phaser.Scene {
       // A frozen mob holds its pose; a boss under freeze (freezeSlow) only looks frozen and keeps moving.
       actor.frozen = mob.freeze > 0;
       this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), def.moveSpeed, actor.frozen);
+      // Likewise a boss under an ordinary stun (stunSlow) looks stunned but keeps moving.
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
-      const look = statusLook(frozenLook, mob.stun, mob.ignite, mob.slow, this.world.time, mob.id);
+      const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, mob.slow, this.world.time, mob.id);
       if (look === undefined) actor.sprite.clearTint();
       else actor.sprite.setTint(look.color).setTintMode(look.mode);
     }
@@ -779,7 +811,13 @@ export class IsoArenaScene extends Phaser.Scene {
       if (!actor) continue;
       const radius = getMob(this.content, mob.defId).radius;
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
-      this.combatFx.drawMobStatus(g, top, actor.sprite.x, actor.sprite.y, radius, frozenLook, mob.stun, mob.ignite, this.world.time, dt, mob.id);
+      this.combatFx.drawMobStatus(g, top, actor.sprite.x, actor.sprite.y, radius, frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, this.world.time, dt, mob.id);
+      // Stun bar (stunBar mechanic): eases up to the core fill, snaps down on reset; flashes full after a stun.
+      actor.stunBarFlash = Math.max(0, actor.stunBarFlash - dt);
+      if (mob.stunBar < actor.stunBarShown) actor.stunBarShown = mob.stunBar;
+      else actor.stunBarShown += (mob.stunBar - actor.stunBarShown) * (1 - Math.exp(-STUN_BAR_SMOOTHING * dt));
+      if (actor.stunBarShown < 0.002 && mob.stunBar <= 0) actor.stunBarShown = 0;
+      this.combatFx.drawStunBar(top, actor.sprite.x, actor.sprite.y, actor.stunBarShown, actor.stunBarFlash);
     }
     this.combatFx.drawBursts(g, top, dt);
 

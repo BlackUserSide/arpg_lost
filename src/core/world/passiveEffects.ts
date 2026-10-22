@@ -8,7 +8,9 @@
 // - conditionalModifiers: movedWithin / stationaryFor / lifeBelow / targetHasStatus (stun, slow, ignite, freeze).
 // - moreDamagePerMissingLife: hero-state "more" damage from missing life (see missingLifeModifier).
 // - skillParams: converted to SkillChangeSets (skillChangeSets) and resolved once per loadout (core/skills).
-// - stunBonus: stun duration part (stunDurationMultiplier); fill is for stunBar (pending).
+// - stunBonus: stun duration (skill stuns via skillChangeSets, the stun bar via stunDurationMultiplier) and stun bar fill.
+// - stunBar: hero hits fill the target's bar, a full bar stuns (bosses too) and resets (stunBarStats; statuses.ts).
+// - counterAttack: a survived melee hit is answered with the basic attack, with an internal cooldown (actions.ts).
 // - lifeLeech: hits restore a fraction of damage dealt, capped per second (see leechStats, applyLeech).
 // - lifePotionEffectiveness: data only until potions exist (see lifePotionMultiplier).
 // - ignite / freezeSlowed: converted to on-hit statuses of the actions (skillChangeSets); combat in statuses.ts.
@@ -276,10 +278,60 @@ export function deathExplosionRadiusMultiplier(mechanics: readonly PassiveMechan
 
 /**
  * Multiplier on stun durations from stunBonus: 1 + Σ durationIncreased (never below 0). Skill stuns get it via
- * skillChangeSets; this is for stuns that do not come from an action (the stun bar, when implemented).
+ * skillChangeSets (same sum); this is for stuns that do not come from an action (the stun bar).
  */
 export function stunDurationMultiplier(mechanics: readonly PassiveMechanic[]): number {
   let increased = 0;
   for (const m of mechanics) if (m.kind === 'stunBonus') increased += m.durationIncreased;
   return Math.max(0, 1 + increased);
+}
+
+/** The stun bar rules of the hero, with stunBonus fill / duration bonuses summed in. */
+export interface StunBarStats {
+  readonly baseFill: number;
+  readonly damageFill: number;
+  readonly stunDuration: number;
+  readonly bossFillFactor: number;
+  readonly bossStunDuration: number;
+  /** Seconds without a hero hit before the bar starts to drain. */
+  readonly decayDelay: number;
+  /** Fraction of a full bar drained per second once decaying. */
+  readonly decayPerSecond: number;
+  /** 1 + Σ stunBonus.fillIncreased (never below 0); all sources add like increased. */
+  readonly fillMultiplier: number;
+  /** stunDurationMultiplier: the same additive sum skill stuns use. */
+  readonly durationMultiplier: number;
+}
+
+/** Stun bar stats from the first stunBar mechanic (several do not stack), or undefined without one. */
+export function stunBarStats(mechanics: readonly PassiveMechanic[]): StunBarStats | undefined {
+  const bar = findMechanic(mechanics, 'stunBar');
+  if (!bar) return undefined;
+  let fillIncreased = 0;
+  for (const m of mechanics) if (m.kind === 'stunBonus') fillIncreased += m.fillIncreased;
+  return {
+    baseFill: bar.baseFill,
+    damageFill: bar.damageFill,
+    stunDuration: bar.stunDuration,
+    bossFillFactor: bar.bossFillFactor,
+    bossStunDuration: bar.bossStunDuration,
+    decayDelay: bar.decayDelay,
+    decayPerSecond: bar.decayPerSecond,
+    fillMultiplier: Math.max(0, 1 + fillIncreased),
+    durationMultiplier: stunDurationMultiplier(mechanics),
+  };
+}
+
+/**
+ * Fill one hit adds to a stun bar: (baseFill + removed / maxLife × damageFill) × fillMultiplier, × bossFillFactor
+ * on bosses. `removed` is the life the hit actually took (overkill excluded, as for leech).
+ */
+export function stunBarFill(stats: StunBarStats, removed: number, maxLife: number, boss: boolean): number {
+  const damagePart = maxLife > 0 ? (removed / maxLife) * stats.damageFill : 0;
+  return (stats.baseFill + damagePart) * stats.fillMultiplier * (boss ? stats.bossFillFactor : 1);
+}
+
+/** Counter-attack rules from the first counterAttack mechanic (several do not stack), or undefined. */
+export function counterAttackStats(mechanics: readonly PassiveMechanic[]): MechanicOf<'counterAttack'> | undefined {
+  return findMechanic(mechanics, 'counterAttack');
 }

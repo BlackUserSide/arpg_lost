@@ -337,7 +337,8 @@ const specDefs: SpecSpec[] = [
       entry: { name: 'Залізна стіна', modifiers: [inc('armour', 0.25), inc('life', 0.05)] },
       key: {
         name: 'Шкала оглушення',
-        mechanics: [{ kind: 'stunBar', baseFill: 0.1, damageFill: 1, stunDuration: 1, bossFillFactor: 0.5, bossStunDuration: 0.4 }],
+        // Decay (designer decision 2026-10-22, PROPOSAL numbers): after 2 s without hero hits the bar drains 25% of the bar per second.
+        mechanics: [{ kind: 'stunBar', baseFill: 0.1, damageFill: 1, stunDuration: 1, bossFillFactor: 0.5, bossStunDuration: 0.4, decayDelay: 2, decayPerSecond: 0.25 }],
       },
       a1: { name: 'Важка рука', mechanics: [{ kind: 'stunBonus', fillIncreased: 0.3, durationIncreased: 0.3 }] },
       a2: { name: 'Контратака', mechanics: [{ kind: 'counterAttack', effectiveness: 1, cooldown: 1 }] },

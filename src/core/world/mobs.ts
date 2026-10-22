@@ -4,14 +4,17 @@ import type { Defences } from '../combat/mitigation';
 import { add, distance, normalize, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { Content, MobDef } from './content';
+import { counterAttack } from './actions';
 import { heroDeathExplosions } from './deathExplosions';
 import { gainKillXp } from './experience';
-import { tickIgnite } from './statuses';
+import { stunBarStats } from './passiveEffects';
+import { decayStunBar, tickIgnite } from './statuses';
 import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
   const { world, content, events } = ctx;
   const player = world.player;
+  const barStats = stunBarStats(player.mechanics);
   for (const mob of world.mobs) {
     // Mobs killed earlier this step neither act nor tick: their statuses at death stay as they were.
     if (mob.life <= 0) continue;
@@ -20,6 +23,8 @@ export function updateMobs(ctx: Ctx, dt: number): void {
     const def = getMob(content, mob.defId);
     mob.slow = Math.max(0, mob.slow - dt);
     mob.freezeSlow = Math.max(0, mob.freezeSlow - dt);
+    mob.stunSlow = Math.max(0, mob.stunSlow - dt);
+    if (barStats) decayStunBar(mob, barStats, dt);
     const speedFactor = 1 - slowFraction(mob, content);
     // Stunned or frozen: cannot move or attack (the attack timer does not run either).
     const disabled = mob.stun > 0 || mob.freeze > 0;
@@ -60,21 +65,26 @@ export function updateMobs(ctx: Ctx, dt: number): void {
           castModifiers: [],
         });
       } else {
-        hitPlayer(ctx, def);
+        hitPlayer(ctx, def, mob);
       }
     }
   }
   separateMobs(world, content);
 }
 
-/** Fraction of speed removed now: the stronger of the active slow and the boss freeze-slow (0..1). */
+/** Fraction of speed removed now: the strongest of the active slow and the boss freeze- / stun-slows (0..1). */
 export function slowFraction(mob: MobState, content: Content): number {
   const slow = mob.slow > 0 ? mob.slowMagnitude : 0;
   const freezeSlow = mob.freezeSlow > 0 ? content.combat.bossFreezeSlow : 0;
-  return Math.min(1, Math.max(0, slow, freezeSlow));
+  const stunSlow = mob.stunSlow > 0 ? content.combat.bossStunSlow : 0;
+  return Math.min(1, Math.max(0, slow, freezeSlow, stunSlow));
 }
 
-export function hitPlayer(ctx: Ctx, mobDef: MobDef): void {
+/**
+ * A mob attack lands on the hero. `meleeAttacker`: the attacking mob, for melee hits only (mob projectiles pass
+ * nothing); a melee hit that the hero survives may trigger counterAttack against it.
+ */
+export function hitPlayer(ctx: Ctx, mobDef: MobDef, meleeAttacker?: MobState): void {
   const { world, content, classDef, rng, events } = ctx;
   const player = world.player;
   if (player.dead || player.invulnerable > 0) return;
@@ -103,7 +113,9 @@ export function hitPlayer(ctx: Ctx, mobDef: MobDef): void {
     player.dead = true;
     player.motion = undefined;
     events.push({ type: 'playerDeath' });
+    return;
   }
+  if (meleeAttacker) counterAttack(ctx, meleeAttacker);
 }
 
 /** Pushes overlapping mobs apart and out of the player, so crowds surround instead of stacking. */
@@ -177,6 +189,9 @@ export function updateSpawner(ctx: Ctx, dt: number): void {
       igniteDps: 0,
       freeze: 0,
       freezeSlow: 0,
+      stunSlow: 0,
+      stunBar: 0,
+      stunBarIdle: 0,
     };
     world.mobs.push(mob);
     events.push({ type: 'spawn', id: mob.id });

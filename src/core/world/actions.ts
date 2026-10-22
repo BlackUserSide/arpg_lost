@@ -4,8 +4,8 @@ import { add, distance, dot, normalize, rotate, scale, sub, type Vec2 } from '..
 import { computeStat } from '../stats/modifiers';
 import type { ActionDef } from './content';
 import { applyLeech } from './experience';
-import { actionCost, canPay, critStats } from './passiveEffects';
-import { applyStatus, conditionTarget } from './statuses';
+import { actionCost, canPay, counterAttackStats, critStats, stunBarStats } from './passiveEffects';
+import { applyStatus, conditionTarget, fillStunBar } from './statuses';
 import type { Modifier } from '../stats/types';
 import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState } from './state';
 
@@ -201,22 +201,28 @@ export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, 
  * (projectiles, traps) pass `castModifiers`, the hero conditions locked when the action fired.
  * Target conditions (stunned / slowed / ignited / frozen target) are always evaluated at the hit, before its
  * statuses apply. On-hit statuses come from the action (cast-time snapshot for delayed hits); see applyStatus.
+ * `effectiveness` scales the rolled base damage (counter-attacks). Damage hits then fill the stun bar (stunBar
+ * mechanic, read live at the hit) with the life actually removed, after the on-hit statuses.
+ * Only these direct hero hits fill the bar: ignite ticks and death explosions do not.
+ * Fill uses the life actually removed (designer decision 2026-10-22).
  */
-export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifiers?: readonly Modifier[]): void {
+export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifiers?: readonly Modifier[], effectiveness = 1): void {
   const { world, content, classDef, rng, events } = ctx;
   if (!action.damage && !(action.onHit && action.onHit.length > 0)) return;
   const def = getMob(content, mob.defId);
   const before = conditionTarget(mob);
   const mods = allModifiers(classDef, world.player, before, castModifiers);
   let raw: DamageByType | undefined;
+  let removed = 0;
   if (action.damage) {
     let rolled: DamageByType;
     let baseCrit: number;
     if (action.damage.source === 'weapon') {
-      rolled = scaleDamage(rollBaseDamage(rng, world.player.weapon.damage), action.damage.effectiveness);
+      rolled = scaleDamage(rollBaseDamage(rng, world.player.weapon.damage), action.damage.effectiveness * effectiveness);
       baseCrit = world.player.weapon.critChance;
     } else {
       rolled = rollBaseDamage(rng, action.damage.base);
+      if (effectiveness !== 1) rolled = scaleDamage(rolled, effectiveness);
       baseCrit = action.damage.critChance;
     }
     const damage = computeDamage(rolled, mods, action.tags);
@@ -226,7 +232,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
     });
     const hit = resolveHit(rng, { damage, critChance, critMultiplier }, { armour: def.armour, resistances: def.resistances }, content.combat);
     // Leech counts only the life actually removed (overkill does not leech).
-    const removed = Math.max(0, Math.min(hit.total, mob.life));
+    removed = Math.max(0, Math.min(hit.total, mob.life));
     mob.life -= hit.total;
     events.push({ type: 'hit', targetId: mob.id, pos: mob.pos, amount: hit.total, isCrit: hit.isCrit });
     applyLeech(classDef, world.player, removed);
@@ -234,4 +240,26 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
   }
   const hit = { mods, tags: action.tags, raw, before };
   for (const effect of action.onHit ?? []) applyStatus(ctx, mob, effect, hit);
+  if (action.damage) {
+    const bar = stunBarStats(world.player.mechanics);
+    if (bar) fillStunBar(ctx, mob, bar, removed);
+  }
+}
+
+/**
+ * counterAttack: the hero survived a melee hit from `attacker`. If the internal cooldown is ready, the effective
+ * basic attack (player.actions.basicAttack: its damage, tags, crit and on-hit statuses) hits the attacker directly
+ * at `effectiveness`, then the cooldown restarts. Free and instant: no cost, no action timer, no basic-attack
+ * delivery (no arc / projectile; only the attacker is hit), facing unchanged. Emits 'counter' for the animation.
+ * It ignores the basic attack's delivery (single target, even for a ranged basic attack), costs nothing and
+ * triggers while dashing / casting too (designer decision 2026-10-22).
+ */
+export function counterAttack(ctx: Ctx, attacker: MobState): void {
+  const player = ctx.world.player;
+  const counter = counterAttackStats(player.mechanics);
+  if (!counter || player.counterCooldown > 0 || player.dead || attacker.life <= 0) return;
+  player.counterCooldown = counter.cooldown;
+  const action = player.actions.basicAttack;
+  ctx.events.push({ type: 'counter', actionId: action.id, targetId: attacker.id, facing: normalize(sub(attacker.pos, player.pos)) });
+  damageMob(ctx, action, attacker, undefined, counter.effectiveness);
 }

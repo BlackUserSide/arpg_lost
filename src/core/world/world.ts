@@ -23,11 +23,15 @@ export {
   lifePotionMultiplier,
   lifeRecoveryPool,
   skillChangeSets,
+  stunBarStats,
   stunDurationMultiplier,
   type ActionCost,
   type StatSource,
 } from './passiveEffects';
 export { resolveAction, resolveActions, skillMatches, type ActionSet } from '../skills/params';
+
+/** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
+const TIME_EPSILON = 1e-9;
 
 /** What the hero brings into the run: level, equipment and passives as modifiers (see heroModifiers), plus the weapon. */
 export interface Loadout {
@@ -66,6 +70,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     actions: resolveActions(classDef, skillChangeSets(mechanics)),
     stillTime: 0,
     leechRecent: 0,
+    counterCooldown: 0,
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
@@ -115,6 +120,8 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   player.buffs = player.buffs.filter((b) => (b.remaining -= dt) > 0);
   player.invulnerable = Math.max(0, player.invulnerable - dt);
   player.stillTime += dt;
+  // Snap float leftovers (1 − 60 × 1/60) so a 1 s internal cooldown ends after exactly 60 steps.
+  player.counterCooldown = player.counterCooldown - dt > TIME_EPSILON ? player.counterCooldown - dt : 0;
 
   const maxLife = playerStat(classDef, player, 'life');
   const maxShield = playerStat(classDef, player, 'energyShield');

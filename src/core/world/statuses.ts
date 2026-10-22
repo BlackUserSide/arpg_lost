@@ -6,7 +6,7 @@ import { resistanceMultiplier } from '../combat/mitigation';
 import { computeStat } from '../stats/modifiers';
 import type { Modifier, Tag } from '../stats/types';
 import type { StatusEffect } from './content';
-import type { ConditionTarget } from './passiveEffects';
+import { stunBarFill, type ConditionTarget, type StunBarStats } from './passiveEffects';
 import { getMob, type Ctx, type MobState } from './state';
 
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
@@ -16,11 +16,14 @@ const TIME_EPSILON = 1e-9;
  * The mob's statuses as seen by conditions (targetHasStatus, freeze-if-slowed, death explosions).
  * A boss is never frozen: while its freeze-slow runs it counts as frozen (and slowed); after that, a remaining
  * ordinary slow makes it just slowed (designer decision 2026-10-22).
+ * A boss is not stunned by ordinary stuns either; while the stun-slow that replaces them runs, it counts as
+ * stunned (and slowed), by analogy with the freeze-slow.
+ * It counts as stunned, so e.g. «Добити лежачого» +25% applies (designer decision 2026-10-22).
  */
 export function conditionTarget(mob: MobState): ConditionTarget {
   return {
-    stun: mob.stun,
-    slow: Math.max(mob.slow, mob.freezeSlow),
+    stun: Math.max(mob.stun, mob.stunSlow),
+    slow: Math.max(mob.slow, mob.freezeSlow, mob.stunSlow),
     ignite: mob.ignite,
     freeze: Math.max(mob.freeze, mob.freezeSlow),
   };
@@ -68,14 +71,52 @@ export function applyStatus(ctx: Ctx, mob: MobState, effect: StatusEffect, hit: 
   }
 }
 
-function statusEvent(ctx: Ctx, mob: MobState, status: StatusEffect['status'], duration: number): void {
-  if (mob.life > 0) ctx.events.push({ type: 'status', targetId: mob.id, pos: mob.pos, status, duration });
+function statusEvent(ctx: Ctx, mob: MobState, status: StatusEffect['status'], duration: number, source?: 'stunBar'): void {
+  if (mob.life <= 0) return;
+  ctx.events.push({ type: 'status', targetId: mob.id, pos: mob.pos, status, duration, ...(source ? { source } : {}) });
 }
 
+/**
+ * Ordinary stun (from a hit). Bosses are not stunned (designer decision 2026-10-22): they get the stun-slow
+ * (CombatConfig.bossStunSlow, own slot MobState.stunSlow) for the same duration; the event still says 'stun'
+ * with the stun-slow's remaining time, like the boss freeze.
+ * The boss stun-slow lasts as long as the stun would (no separate boss duration); magnitude is data (designer decision 2026-10-22).
+ */
 function setStun(ctx: Ctx, mob: MobState, duration: number): void {
   if (duration <= 0) return;
+  if (getMob(ctx.content, mob.defId).boss) {
+    mob.stunSlow = Math.max(mob.stunSlow, duration);
+    statusEvent(ctx, mob, 'stun', mob.stunSlow);
+    return;
+  }
   mob.stun = Math.max(mob.stun, duration);
   statusEvent(ctx, mob, 'stun', mob.stun);
+}
+
+/**
+ * Fills the mob's stun bar after a direct hero hit (stunBar mechanic; see stunBarFill). A full bar (≥ 1) stuns
+ * for stunDuration × durationMultiplier (bosses: bossStunDuration × durationMultiplier, a real stun: the
+ * exception to "bosses are not stunned") and resets to 0; the overflow is discarded. Emits a 'stunBar' event
+ * with the new fill, and a 'status' event with source 'stunBar' when it stuns. No-op on a mob the hit killed.
+ * Every fill restarts the decay delay (stunBarIdle = 0). The bar keeps filling while the mob is stunned and the
+ * overflow is lost (designer decision 2026-10-22).
+ */
+export function fillStunBar(ctx: Ctx, mob: MobState, stats: StunBarStats, removed: number): void {
+  if (mob.life <= 0) return;
+  const boss = getMob(ctx.content, mob.defId).boss === true;
+  const fill = mob.stunBar + stunBarFill(stats, removed, mob.maxLife, boss);
+  mob.stunBarIdle = 0;
+  if (fill < 1) {
+    mob.stunBar = fill;
+    ctx.events.push({ type: 'stunBar', targetId: mob.id, value: fill });
+    return;
+  }
+  mob.stunBar = 0;
+  ctx.events.push({ type: 'stunBar', targetId: mob.id, value: 0 });
+  const duration = (boss ? stats.bossStunDuration : stats.stunDuration) * stats.durationMultiplier;
+  if (duration <= 0) return;
+  mob.stun = Math.max(mob.stun, duration);
+  statusEvent(ctx, mob, 'stun', mob.stun, 'stunBar');
 }
 
 /** A new slow keeps the stronger magnitude while the old one runs; duration is the longer of the two. */
@@ -84,6 +125,18 @@ function setSlow(ctx: Ctx, mob: MobState, magnitude: number, duration: number): 
   mob.slowMagnitude = mob.slow > 0 ? Math.max(mob.slowMagnitude, magnitude) : magnitude;
   mob.slow = Math.max(mob.slow, duration);
   statusEvent(ctx, mob, 'slow', mob.slow);
+}
+
+/**
+ * Stun bar decay for one fixed step (designer decision 2026-10-22): once stunBarIdle has reached decayDelay, the bar
+ * drains decayPerSecond × dt (floored at 0); then stunBarIdle grows by dt. A hit at step n (stunBarIdle = 0) is
+ * first drained on the step decayDelay later. No events: render reads mob.stunBar.
+ */
+export function decayStunBar(mob: MobState, stats: StunBarStats, dt: number): void {
+  if (mob.stunBar > 0 && mob.stunBarIdle >= stats.decayDelay - TIME_EPSILON) {
+    mob.stunBar = Math.max(0, mob.stunBar - stats.decayPerSecond * dt);
+  }
+  mob.stunBarIdle += dt;
 }
 
 /**

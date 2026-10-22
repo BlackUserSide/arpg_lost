@@ -82,7 +82,7 @@ function makeContent(baseStats: ClassDef['baseStats'] = {}): Content {
     skills: [sweep, blink, charge],
   };
   return {
-    combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5 },
+    combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5, bossStunSlow: 0.5 },
     classes: { hero },
     mobs: { dummy },
     arena: { width: 1000, height: 1000, spawn: { firstDelay: 1000, interval: 1000, batchStart: 0, batchGrowth: 0, maxAlive: 0, mobIds: ['dummy'] } },
@@ -101,7 +101,7 @@ const idle: PlayerInput = { move: vec(0, 0), aim: vec(1000, 500), basicAttack: f
 const attack: PlayerInput = { ...idle, basicAttack: true };
 
 function addMob(world: WorldState, x: number, y: number, life = 1000): MobState {
-  const mob: MobState = { id: world.nextId++, defId: 'dummy', pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0 };
+  const mob: MobState = { id: world.nextId++, defId: 'dummy', pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0 };
   world.mobs.push(mob);
   return mob;
 }

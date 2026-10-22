@@ -390,8 +390,8 @@ describe('pending mechanics', () => {
     const { hasPendingMechanics } = await import('./mechanics');
     const node = (mechanics: PassiveMechanic[]): PassiveNodeDef => ({ id: 'k', name: 'k', type: 'keystone', cost: 3, pos: { angleDeg: 0, radius: 0 }, mechanics });
     expect(hasPendingMechanics({ id: 'x', name: 'x', type: 'small', cost: 1, pos: { angleDeg: 0, radius: 0 } })).toBe(false);
-    expect(hasPendingMechanics(node([{ kind: 'counterAttack', effectiveness: 0.5, cooldown: 1 }]))).toBe(true);
-    expect(hasPendingMechanics(node([{ kind: 'alwaysCrit', critMultiplier: 1.3 }, { kind: 'counterAttack', effectiveness: 0.5, cooldown: 1 }]))).toBe(true);
+    expect(hasPendingMechanics(node([{ kind: 'trapAura', radius: 100, slow: 0.3 }]))).toBe(true);
+    expect(hasPendingMechanics(node([{ kind: 'alwaysCrit', critMultiplier: 1.3 }, { kind: 'trapAura', radius: 100, slow: 0.3 }]))).toBe(true);
   });
 
   it('the wheel keystone mechanics are implemented', async () => {
