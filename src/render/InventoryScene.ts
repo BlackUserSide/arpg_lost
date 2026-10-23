@@ -12,55 +12,60 @@ import { deriveStat, getClass, type StatSource } from '../core/world/world';
 import { content } from '../data';
 import { itemsData } from '../data/items';
 import { passiveTree } from '../data/passives';
+import { formatNumber, t, upper, type MessageKey } from '../i18n';
 import { getApp, type App } from './app';
 import { itemIcon } from './itemIcons';
-import { describeItem } from './itemText';
-import { resourceNames } from './resourceText';
+import { className, itemName } from './contentText';
+import { describeItem, rarityLabel } from './itemText';
+import { shardsWord } from './passiveText';
+import { resourceText } from './resourceText';
+import { damageTypeText, num } from './statText';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { SupportsSceneData } from './SupportsScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
-import { confirmDialog, fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
+import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
 // Paper doll (8 slots) + shared stash + item details. Select-then-act controls so it works by touch;
 // double click / double tap equips or unequips directly.
 
 type Selection = { where: 'stash'; id: string } | { where: 'equip'; slot: EquipSlot } | undefined;
 
-const DOLL: ReadonlyArray<{ slot: EquipSlot; col: number; row: number; name: string }> = [
-  { slot: 'weapon', col: 0, row: 0, name: 'Weapon' },
-  { slot: 'helmet', col: 1, row: 0, name: 'Helmet' },
-  { slot: 'amulet', col: 2, row: 0, name: 'Amulet' },
-  { slot: 'gloves', col: 0, row: 1, name: 'Gloves' },
-  { slot: 'armour', col: 1, row: 1, name: 'Armour' },
-  { slot: 'ring1', col: 2, row: 1, name: 'Ring' },
-  { slot: 'boots', col: 1, row: 2, name: 'Boots' },
-  { slot: 'ring2', col: 2, row: 2, name: 'Ring' },
+const DOLL: ReadonlyArray<{ slot: EquipSlot; col: number; row: number; name: MessageKey }> = [
+  { slot: 'weapon', col: 0, row: 0, name: 'inv.slot.weapon' },
+  { slot: 'helmet', col: 1, row: 0, name: 'inv.slot.helmet' },
+  { slot: 'amulet', col: 2, row: 0, name: 'inv.slot.amulet' },
+  { slot: 'gloves', col: 0, row: 1, name: 'inv.slot.gloves' },
+  { slot: 'armour', col: 1, row: 1, name: 'inv.slot.armour' },
+  { slot: 'ring1', col: 2, row: 1, name: 'inv.slot.ring' },
+  { slot: 'boots', col: 1, row: 2, name: 'inv.slot.boots' },
+  { slot: 'ring2', col: 2, row: 2, name: 'inv.slot.ring' },
 ];
 
-const ERRORS: Record<InventoryError, string> = {
-  'wrong-slot': 'That does not go there.',
-  level: 'Your level is too low for this item.',
-  'weapon-type': 'Your class cannot wield this weapon.',
-  'unknown-base': 'Unknown item.',
-  'stash-full': 'Your stash is full.',
-  'no-item': 'Nothing selected.',
-  'no-character': 'No hero selected.',
+const ERROR_KEY: Readonly<Record<InventoryError, MessageKey>> = {
+  'wrong-slot': 'inv.error.wrongSlot',
+  level: 'inv.error.level',
+  'weapon-type': 'inv.error.weaponType',
+  'unknown-base': 'inv.error.unknownBase',
+  'stash-full': 'inv.error.stashFull',
+  'no-item': 'inv.error.noItem',
+  'no-character': 'inv.error.noCharacter',
 };
 
-const STAT_ROWS: ReadonlyArray<[StatId, string, 'int' | 'pct' | 'dec']> = [
-  ['life', 'Life', 'int'],
-  ['energyShield', 'Energy Shield', 'int'],
-  ['resource', 'Resource', 'int'], // shown with the class's own resource name
-  ['armour', 'Armour', 'int'],
-  ['fireResistance', 'Fire Res', 'pct'],
-  ['coldResistance', 'Cold Res', 'pct'],
-  ['lightningResistance', 'Lightning Res', 'pct'],
-  ['lifeRegen', 'Life Regen', 'dec'],
+/** Attribute rows; the resource row (null) is named after the class's own resource. */
+const STAT_ROWS: ReadonlyArray<[StatId, MessageKey | null, 'int' | 'pct' | 'dec']> = [
+  ['life', 'inv.stat.life', 'int'],
+  ['energyShield', 'inv.stat.energyShield', 'int'],
+  ['resource', null, 'int'],
+  ['armour', 'inv.stat.armour', 'int'],
+  ['fireResistance', 'inv.stat.fireResistance', 'pct'],
+  ['coldResistance', 'inv.stat.coldResistance', 'pct'],
+  ['lightningResistance', 'inv.stat.lightningResistance', 'pct'],
+  ['lifeRegen', 'inv.stat.lifeRegen', 'dec'],
 ];
 
 function levelLine(character: CharacterRecord): string {
   const next = xpToNextLevel(character.level, content.progression);
-  return Number.isFinite(next) ? `Level ${character.level} · ${Math.floor(character.xp)} / ${next} XP` : `Level ${character.level}`;
+  return Number.isFinite(next) ? t('inv.levelLine', { level: character.level, xp: Math.floor(character.xp), next }) : t('common.level', { level: character.level });
 }
 
 function sameSelection(a: Selection, b: Selection): boolean {
@@ -132,18 +137,23 @@ export class InventoryScene extends Phaser.Scene {
     const titleH = compact ? 40 : 64;
     const look = CLASS_LOOKS.find((l) => l.classId === character.classId);
 
-    const title = heading(this, m + 4, compact ? 4 : 12, compact ? character.name : `${character.name} — ${look?.name ?? ''}`, compact ? 24 : 34);
+    const title = heading(this, m + 4, compact ? 4 : 12, compact ? character.name : t('inv.title', { name: character.name, class: className(character.classId) }), compact ? 24 : 34);
     this.root.add(title);
-    this.root.add(label(this, title.x + title.width + 16, title.y + title.height - (compact ? 20 : 26), levelLine(character), UI.size.small, UI.goldBrightText));
-    this.root.add(makeButton(this, width - m - 60, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, 'Back', () => this.back()));
+    // The level line sits between the title and the header buttons (Supports is the leftmost, 130 wide at -250): it
+    // shrinks into that gap, or hides on screens too narrow for it.
+    const levelX = title.x + title.width + 16;
+    const levelRoom = width - m - 60 - 250 - 65 - 8 - levelX;
+    const level = fitText(label(this, levelX, title.y + title.height - (compact ? 20 : 26), levelLine(character), UI.size.small, UI.goldBrightText), levelRoom);
+    this.root.add(level.setVisible(level.width <= levelRoom));
+    this.root.add(makeButton(this, width - m - 60, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, t('common.back'), () => this.back()));
     this.root.add(
-      makeButton(this, width - m - 60 - 120, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, 'Таланти', () => {
+      makeButton(this, width - m - 60 - 120, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, t('menu.talents'), () => {
         const data: PassiveTreeSceneData = { characterId: character.id, returnTo: 'inventory' };
         this.scene.start('passive-tree', data);
       }),
     );
     this.root.add(
-      makeButton(this, width - m - 60 - 250, titleH / 2 + (compact ? 0 : 4), 130, compact ? 34 : 42, 'Модифікатори', () => {
+      makeButton(this, width - m - 60 - 250, titleH / 2 + (compact ? 0 : 4), 130, compact ? 34 : 42, t('menu.supports'), () => {
         const data: SupportsSceneData = { characterId: character.id, returnTo: 'inventory' };
         this.scene.start('supports', data);
       }),
@@ -162,7 +172,7 @@ export class InventoryScene extends Phaser.Scene {
     for (const d of DOLL) {
       const x = dollX - (cell + gap) + d.col * (cell + gap);
       const y = gridTop + cell / 2 + d.row * (cell + gap + 14);
-      this.buildSlot(character, d.slot, d.name, x, y, cell);
+      this.buildSlot(character, d.slot, t(d.name), x, y, cell);
     }
     if (look) {
       // Hero stands in the free doll cell (left column, bottom row).
@@ -187,9 +197,9 @@ export class InventoryScene extends Phaser.Scene {
     const stashX = dollX + dollW / 2 + (compact ? 8 : 16) + stashW / 2;
     this.root.add(makeFrame(this, stashX, top + avail / 2, stashW, avail, 'panel'));
     const items = this.app.profile.stash.items;
-    this.root.add(heading(this, stashX - stashW / 2 + 14, top + 8, 'Stash', compact ? 18 : 22));
+    this.root.add(heading(this, stashX - stashW / 2 + 14, top + 8, t('inv.stash'), compact ? 18 : 22));
     this.root.add(
-      label(this, stashX + stashW / 2 - 14, top + (compact ? 10 : 14), `${items.length}/${rules.stashSize}   ◆ ${this.app.profile.currency[SALVAGE_CURRENCY] ?? 0} shards`, UI.size.small, UI.muted).setOrigin(1, 0),
+      label(this, stashX + stashW / 2 - 14, top + (compact ? 10 : 14), `${items.length}/${rules.stashSize}   ◆ ${shardsWord(this.app.profile.currency[SALVAGE_CURRENCY] ?? 0)}`, UI.size.small, UI.muted).setOrigin(1, 0),
     );
     for (let i = 0; i < rules.stashSize; i++) {
       const x = stashX - stashW / 2 + 14 + sCell / 2 + (i % cols) * (sCell + sGap);
@@ -217,7 +227,8 @@ export class InventoryScene extends Phaser.Scene {
     this.root.add(card);
     const base = item && itemsData.bases[item.baseId];
     if (item && base) this.root.add(this.add.image(x, y, itemIcon(this, base, item.rarity)).setDisplaySize(size - 12, size - 12));
-    this.root.add(label(this, x, y + size / 2 + 2, name, 12, item ? UI.muted : '#5e574c').setOrigin(0.5, 0));
+    // Captions of neighbouring cells must not touch: shrink to the cell plus most of the gap.
+    this.root.add(fitText(label(this, x, y + size / 2 + 2, name, 12, item ? UI.muted : '#5e574c').setOrigin(0.5, 0), size + 6));
   }
 
   private buildStashCell(item: Item, x: number, y: number, size: number): void {
@@ -242,29 +253,28 @@ export class InventoryScene extends Phaser.Scene {
     // Keystones (Blood Magic, Crystal Shell, ...) change derived stats; core owns that math.
     const source: StatSource = { baseStats: classDef.baseStats, modifiers: mods, levelModifiers: levelMods, mechanics };
     const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
-    this.root.add(heading(this, x, y, 'Attributes', 18));
-    const fmt = (v: number, kind: 'int' | 'pct' | 'dec'): string => (kind === 'pct' ? `${Math.round(v * 100)}%` : kind === 'dec' ? (Math.round(v * 10) / 10).toFixed(1) : String(Math.round(v)));
-    const rows: Array<[string, string]> = STAT_ROWS.map(([stat, name, kind]) => [
-      stat === 'resource' ? resourceNames(classDef.resource.id).en : name,
-      fmt(deriveStat(source, stat), kind),
-    ]);
-    const dmg = Object.entries(weapon.damage).map(([type, r]) => `${r.min}–${r.max} ${type.slice(0, 4)}`).join(', ');
-    rows.push(['Weapon', dmg]);
-    rows.push(['Attacks/sec', computeStat(weapon.attacksPerSecond, mods, 'attackSpeed', ['attack']).toFixed(2)]);
+    this.root.add(heading(this, x, y, t('inv.attributes'), 18));
+    const fmt = (v: number, kind: 'int' | 'pct' | 'dec'): string => (kind === 'pct' ? `${Math.round(v * 100)}%` : kind === 'dec' ? formatNumber(v, 1) : String(Math.round(v)));
+    const rows: Array<[string, string]> = STAT_ROWS.map(([stat, key, kind]) => [key ? t(key) : resourceText(classDef.resource.id), fmt(deriveStat(source, stat), kind)]);
+    const dmg = Object.entries(weapon.damage)
+      .map(([type, r]) => `${num(r.min)}–${num(r.max)} ${damageTypeText(type, 'short')}`)
+      .join(t('list.separator'));
+    rows.push([t('inv.stat.weapon'), dmg]);
+    rows.push([t('inv.stat.attacksPerSecond'), formatNumber(computeStat(weapon.attacksPerSecond, mods, 'attackSpeed', ['attack']), 2)]);
     const crit = critStats(mechanics, {
       critChance: computeStat(weapon.critChance, mods, 'critChance', ['attack']),
       critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', ['attack']),
     });
-    rows.push(['Crit chance', `${(crit.critChance * 100).toFixed(1)}% ×${crit.critMultiplier.toFixed(2)}`]);
-    rows.push(['Move speed', String(Math.round(deriveStat(source, 'movementSpeed')))]);
+    rows.push([t('inv.stat.critChance'), `${formatNumber(crit.critChance * 100, 1)}% ×${formatNumber(crit.critMultiplier, 2)}`]);
+    rows.push([t('inv.stat.movementSpeed'), String(Math.round(deriveStat(source, 'movementSpeed')))]);
     // Keystone-only stats: shown only when they differ from the default.
     const leech = leechStats(mechanics);
     if (leech) {
-      const cap = Number.isFinite(leech.maxPerSecond) ? ` (max ${fmt(leech.maxPerSecond, 'pct')}/s)` : '';
-      rows.push(['Life leech', `${fmt(leech.fraction, 'pct')}${cap}`]);
+      const cap = Number.isFinite(leech.maxPerSecond) ? t('inv.stat.leechCap', { pct: fmt(leech.maxPerSecond, 'pct') }) : '';
+      rows.push([t('inv.stat.lifeLeech'), `${fmt(leech.fraction, 'pct')}${cap}`]);
     }
     const taken = computeStat(1, mods, 'damageTaken');
-    if (taken !== 1) rows.push(['Damage taken', `×${taken.toFixed(2)}`]);
+    if (taken !== 1) rows.push([t('inv.stat.damageTaken'), `×${formatNumber(taken, 2)}`]);
     rows.forEach(([name, value], i) => {
       this.root.add(label(this, x, y + 30 + i * 20, name, UI.size.small, UI.muted));
       this.root.add(label(this, x + w, y + 30 + i * 20, value, UI.size.small, UI.text, true).setOrigin(1, 0));
@@ -293,7 +303,7 @@ export class InventoryScene extends Phaser.Scene {
       if (!area.overlay) {
         this.details.add(makeFrame(this, area.x + area.w / 2, area.y + area.h / 2, area.w, area.h, 'panel'));
         this.details.add(
-          label(this, area.x + area.w / 2, area.y + area.h / 2, this.message || 'Select an item.\nDouble-click to equip or unequip.', UI.size.small, UI.muted)
+          label(this, area.x + area.w / 2, area.y + area.h / 2, this.message || t('inv.emptyHint'), UI.size.small, UI.muted)
             .setOrigin(0.5)
             .setAlign('center'),
         );
@@ -314,7 +324,7 @@ export class InventoryScene extends Phaser.Scene {
       parts.push(label(this, area.x + area.w / 2, y, tooltip.subtitle, UI.size.small, color).setOrigin(0.5, 0));
       y += 20;
     }
-    parts.push(label(this, area.x + area.w / 2, y, tooltip.rarity.toUpperCase(), 11, UI.muted).setOrigin(0.5, 0));
+    parts.push(label(this, area.x + area.w / 2, y, upper(rarityLabel(tooltip.rarity)), 11, UI.muted).setOrigin(0.5, 0));
     y += 22;
     let lastKind = '';
     for (const line of tooltip.lines) {
@@ -338,17 +348,26 @@ export class InventoryScene extends Phaser.Scene {
     // Actions (only for the selected item, not a hover preview).
     const isSelected = sameSelection(shown, this.selection);
     const buttonsY = area.y + area.h - pad - 22;
+    // Long tooltips on short screens (and longer translations): the text block shrinks, kept centred, so it never
+    // runs under the buttons.
+    const textBottom = buttonsY - 30 - (this.message ? 22 : 0);
+    const body = this.add.container(0, 0, parts.splice(0));
+    if (y > textBottom && y > area.y) {
+      const s = Math.max(0.6, (textBottom - area.y) / (y - area.y));
+      body.setScale(s).setPosition((area.x + area.w / 2) * (1 - s), area.y * (1 - s));
+    }
+    parts.push(body);
     if (this.message) parts.push(label(this, area.x + area.w / 2, buttonsY - 38, this.message, UI.size.small, UI.danger).setOrigin(0.5));
     if (isSelected && this.selection?.where === 'stash') {
       const id = this.selection.id;
       const bw = (w - 10) / 2;
-      parts.push(makeButton(this, x + bw / 2, buttonsY, bw, 40, 'Equip', () => this.equip(id), 'primary'));
-      parts.push(makeButton(this, x + bw * 1.5 + 10, buttonsY, bw, 40, `Salvage +${itemsData.rules.salvage[item.rarity]}`, () => this.salvage(item), 'danger'));
+      parts.push(makeButton(this, x + bw / 2, buttonsY, bw, 40, t('inv.equip'), () => this.equip(id), 'primary'));
+      parts.push(makeButton(this, x + bw * 1.5 + 10, buttonsY, bw, 40, t('inv.salvage', { value: itemsData.rules.salvage[item.rarity] }), () => this.salvage(item), 'danger'));
     } else if (isSelected && this.selection?.where === 'equip') {
       const slot = this.selection.slot;
-      parts.push(makeButton(this, area.x + area.w / 2, buttonsY, Math.min(200, w), 40, 'Unequip', () => this.unequip(slot)));
+      parts.push(makeButton(this, area.x + area.w / 2, buttonsY, Math.min(200, w), 40, t('inv.unequip'), () => this.unequip(slot)));
     } else {
-      parts.push(label(this, area.x + area.w / 2, buttonsY, 'Click to select', 12, UI.muted).setOrigin(0.5));
+      parts.push(label(this, area.x + area.w / 2, buttonsY, t('inv.clickToSelect'), 12, UI.muted).setOrigin(0.5));
     }
 
     const panelH = area.overlay ? Math.min(area.h, buttonsY - area.y + 34) : area.h;
@@ -416,12 +435,12 @@ export class InventoryScene extends Phaser.Scene {
     };
     // Valuable items ask first.
     if (item.rarity === 'normal' || item.rarity === 'magic') run();
-    else confirmDialog(this, `Salvage ${item.name}?`, 'Salvage', run);
+    else confirmDialog(this, t('inv.salvageConfirm', { name: itemName(item) }), t('inv.salvageButton'), run);
   }
 
   private afterChange(error: InventoryError | null): void {
     if (error) {
-      this.message = ERRORS[error];
+      this.message = t(ERROR_KEY[error]);
     } else {
       this.message = '';
       this.selection = undefined;

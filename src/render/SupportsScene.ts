@@ -19,21 +19,23 @@ import { content } from '../data';
 import { passiveTree } from '../data/passives';
 import { getApp, type App } from './app';
 import { skillIcon } from './hudIcons';
+import { getLocale, t } from '../i18n';
+import { skillName, supportDescription, supportName } from './contentText';
 import { num, shardsWord } from './passiveText';
-import { formatCost, resourceNames } from './resourceText';
+import { formatCost, resourceText } from './resourceText';
 import { supportIcon, tierColor } from './supportIcons';
 import {
   compatibleSkillNames,
   costMultiplierText,
   describeSupportBonus,
   describeSupportTier,
-  GROUP_LABEL,
-  SALVAGE_SUPPORT_ERRORS,
-  SOCKET_ERRORS,
+  salvageSupportError,
+  socketError,
+  supportGroupLabel,
   supportTitle,
   tierLabel,
 } from './supportText';
-import { confirmDialog, fadeIn, frameTexture, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
+import { confirmDialog, fadeIn, fitText, frameTexture, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
 // Skill modifiers screen (docs/design/skill-modifiers.md): the hero's supports tab and the 3 class skills with their
 // slots. Select-then-act so it works by touch: tap a support, then a compatible slot (incompatible slots are
@@ -123,8 +125,15 @@ export class SupportsScene extends Phaser.Scene {
       const def = data.supports[item.defId];
       if (def) list.push({ item, def });
     }
+    // Alphabetical in the current language within a group.
+    const locale = getLocale();
+    const names = new Map(list.map((o) => [o.def.id, supportName(o.def.id)]));
     return list.sort(
-      (a, b) => GROUP_ORDER[a.def.group] - GROUP_ORDER[b.def.group] || a.def.name.localeCompare(b.def.name, 'uk') || b.item.tier - a.item.tier || a.item.id.localeCompare(b.item.id),
+      (a, b) =>
+        GROUP_ORDER[a.def.group] - GROUP_ORDER[b.def.group] ||
+        (names.get(a.def.id) ?? '').localeCompare(names.get(b.def.id) ?? '', locale) ||
+        b.item.tier - a.item.tier ||
+        a.item.id.localeCompare(b.item.id),
     );
   }
 
@@ -156,11 +165,11 @@ export class SupportsScene extends Phaser.Scene {
     const m = compact ? 10 : 24;
     const titleH = compact ? 44 : 64;
 
-    const title = heading(this, m + 4, compact ? 6 : 12, 'Модифікатори', compact ? 24 : 34);
+    const title = heading(this, m + 4, compact ? 6 : 12, t('supports.title'), compact ? 24 : 34);
     this.root.add(title);
     const shards = this.app.profile.currency[SALVAGE_CURRENCY] ?? 0;
-    this.root.add(label(this, title.x + title.width + 14, title.y + title.height - (compact ? 20 : 26), `${character.name}  ·  ◆ ${shardsWord(shards)}`, UI.size.small, UI.goldBrightText));
-    this.root.add(makeButton(this, width - m - 55, titleH / 2 + (compact ? 0 : 4), 110, compact ? 36 : 42, 'Назад', () => this.back()));
+    this.root.add(label(this, title.x + title.width + 14, title.y + title.height - (compact ? 20 : 26), t('supports.header', { name: character.name, shards: shardsWord(shards) }), UI.size.small, UI.goldBrightText));
+    this.root.add(makeButton(this, width - m - 55, titleH / 2 + (compact ? 0 : 4), 110, compact ? 36 : 42, t('common.back'), () => this.back()));
 
     const top = titleH + (compact ? 0 : 6);
     const avail = height - top - m;
@@ -186,7 +195,7 @@ export class SupportsScene extends Phaser.Scene {
     this.detailsArea = detailsH >= 190 ? { x: rightX, y: detailsTop, w: rightW, h: detailsH, overlay: false } : { x: rightX, y: top, w: rightW, h: avail, overlay: true };
     if (this.detailsArea.overlay && !this.selection) {
       // Short screens: the details only open over the tab on a tap; the hint (or the last message) sits under it.
-      const hint = character.supports.length === 0 ? 'Модифікатори випадають з ворогів. Якщо герой загине, знахідки забігу втрачаються.' : 'Торкніться модифікатора, потім — слота скіла.';
+      const hint = character.supports.length === 0 ? t('supports.hintEmptyShort') : t('supports.hintShort');
       const text = this.message || hint;
       const color = this.message ? this.messageColor() : UI.muted;
       this.root.add(label(this, rightX + rightW / 2, top + gridH + 10, text, UI.size.small, color).setOrigin(0.5, 0).setAlign('center').setWordWrapWidth(rightW - 20));
@@ -200,8 +209,8 @@ export class SupportsScene extends Phaser.Scene {
     const compact = this.compact;
     this.root.add(makeFrame(this, x + w / 2, y + h / 2, w, h, 'panel'));
     const headerH = compact ? 30 : 42;
-    this.root.add(heading(this, x + 14, y + 8, 'Скіли', compact ? 18 : 22));
-    const resource = resourceNames(classDef.resource.id);
+    this.root.add(heading(this, x + 14, y + 8, t('supports.skills'), compact ? 18 : 22));
+    const resource = resourceText(classDef.resource.id);
     const { base, current, mechanics } = this.skillSets(character, classDef);
     const skills = classDef.skills;
     const rowGap = compact ? 6 : 10;
@@ -225,19 +234,35 @@ export class SupportsScene extends Phaser.Scene {
       const textX = left + iconS + 10;
       const slotsLeft = x + w - 10 - 10 - slots * slotS - (slots - 1) * slotGap;
       const textW = slotsLeft - textX - 6;
-      const name = label(this, textX, cy - (compact ? 18 : 22), skill.name ?? skill.id, compact ? UI.size.body : UI.size.heading - 2, UI.text, true);
-      name.setWordWrapWidth(textW);
-      if (name.height > 24) name.setFontSize(UI.size.small).setY(cy - 20);
-      this.root.add(name);
+      // Text block (name, cost, socketed supports) stacked and centred in the row, so lines never overlap whatever
+      // the language: a long name first drops to the small size (may wrap), then to one shrunk line if still too tall.
+      const room = rowH - 10;
+      const name = label(this, textX, 0, skillName(skill.id), compact ? UI.size.body : UI.size.heading - 2, UI.text, true).setWordWrapWidth(textW);
+      if (name.height > (compact ? 24 : 28)) name.setFontSize(UI.size.small);
+      // One long word cannot wrap (German compounds): shrink it so it never runs under the slots.
+      if (name.width > textW) fitText(name.setWordWrapWidth(null), textW);
       const baseAction = base.skills[i] ?? skill;
       const action = current.skills[i] ?? skill;
-      const cost = label(this, textX, cy + (compact ? 2 : 4), this.costLine(baseAction, action, mechanics, resource.uk), UI.size.small, UI.muted).setWordWrapWidth(textW);
-      this.root.add(cost);
+      const cost = label(this, textX, 0, this.costLine(baseAction, action, mechanics, resource), UI.size.small, UI.muted).setWordWrapWidth(textW);
+      if (cost.width > textW) fitText(cost.setWordWrapWidth(null), textW);
       // Socketed supports by name, when the row has room for a line.
       const names = Array.from({ length: slots }, (_, s) => supportInSlot(character, skill.id, s)).flatMap((item) => (item && data.supports[item.defId] ? [supportTitle(data.supports[item.defId]!, item.tier)] : []));
-      if (names.length > 0 && rowH >= 96) {
-        this.root.add(label(this, textX, cost.y + cost.height + 4, names.join('  ·  '), UI.size.small, UI.goldText).setWordWrapWidth(textW));
+      let socketed: Phaser.GameObjects.Text | undefined =
+        names.length > 0 && rowH >= 96 ? label(this, textX, 0, names.join('  ·  '), UI.size.small, UI.goldText).setWordWrapWidth(textW) : undefined;
+      const gapY = 2;
+      const blockH = (): number => name.height + gapY + cost.height + (socketed ? gapY + 2 + socketed.height : 0);
+      if (socketed && blockH() > room) {
+        socketed.destroy();
+        socketed = undefined;
       }
+      if (blockH() > room) fitText(name.setWordWrapWidth(null), textW);
+      let ty = cy - blockH() / 2;
+      name.setY(ty);
+      ty += name.height + gapY;
+      cost.setY(ty);
+      ty += cost.height + gapY + 2;
+      socketed?.setY(ty);
+      this.root.add([name, cost, ...(socketed ? [socketed] : [])]);
 
       for (let s = 0; s < slots; s++) {
         const sx = slotsLeft + slotS / 2 + s * (slotS + slotGap);
@@ -246,15 +271,15 @@ export class SupportsScene extends Phaser.Scene {
     });
   }
 
-  /** "Мана: 20 → 29": cost before and after the socketed supports (rounded, see formatCost). */
+  /** "Mana: 20 → 29": cost before and after the socketed supports (rounded, see formatCost). */
   private costLine(baseAction: ActionDef, action: ActionDef, mechanics: ReturnType<typeof heroMechanics>, resourceName: string): string {
     const before = actionCost(mechanics, baseAction.resourceCost);
     const after = actionCost(mechanics, action.resourceCost);
-    const name = after.pool === 'life' ? 'Життя' : resourceName;
-    if (after.amount <= 0) return `${name}: безкоштовно`;
+    const pool = after.pool === 'life' ? t('supports.lifePool') : resourceName;
+    if (after.amount <= 0) return t('supports.costFree', { pool });
     const a = formatCost(before.amount);
     const b = formatCost(after.amount);
-    return a === b && Math.abs(before.amount - after.amount) < 1e-9 ? `${name}: ${b}` : `${name}: ${a} → ${b}`;
+    return a === b && Math.abs(before.amount - after.amount) < 1e-9 ? t('supports.cost', { pool, value: b }) : t('supports.costChange', { pool, before: a, after: b });
   }
 
   private selectedSupport(character: CharacterRecord): SupportItem | undefined {
@@ -309,7 +334,7 @@ export class SupportsScene extends Phaser.Scene {
   private buildTab(character: CharacterRecord, data: SupportData, x: number, y: number, w: number, h: number, cols: number, cell: number, cellGap: number, headerH: number): void {
     this.root.add(makeFrame(this, x + w / 2, y + h / 2, w, h, 'panel'));
     const owned = this.owned(character, data);
-    this.root.add(heading(this, x + 14, y + 8, 'Вкладка', this.compact ? 18 : 22));
+    this.root.add(heading(this, x + 14, y + 8, t('supports.tab'), this.compact ? 18 : 22));
     this.root.add(label(this, x + w - 14, y + (this.compact ? 10 : 14), `${character.supports.length}/${data.rules.tabSize}`, UI.size.small, UI.muted).setOrigin(1, 0));
     const gridW = cols * cell + (cols - 1) * cellGap;
     const left = x + (w - gridW) / 2;
@@ -359,9 +384,7 @@ export class SupportsScene extends Phaser.Scene {
       if (!area.overlay) {
         this.details.add(makeFrame(this, area.x + area.w / 2, area.y + area.h / 2, area.w, area.h, 'panel'));
         const empty = character.supports.length === 0;
-        const hint = empty
-          ? 'Модифікаторів ще немає.\nВони випадають з ворогів у забігах, частіше з еліт і боса.\nЯкщо герой загине, знайдені за забіг модифікатори втрачаються.'
-          : 'Оберіть модифікатор у вкладці, потім — слот скіла ліворуч.\nМодифікатори міняються лише в хабі, вільно й без втрат.';
+        const hint = empty ? t('supports.hintEmpty') : t('supports.hint');
         const text = label(this, area.x + area.w / 2, area.y + area.h / 2, this.message || hint, UI.size.small, this.message ? this.messageColor() : UI.muted)
           .setOrigin(0.5)
           .setAlign('center')
@@ -401,8 +424,8 @@ export class SupportsScene extends Phaser.Scene {
       const item = character.supports.find((s) => s.id === shown.id);
       const def = item ? data.supports[item.defId] : undefined;
       if (!item || !def) return;
-      header(supportIcon(this, def, item.tier), supportTitle(def, item.tier), tierColor(item.tier), `${GROUP_LABEL[def.group]}  ·  тир ${tierLabel(item.tier)} з ${tierLabel(def.tiers.length)}`);
-      add(def.description, UI.size.small, UI.text);
+      header(supportIcon(this, def, item.tier), supportTitle(def, item.tier), tierColor(item.tier), t('supports.groupTier', { group: supportGroupLabel(def.group), tier: tierLabel(item.tier), max: tierLabel(def.tiers.length) }));
+      add(supportDescription(def.id), UI.size.small, UI.text);
       rule();
       const tier = def.tiers[Math.min(def.tiers.length, Math.max(1, item.tier)) - 1];
       if (tier) {
@@ -413,13 +436,12 @@ export class SupportsScene extends Phaser.Scene {
       add(costMultiplierText(def.resourceCostMultiplier), UI.size.small, UI.goldBrightText, true);
       rule();
       const fits = compatibleSkillNames(def, classDef);
-      if (fits.length > 0) add(`Підходить: ${fits.join(', ')}`, UI.size.small, UI.text);
-      else add('Не підходить до жодного скіла цього героя', UI.size.small, UI.danger, true);
+      if (fits.length > 0) add(t('supports.fits', { skills: fits.join(t('list.separator')) }), UI.size.small, UI.text);
+      else add(t('supports.fitsNone'), UI.size.small, UI.danger, true);
       if (item.socket) {
-        const skill = classDef.skills.find((s) => s.id === item.socket?.skillId);
-        add(`Вставлено: ${skill?.name ?? item.socket.skillId}, слот ${item.socket.slot + 1}`, UI.size.small, UI.goldBrightText);
+        add(t('supports.socketedIn', { skill: skillName(item.socket.skillId), slot: item.socket.slot + 1 }), UI.size.small, UI.goldBrightText);
       } else if (isSelected && fits.length > 0 && !this.message) {
-        add('Торкніться підсвіченого слота скіла ліворуч', UI.size.small, UI.muted);
+        add(t('supports.tapSlot'), UI.size.small, UI.muted);
       }
       if (isSelected) selectedItem = item;
     } else {
@@ -428,12 +450,12 @@ export class SupportsScene extends Phaser.Scene {
       if (!skill) return;
       const { base, current, mechanics } = this.skillSets(character, classDef);
       const action = current.skills[index] ?? skill;
-      header(skillIcon(this, skill.id), skill.name ?? skill.id, UI.goldBrightText, `Рівень ${character.skills[skill.id]?.level ?? 1}`);
-      add(`Вартість — ${this.costLine(base.skills[index] ?? skill, action, mechanics, resourceNames(classDef.resource.id).uk)}`, UI.size.small, UI.text, true);
-      if (action.cooldown > 0) add(`Кулдаун: ${num(action.cooldown)} с`, UI.size.small, UI.text);
+      header(skillIcon(this, skill.id), skillName(skill.id), UI.goldBrightText, t('common.level', { level: character.skills[skill.id]?.level ?? 1 }));
+      add(t('supports.costLine', { line: this.costLine(base.skills[index] ?? skill, action, mechanics, resourceText(classDef.resource.id)) }), UI.size.small, UI.text, true);
+      if (action.cooldown > 0) add(t('supports.cooldown', { seconds: num(action.cooldown) }), UI.size.small, UI.text);
       rule();
       const socketed = character.supports.filter((s) => s.socket?.skillId === skill.id).sort((a, b) => (a.socket?.slot ?? 0) - (b.socket?.slot ?? 0));
-      if (socketed.length === 0) add('Слоти порожні. Оберіть модифікатор у вкладці, щоб вставити його.', UI.size.small, UI.muted);
+      if (socketed.length === 0) add(t('supports.slotsEmpty'), UI.size.small, UI.muted);
       for (const s of socketed) {
         const def = data.supports[s.defId];
         if (!def) continue;
@@ -451,7 +473,7 @@ export class SupportsScene extends Phaser.Scene {
       bottom = buttonsY - 34 - msg.height;
     }
     if (selectedItem) this.supportButtons(buttons, selectedItem, data, area, pad);
-    else if (!isSelected && !area.overlay) buttons.push(label(this, area.x + area.w / 2, buttonsY, 'Натисніть, щоб обрати', UI.size.small, UI.muted).setOrigin(0.5));
+    else if (!isSelected && !area.overlay) buttons.push(label(this, area.x + area.w / 2, buttonsY, t('supports.clickToSelect'), UI.size.small, UI.muted).setOrigin(0.5));
     if (area.overlay) {
       buttons.push(
         makeButton(this, area.x + area.w - 22, area.y + 22, 34, 34, '✕', () => {
@@ -476,13 +498,13 @@ export class SupportsScene extends Phaser.Scene {
     const bx = area.x + pad;
     const value = supportSalvageValue(item, data);
     if (item.socket) {
-      parts.push(makeButton(this, bx + bw / 2, buttonsY, bw, 42, 'Витягти', () => this.unsocket(item.id), 'primary'));
-      const salvage = makeButton(this, bx + bw * 1.5 + 10, buttonsY, bw, 42, `Розібрати +${value}`, () => undefined, 'danger');
+      parts.push(makeButton(this, bx + bw / 2, buttonsY, bw, 42, t('supports.unsocket'), () => this.unsocket(item.id), 'primary'));
+      const salvage = makeButton(this, bx + bw * 1.5 + 10, buttonsY, bw, 42, t('supports.salvage', { value }), () => undefined, 'danger');
       disableButton(salvage);
       parts.push(salvage);
     } else {
-      parts.push(makeButton(this, bx + bw / 2, buttonsY, bw, 42, 'Скасувати', () => this.clickSupport(item.id)));
-      parts.push(makeButton(this, bx + bw * 1.5 + 10, buttonsY, bw, 42, `Розібрати +${value}`, () => this.salvage(item), 'danger'));
+      parts.push(makeButton(this, bx + bw / 2, buttonsY, bw, 42, t('common.cancel'), () => this.clickSupport(item.id)));
+      parts.push(makeButton(this, bx + bw * 1.5 + 10, buttonsY, bw, 42, t('supports.salvage', { value }), () => this.salvage(item), 'danger'));
     }
   }
 
@@ -517,7 +539,7 @@ export class SupportsScene extends Phaser.Scene {
     if (picked && inSlot?.id !== picked.id) {
       const error = socketSupport(character, picked.id, skillId, slot, getClass(content, character.classId), data);
       if (error) {
-        this.message = SOCKET_ERRORS[error];
+        this.message = socketError(error);
         this.messageTone = 'error';
       } else {
         this.message = '';
@@ -548,11 +570,11 @@ export class SupportsScene extends Phaser.Scene {
     const run = (): void => {
       const result = salvageSupport(this.app.profile, character, item.id, data);
       if ('error' in result) {
-        this.message = SALVAGE_SUPPORT_ERRORS[result.error];
+        this.message = salvageSupportError(result.error);
         this.messageTone = 'error';
       } else {
         this.selection = undefined;
-        this.message = `Розібрано: +${shardsWord(result.shards)}`;
+        this.message = t('supports.salvaged', { shards: shardsWord(result.shards) });
         this.messageTone = 'info';
         this.app.save();
       }
@@ -561,7 +583,7 @@ export class SupportsScene extends Phaser.Scene {
     // Higher tiers ask first.
     const def = data.supports[item.defId];
     if (item.tier <= 1 || !def) run();
-    else confirmDialog(this, `Розібрати «${supportTitle(def, item.tier)}»?`, 'Розібрати', run, 'Скасувати');
+    else confirmDialog(this, t('supports.salvageConfirm', { name: supportTitle(def, item.tier) }), t('supports.salvageButton'), run);
   }
 
   private back(): void {

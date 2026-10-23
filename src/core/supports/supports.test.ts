@@ -23,8 +23,6 @@ import type { SupportData, SupportDef } from './types';
 
 const def = (id: string, compatibility: SupportDef['compatibility'], resourceCostMultiplier: number, tiers: SupportDef['tiers'], weight = 100): SupportDef => ({
   id,
-  name: id,
-  description: id,
   group: 'general',
   compatibility,
   resourceCostMultiplier,

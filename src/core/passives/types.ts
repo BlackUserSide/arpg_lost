@@ -120,9 +120,8 @@ export type PassiveMechanic =
 export type PassiveMechanicKind = PassiveMechanic['kind'];
 
 export interface PassiveNodeDef {
+  /** Also the key of its display name in the locale files (render); start nodes are named after their class. */
   readonly id: string;
-  /** Display name (Ukrainian, from the design doc). */
-  readonly name: string;
   readonly type: PassiveNodeType;
   /** Passive points for wheel nodes, spec points for spec nodes, 0 for starts. */
   readonly cost: number;
@@ -138,8 +137,8 @@ export interface PassiveNodeDef {
 }
 
 export interface SpecBranchDef {
+  /** Also the key of its display name in the locale files (render). */
   readonly id: string;
-  readonly name: string;
   readonly classId: string;
 }
 

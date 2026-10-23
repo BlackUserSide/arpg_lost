@@ -1,6 +1,7 @@
 import type { ClassDef } from '../core/world/content';
 
 // See docs/design/classes.md. All numbers are PROPOSAL until balance pass.
+// Display text (class, skill names) is keyed by id in src/i18n/locales (class.<id>.*, skill.<id>.name).
 // baseStats.resource / resourceRegen = max and regen of the class resource (Rage / Energy / Mana).
 export const classes: Record<string, ClassDef> = {
   warrior: {
@@ -35,7 +36,6 @@ export const classes: Record<string, ClassDef> = {
     },
     basicAttack: {
       id: 'warrior_strike',
-      name: 'Удар по цілі',
       tags: ['attack', 'melee'],
       resourceCost: 0,
       cooldown: 0,
@@ -45,7 +45,6 @@ export const classes: Record<string, ClassDef> = {
     skills: [
       {
         id: 'cleave',
-        name: 'Рублячий удар',
         tags: ['attack', 'melee', 'area'],
         resourceCost: 6,
         cooldown: 0,
@@ -54,7 +53,6 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'shield_charge',
-        name: 'Ривок зі щитом',
         tags: ['attack', 'melee'],
         resourceCost: 10,
         cooldown: 4,
@@ -64,7 +62,6 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'battle_cry',
-        name: 'Бойовий клич',
         tags: [],
         resourceCost: 15,
         cooldown: 12,
@@ -97,7 +94,6 @@ export const classes: Record<string, ClassDef> = {
     },
     basicAttack: {
       id: 'ranger_bolt',
-      name: 'Болт',
       tags: ['attack', 'projectile'],
       resourceCost: 0,
       cooldown: 0,
@@ -107,7 +103,6 @@ export const classes: Record<string, ClassDef> = {
     skills: [
       {
         id: 'volley',
-        name: 'Віяло стріл',
         tags: ['attack', 'projectile'],
         resourceCost: 10,
         cooldown: 0,
@@ -116,7 +111,6 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'explosive_trap',
-        name: 'Вибухова пастка',
         tags: ['area'],
         resourceCost: 14,
         cooldown: 5,
@@ -126,7 +120,6 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'roll',
-        name: 'Перекат',
         tags: [],
         resourceCost: 8,
         cooldown: 3,
@@ -164,7 +157,6 @@ export const classes: Record<string, ClassDef> = {
     },
     basicAttack: {
       id: 'wand_bolt',
-      name: 'Магічний снаряд',
       tags: ['attack', 'projectile'],
       resourceCost: 0,
       cooldown: 0,
@@ -174,7 +166,6 @@ export const classes: Record<string, ClassDef> = {
     skills: [
       {
         id: 'fireball',
-        name: 'Вогняна куля',
         tags: ['spell', 'projectile', 'area'],
         resourceCost: 9,
         cooldown: 0,
@@ -184,7 +175,6 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'frost_nova',
-        name: 'Крижана нова',
         tags: ['spell', 'area'],
         resourceCost: 14,
         cooldown: 3,
@@ -195,7 +185,6 @@ export const classes: Record<string, ClassDef> = {
       },
       {
         id: 'teleport',
-        name: 'Телепорт',
         tags: ['spell'],
         resourceCost: 12,
         cooldown: 4,

@@ -3,6 +3,8 @@ import type { Modifier, StatId, Tag } from '../core/stats/types';
 
 // Passive wheel + specialization branches. Transcribed from docs/design/passives-wheel.md (approved 2026-10-22).
 // All numbers are PROPOSAL until balance pass.
+// Node and branch names are keyed by id in src/i18n/locales (passive.<id>.name, spec.<id>.name); class start nodes
+// are named after their class.
 
 // ---- Modifier shorthands ----------------------------------------------------------------------
 
@@ -105,19 +107,19 @@ const RMp = hybridPos(ANGLE.rm);
 
 type Extra = Partial<Pick<PassiveNodeDef, 'classId' | 'specId' | 'mechanics' | 'exclusiveGroup'>>;
 
-function node(id: string, name: string, type: PassiveNodeType, pos: PassiveNodePos, modifiers: Modifier[] = [], extra: Extra = {}): PassiveNodeDef {
-  return { id, name, type, cost: COST[type], pos, ...(modifiers.length > 0 ? { modifiers } : {}), ...extra };
+function node(id: string, type: PassiveNodeType, pos: PassiveNodePos, modifiers: Modifier[] = [], extra: Extra = {}): PassiveNodeDef {
+  return { id, type, cost: COST[type], pos, ...(modifiers.length > 0 ? { modifiers } : {}), ...extra };
 }
-const small = (id: string, name: string, pos: PassiveNodePos, modifiers: Modifier[]): PassiveNodeDef => node(id, name, 'small', pos, modifiers);
-const notable = (id: string, name: string, pos: PassiveNodePos, modifiers: Modifier[]): PassiveNodeDef => node(id, name, 'notable', pos, modifiers);
+const small = (id: string, pos: PassiveNodePos, modifiers: Modifier[]): PassiveNodeDef => node(id, 'small', pos, modifiers);
+const notable = (id: string, pos: PassiveNodePos, modifiers: Modifier[]): PassiveNodeDef => node(id, 'notable', pos, modifiers);
 interface KeystoneSpec {
   readonly mechanics?: PassiveMechanic[];
   readonly modifiers?: Modifier[];
   readonly exclusiveGroup?: string;
 }
-const keystone = (id: string, name: string, pos: PassiveNodePos, { mechanics, modifiers = [], exclusiveGroup }: KeystoneSpec): PassiveNodeDef =>
-  node(id, name, 'keystone', pos, modifiers, { ...(mechanics ? { mechanics } : {}), ...(exclusiveGroup ? { exclusiveGroup } : {}) });
-const start = (classId: string, name: string, pos: PassiveNodePos): PassiveNodeDef => node(`start_${classId}`, name, 'start', pos, [], { classId });
+const keystone = (id: string, pos: PassiveNodePos, { mechanics, modifiers = [], exclusiveGroup }: KeystoneSpec): PassiveNodeDef =>
+  node(id, 'keystone', pos, modifiers, { ...(mechanics ? { mechanics } : {}), ...(exclusiveGroup ? { exclusiveGroup } : {}) });
+const start = (classId: string, pos: PassiveNodePos): PassiveNodeDef => node(`start_${classId}`, 'start', pos, [], { classId });
 
 /** Keystones that cannot be taken together: with 1 life the hero cannot pay skills in life. */
 const LIFE_POOL_GROUP = 'lifePool';
@@ -125,89 +127,89 @@ const LIFE_POOL_GROUP = 'lifePool';
 // ---- Wheel ----------------------------------------------------------------------------------------
 
 const wheel: PassiveNodeDef[] = [
-  start('warrior', 'Воїн', Wp('start')),
-  start('ranger', 'Рейнджер', Rp('start')),
-  start('mage', 'Маг', Mp('start')),
+  start('warrior', Wp('start')),
+  start('ranger', Rp('start')),
+  start('mage', Mp('start')),
 
   // Warrior zone (11 nodes, 13 points)
-  small('w_a1', 'Гострий клинок', Wp('a1'), [dmg(SMALL.taggedDamage, 'melee')]),
-  small('w_a2', 'Міцне тіло', Wp('a2'), [inc('life', SMALL.life)]),
-  small('w_a3', 'Важкий удар', Wp('a3'), [dmg(SMALL.taggedDamage, 'physical')]),
-  small('w_a4', 'Темп бою', Wp('a4'), [inc('attackSpeed', SMALL.speed)]),
-  notable('w_n1', 'Майстер клинка', Wp('n1'), [dmg(0.16, 'melee'), inc('attackSpeed', 0.06)]),
-  small('w_b1', 'Латні пластини', Wp('b1'), [inc('armour', SMALL.armour)]),
-  small('w_b2', 'Витривалість', Wp('b2'), [inc('life', SMALL.life)]),
-  small('w_c1', 'Друге дихання', Wp('c1'), [flat('lifeRegen', SMALL.lifeRegen)]),
-  small('w_c2', 'Бойова виучка', Wp('c2'), [dmg(SMALL.taggedDamage, 'attack')]),
-  small('w_d1', 'Кольчуга', Wp('d1'), [inc('armour', SMALL.armour)]),
-  notable('w_n2', 'Залізна шкіра', Wp('n2'), [inc('armour', 0.2), inc('life', 0.06), flat('lifeRegen', 1)]),
+  small('w_a1', Wp('a1'), [dmg(SMALL.taggedDamage, 'melee')]),
+  small('w_a2', Wp('a2'), [inc('life', SMALL.life)]),
+  small('w_a3', Wp('a3'), [dmg(SMALL.taggedDamage, 'physical')]),
+  small('w_a4', Wp('a4'), [inc('attackSpeed', SMALL.speed)]),
+  notable('w_n1', Wp('n1'), [dmg(0.16, 'melee'), inc('attackSpeed', 0.06)]),
+  small('w_b1', Wp('b1'), [inc('armour', SMALL.armour)]),
+  small('w_b2', Wp('b2'), [inc('life', SMALL.life)]),
+  small('w_c1', Wp('c1'), [flat('lifeRegen', SMALL.lifeRegen)]),
+  small('w_c2', Wp('c2'), [dmg(SMALL.taggedDamage, 'attack')]),
+  small('w_d1', Wp('d1'), [inc('armour', SMALL.armour)]),
+  notable('w_n2', Wp('n2'), [inc('armour', 0.2), inc('life', 0.06), flat('lifeRegen', 1)]),
 
   // Ranger zone (11 nodes, 13 points)
-  small('r_a1', 'Тугий лук', Rp('a1'), [dmg(SMALL.taggedDamage, 'projectile')]),
-  small('r_a2', 'Пильне око', Rp('a2'), [inc('critChance', SMALL.critChance)]),
-  small('r_a3', 'Швидка рука', Rp('a3'), [inc('attackSpeed', SMALL.speed)]),
-  small('r_a4', 'Слабке місце', Rp('a4'), [flat('critMultiplier', SMALL.critMultiplier)]),
-  notable('r_n1', 'Влучне око', Rp('n1'), [inc('critChance', 0.25), flat('critMultiplier', 0.15), dmg(0.1, 'projectile')]),
-  small('r_b1', 'Легкі ноги', Rp('b1'), [inc('movementSpeed', SMALL.movementSpeed)]),
-  small('r_b2', 'Точний приціл', Rp('b2'), [dmg(SMALL.taggedDamage, 'projectile')]),
-  small('r_c1', 'Загартованість', Rp('c1'), [inc('life', SMALL.life)]),
-  small('r_c2', 'Мандрівник', Rp('c2'), allRes(SMALL.allRes)),
-  small('r_d1', 'Слідопит', Rp('d1'), [inc('movementSpeed', SMALL.movementSpeed)]),
-  notable('r_n2', 'Мисливський інстинкт', Rp('n2'), [inc('movementSpeed', 0.06), inc('life', 0.06), flat('lifeRegen', 0.8)]),
+  small('r_a1', Rp('a1'), [dmg(SMALL.taggedDamage, 'projectile')]),
+  small('r_a2', Rp('a2'), [inc('critChance', SMALL.critChance)]),
+  small('r_a3', Rp('a3'), [inc('attackSpeed', SMALL.speed)]),
+  small('r_a4', Rp('a4'), [flat('critMultiplier', SMALL.critMultiplier)]),
+  notable('r_n1', Rp('n1'), [inc('critChance', 0.25), flat('critMultiplier', 0.15), dmg(0.1, 'projectile')]),
+  small('r_b1', Rp('b1'), [inc('movementSpeed', SMALL.movementSpeed)]),
+  small('r_b2', Rp('b2'), [dmg(SMALL.taggedDamage, 'projectile')]),
+  small('r_c1', Rp('c1'), [inc('life', SMALL.life)]),
+  small('r_c2', Rp('c2'), allRes(SMALL.allRes)),
+  small('r_d1', Rp('d1'), [inc('movementSpeed', SMALL.movementSpeed)]),
+  notable('r_n2', Rp('n2'), [inc('movementSpeed', 0.06), inc('life', 0.06), flat('lifeRegen', 0.8)]),
 
   // Mage zone (11 nodes, 13 points)
-  small('m_a1', 'Іскра', Mp('a1'), [dmg(SMALL.taggedDamage, 'spell')]),
-  small('m_a2', 'Мерехтливий щит', Mp('a2'), [inc('energyShield', SMALL.energyShield)]),
-  small('m_a3', 'Швидкі слова', Mp('a3'), [inc('castSpeed', SMALL.speed)]),
-  small('m_a4', 'Широкий жест', Mp('a4'), [dmg(SMALL.taggedDamage, 'area')]),
-  notable('m_n1', 'Архімаг', Mp('n1'), [dmg(0.16, 'spell'), inc('castSpeed', 0.06)]),
-  small('m_b1', 'Подих зими', Mp('b1'), [dmg(SMALL.taggedDamage, 'cold')]),
-  small('m_b2', 'Жар', Mp('b2'), [dmg(SMALL.taggedDamage, 'fire')]),
-  small('m_c1', 'Глибокий колодязь', Mp('c1'), [flat('resource', SMALL.resource)]),
-  small('m_c2', 'Розряд', Mp('c2'), [dmg(SMALL.taggedDamage, 'lightning')]),
-  small('m_d1', 'Ясна думка', Mp('d1'), [flat('resourceRegen', SMALL.resourceRegen)]),
-  notable('m_n2', 'Тиха течія', Mp('n2'), [inc('energyShield', 0.16), flat('energyShieldRegen', 2), flat('resourceRegen', 1.5)]),
+  small('m_a1', Mp('a1'), [dmg(SMALL.taggedDamage, 'spell')]),
+  small('m_a2', Mp('a2'), [inc('energyShield', SMALL.energyShield)]),
+  small('m_a3', Mp('a3'), [inc('castSpeed', SMALL.speed)]),
+  small('m_a4', Mp('a4'), [dmg(SMALL.taggedDamage, 'area')]),
+  notable('m_n1', Mp('n1'), [dmg(0.16, 'spell'), inc('castSpeed', 0.06)]),
+  small('m_b1', Mp('b1'), [dmg(SMALL.taggedDamage, 'cold')]),
+  small('m_b2', Mp('b2'), [dmg(SMALL.taggedDamage, 'fire')]),
+  small('m_c1', Mp('c1'), [flat('resource', SMALL.resource)]),
+  small('m_c2', Mp('c2'), [dmg(SMALL.taggedDamage, 'lightning')]),
+  small('m_d1', Mp('d1'), [flat('resourceRegen', SMALL.resourceRegen)]),
+  notable('m_n2', Mp('n2'), [inc('energyShield', 0.16), flat('energyShieldRegen', 2), flat('resourceRegen', 1.5)]),
 
   // Mage + Warrior hybrid (6 nodes, 7 points)
-  small('mw_1', 'Розмах', MWp(1), [dmg(SMALL.taggedDamage, 'area')]),
-  small('mw_2', 'Стійкість', MWp(2), [inc('life', SMALL.life)]),
-  small('mw_3', 'Вогняна зброя', MWp(3), [dmg(SMALL.taggedDamage, 'fire')]),
-  small('mw_4', 'Рунна броня', MWp(4), [inc('energyShield', SMALL.energyShield)]),
-  small('mw_5', 'Стихійний захист', MWp(5), allRes(SMALL.allRes)),
-  notable('mw_n', 'Бойовий маг', MWp('n'), [inc('life', 0.06), inc('energyShield', 0.12), dmg(0.12, 'area')]),
+  small('mw_1', MWp(1), [dmg(SMALL.taggedDamage, 'area')]),
+  small('mw_2', MWp(2), [inc('life', SMALL.life)]),
+  small('mw_3', MWp(3), [dmg(SMALL.taggedDamage, 'fire')]),
+  small('mw_4', MWp(4), [inc('energyShield', SMALL.energyShield)]),
+  small('mw_5', MWp(5), allRes(SMALL.allRes)),
+  notable('mw_n', MWp('n'), [inc('life', 0.06), inc('energyShield', 0.12), dmg(0.12, 'area')]),
 
   // Warrior + Ranger hybrid (6 nodes, 7 points)
-  small('wr_1', 'Мисливська зброя', WRp(1), [dmg(SMALL.taggedDamage, 'attack')]),
-  small('wr_2', 'Холодний розрахунок', WRp(2), [inc('critChance', SMALL.critChance)]),
-  small('wr_3', 'Ритм', WRp(3), [inc('attackSpeed', SMALL.speed)]),
-  small('wr_4', 'Глибока рана', WRp(4), [flat('critMultiplier', SMALL.critMultiplier)]),
-  small('wr_5', 'Рухливість', WRp(5), [inc('movementSpeed', SMALL.movementSpeed)]),
-  notable('wr_n', 'Бойовий азарт', WRp('n'), [inc('critChance', 0.2), dmg(0.1, 'attack'), inc('movementSpeed', 0.03)]),
+  small('wr_1', WRp(1), [dmg(SMALL.taggedDamage, 'attack')]),
+  small('wr_2', WRp(2), [inc('critChance', SMALL.critChance)]),
+  small('wr_3', WRp(3), [inc('attackSpeed', SMALL.speed)]),
+  small('wr_4', WRp(4), [flat('critMultiplier', SMALL.critMultiplier)]),
+  small('wr_5', WRp(5), [inc('movementSpeed', SMALL.movementSpeed)]),
+  notable('wr_n', WRp('n'), [inc('critChance', 0.2), dmg(0.1, 'attack'), inc('movementSpeed', 0.03)]),
 
   // Ranger + Mage hybrid (6 nodes, 7 points)
-  small('rm_1', 'Плавний жест', RMp(1), [inc('castSpeed', SMALL.speed)]),
-  small('rm_2', 'Вітер у спину', RMp(2), [inc('movementSpeed', SMALL.movementSpeed)]),
-  small('rm_3', 'Летючий снаряд', RMp(3), [dmg(SMALL.taggedDamage, 'projectile')]),
-  small('rm_4', "Тонкий бар'єр", RMp(4), [inc('energyShield', SMALL.energyShield)]),
-  small('rm_5', 'Статика', RMp(5), [dmg(SMALL.taggedDamage, 'lightning')]),
-  notable('rm_n', 'Буревій', RMp('n'), [dmg(0.12, 'projectile'), dmg(0.12, 'lightning'), inc('movementSpeed', 0.05)]),
+  small('rm_1', RMp(1), [inc('castSpeed', SMALL.speed)]),
+  small('rm_2', RMp(2), [inc('movementSpeed', SMALL.movementSpeed)]),
+  small('rm_3', RMp(3), [dmg(SMALL.taggedDamage, 'projectile')]),
+  small('rm_4', RMp(4), [inc('energyShield', SMALL.energyShield)]),
+  small('rm_5', RMp(5), [dmg(SMALL.taggedDamage, 'lightning')]),
+  notable('rm_n', RMp('n'), [dmg(0.12, 'projectile'), dmg(0.12, 'lightning'), inc('movementSpeed', 0.05)]),
 
   // Inner ring (6 small nodes)
-  small('i_w', 'Серце воїна', at(ANGLE.warrior, R.inner), [dmg(SMALL.damage)]),
-  small('i_wr', 'Загартування', at(ANGLE.wr, R.inner), [inc('life', SMALL.life)]),
-  small('i_r', 'Серце мисливця', at(ANGLE.ranger, R.inner), [dmg(SMALL.damage)]),
-  small('i_rm', 'Потік', at(ANGLE.rm, R.inner), [inc('cooldownRecovery', SMALL.cooldownRecovery)]),
-  small('i_m', 'Серце мага', at(ANGLE.mage, R.inner), [dmg(SMALL.damage)]),
-  small('i_mw', 'Життєва сила', at(ANGLE.mw, R.inner), [inc('life', SMALL.life)]),
+  small('i_w', at(ANGLE.warrior, R.inner), [dmg(SMALL.damage)]),
+  small('i_wr', at(ANGLE.wr, R.inner), [inc('life', SMALL.life)]),
+  small('i_r', at(ANGLE.ranger, R.inner), [dmg(SMALL.damage)]),
+  small('i_rm', at(ANGLE.rm, R.inner), [inc('cooldownRecovery', SMALL.cooldownRecovery)]),
+  small('i_m', at(ANGLE.mage, R.inner), [dmg(SMALL.damage)]),
+  small('i_mw', at(ANGLE.mw, R.inner), [inc('life', SMALL.life)]),
 
   // Keystones (dead ends off the inner ring)
-  keystone('k_blood', 'Кровова жертва', at(ANGLE.mw, R.keystone), { mechanics: [{ kind: 'bloodMagic', lifePerResource: 1 }], exclusiveGroup: LIFE_POOL_GROUP }),
-  keystone('k_precise', 'Точна рука', at(ANGLE.wr, R.keystone), { mechanics: [{ kind: 'alwaysCrit', critMultiplier: 1.3 }] }),
-  keystone('k_crystal', 'Кришталевий панцир', at(ANGLE.rm, R.keystone), {
+  keystone('k_blood', at(ANGLE.mw, R.keystone), { mechanics: [{ kind: 'bloodMagic', lifePerResource: 1 }], exclusiveGroup: LIFE_POOL_GROUP }),
+  keystone('k_precise', at(ANGLE.wr, R.keystone), { mechanics: [{ kind: 'alwaysCrit', critMultiplier: 1.3 }] }),
+  keystone('k_crystal', at(ANGLE.rm, R.keystone), {
     mechanics: [{ kind: 'lifeToEnergyShield', maxLife: 1, lifeRegenToShield: true }],
     exclusiveGroup: LIFE_POOL_GROUP,
   }),
-  keystone('k_swift', 'Швидкі ноги', at(ANGLE.ranger, R.keystone), {
+  keystone('k_swift', at(ANGLE.ranger, R.keystone), {
     mechanics: [
       { kind: 'conditionalModifiers', condition: { kind: 'movedWithin', seconds: 0.5 }, modifiers: [more('damage', 0.3)] },
       { kind: 'conditionalModifiers', condition: { kind: 'stationaryFor', seconds: 0.5 }, modifiers: [more('damage', -0.3)] },
@@ -217,7 +219,7 @@ const wheel: PassiveNodeDef[] = [
   // Bloodsucker: leech 5% of all hit damage, capped at 20% of max life (ES under Crystal Shell) per second;
   // no life regen (-100% more, also removes the life regen Crystal Shell turns into ES regen);
   // life potions heal ×0.5 (consumed when potions are implemented, 0.4).
-  keystone('k_leech', 'Кровопивець', at(ANGLE.warrior, R.keystone), {
+  keystone('k_leech', at(ANGLE.warrior, R.keystone), {
     modifiers: [more('lifeRegen', -1)],
     mechanics: [
       { kind: 'lifeLeech', fraction: 0.05, maxPerSecond: 0.2 },
@@ -225,7 +227,7 @@ const wheel: PassiveNodeDef[] = [
     ],
   }),
   // Glass Cannon: +40% more damage dealt, +40% more damage taken.
-  keystone('k_glass', 'Скляна гармата', at(ANGLE.mage, R.keystone), { modifiers: [more('damage', 0.4), more('damageTaken', 0.4)] }),
+  keystone('k_glass', at(ANGLE.mage, R.keystone), { modifiers: [more('damage', 0.4), more('damageTaken', 0.4)] }),
 ];
 
 /** Standard class zone shape; `bHybrid` / `cHybrid` are the hybrid zones the b / c arms lead to. */
@@ -288,14 +290,12 @@ const wheelEdges: [string, string][] = [
 //                                  +- c1
 
 interface SpecNodeSpec {
-  readonly name: string;
   readonly modifiers?: Modifier[];
   readonly mechanics?: PassiveMechanic[];
 }
 
 interface SpecSpec {
   readonly id: string;
-  readonly name: string;
   readonly classId: 'warrior' | 'ranger' | 'mage';
   readonly prefix: string;
   readonly side: 1 | -1;
@@ -307,66 +307,57 @@ const SPEC_NODE_TYPE = { entry: 'specEntry', key: 'specKeystone', a1: 'spec', a2
 const specDefs: SpecSpec[] = [
   {
     id: 'berserker',
-    name: 'Берсерк',
     classId: 'warrior',
     prefix: 'bz',
     side: 1,
     nodes: {
-      entry: { name: 'Жага бою', modifiers: [dmg(0.15, 'melee'), inc('attackSpeed', 0.05)] },
-      key: { name: 'Безумство', mechanics: [{ kind: 'moreDamagePerMissingLife', perMissingLife: 0.6, max: 0.45 }] },
-      a1: { name: 'Товста шкура', modifiers: [inc('life', 0.1), flat('lifeRegen', 1)] },
+      entry: { modifiers: [dmg(0.15, 'melee'), inc('attackSpeed', 0.05)] },
+      key: { mechanics: [{ kind: 'moreDamagePerMissingLife', perMissingLife: 0.6, max: 0.45 }] },
+      a1: { modifiers: [inc('life', 0.1), flat('lifeRegen', 1)] },
       a2: {
-        name: 'Невгамовність',
         mechanics: [{ kind: 'conditionalModifiers', condition: { kind: 'lifeBelow', fraction: 0.5 }, modifiers: [inc('attackSpeed', 0.15), inc('movementSpeed', 0.1)] }],
       },
-      b1: { name: 'Різанина', modifiers: [flat('critMultiplier', 0.25, 'melee')] },
+      b1: { modifiers: [flat('critMultiplier', 0.25, 'melee')] },
       b2: {
-        name: 'Кривавий клич',
         mechanics: [{ kind: 'skillParams', skillIds: ['battle_cry'], changes: [{ param: 'buffDuration', add: 3 }], buffModifiers: [inc('attackSpeed', 0.2)] }],
       },
-      c1: { name: 'Загартування', modifiers: allRes(0.1) },
+      c1: { modifiers: allRes(0.1) },
     },
   },
   {
     id: 'guardian',
-    name: 'Страж',
     classId: 'warrior',
     prefix: 'gd',
     side: -1,
     nodes: {
-      entry: { name: 'Залізна стіна', modifiers: [inc('armour', 0.25), inc('life', 0.05)] },
+      entry: { modifiers: [inc('armour', 0.25), inc('life', 0.05)] },
       key: {
-        name: 'Шкала оглушення',
         // Decay (designer decision 2026-10-22, PROPOSAL numbers): after 2 s without hero hits the bar drains 25% of the bar per second.
         mechanics: [{ kind: 'stunBar', baseFill: 0.1, damageFill: 1, stunDuration: 1, bossFillFactor: 0.5, bossStunDuration: 0.4, decayDelay: 2, decayPerSecond: 0.25 }],
       },
-      a1: { name: 'Важка рука', mechanics: [{ kind: 'stunBonus', fillIncreased: 0.3, durationIncreased: 0.3 }] },
-      a2: { name: 'Контратака', mechanics: [{ kind: 'counterAttack', effectiveness: 1, cooldown: 1 }] },
-      b1: { name: 'Бастіон', modifiers: [inc('armour', 0.2), ...allRes(0.08)] },
+      a1: { mechanics: [{ kind: 'stunBonus', fillIncreased: 0.3, durationIncreased: 0.3 }] },
+      a2: { mechanics: [{ kind: 'counterAttack', effectiveness: 1, cooldown: 1 }] },
+      b1: { modifiers: [inc('armour', 0.2), ...allRes(0.08)] },
       b2: {
-        name: 'Добити лежачого',
         mechanics: [{ kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'stun' }, modifiers: [more('damage', 0.25)] }],
       },
-      c1: { name: 'Щит наготові', mechanics: [{ kind: 'skillParams', skillIds: ['shield_charge'], changes: [{ param: 'cooldown', add: -1 }] }] },
+      c1: { mechanics: [{ kind: 'skillParams', skillIds: ['shield_charge'], changes: [{ param: 'cooldown', add: -1 }] }] },
     },
   },
   {
     id: 'sniper',
-    name: 'Снайпер',
     classId: 'ranger',
     prefix: 'sn',
     side: 1,
     nodes: {
-      entry: { name: 'Око яструба', modifiers: [inc('critChance', 0.25), dmg(0.1, 'projectile')] },
+      entry: { modifiers: [inc('critChance', 0.25), dmg(0.1, 'projectile')] },
       key: {
-        name: 'Далекий постріл',
         mechanics: [{ kind: 'distanceDamage', tags: ['attack', 'projectile'], minDistance: 150, maxDistance: 450, maxMore: 0.5 }],
       },
-      a1: { name: 'Пробивний болт', mechanics: [{ kind: 'skillParams', tags: ['projectile'], changes: [{ param: 'pierce', add: 1 }] }] },
-      a2: { name: 'Смертельна точність', modifiers: [flat('critMultiplier', 0.3, 'projectile')] },
-      b1: { name: 'Холоднокровність', modifiers: [dmg(0.15, 'projectile'), inc('attackSpeed', 0.05)] },
+      a1: { mechanics: [{ kind: 'skillParams', tags: ['projectile'], changes: [{ param: 'pierce', add: 1 }] }] },
+      a2: { modifiers: [flat('critMultiplier', 0.3, 'projectile')] },
+      b1: { modifiers: [dmg(0.15, 'projectile'), inc('attackSpeed', 0.05)] },
       b2: {
-        name: 'Далекобійність',
         mechanics: [
           {
             kind: 'skillParams',
@@ -378,20 +369,18 @@ const specDefs: SpecSpec[] = [
           },
         ],
       },
-      c1: { name: 'Відступ', modifiers: [inc('movementSpeed', 0.06), inc('life', 0.06)] },
+      c1: { modifiers: [inc('movementSpeed', 0.06), inc('life', 0.06)] },
     },
   },
   {
     id: 'trapper',
-    name: 'Трапер',
     classId: 'ranger',
     prefix: 'tr',
     side: -1,
     nodes: {
-      entry: { name: 'Сапер', modifiers: [dmg(0.2, 'area'), inc('cooldownRecovery', 0.1)] },
-      key: { name: 'Мінне поле', mechanics: [{ kind: 'trapCharges', charges: 3, maxActive: 3, chainDelay: 0.15, chainRadius: 250 }] },
+      entry: { modifiers: [dmg(0.2, 'area'), inc('cooldownRecovery', 0.1)] },
+      key: { mechanics: [{ kind: 'trapCharges', charges: 3, maxActive: 3, chainDelay: 0.15, chainRadius: 250 }] },
       a1: {
-        name: 'Швидке зведення',
         mechanics: [
           {
             kind: 'skillParams',
@@ -403,11 +392,10 @@ const specDefs: SpecSpec[] = [
           },
         ],
       },
-      a2: { name: 'Шрапнель', mechanics: [{ kind: 'skillParams', skillIds: ['explosive_trap'], changes: [{ param: 'explodeRadius', increased: 0.25 }] }] },
-      b1: { name: 'Запальна суміш', modifiers: [dmg(0.2, 'fire')] },
-      b2: { name: 'Приманка', mechanics: [{ kind: 'trapAura', radius: 150, slow: 0.3 }] },
+      a2: { mechanics: [{ kind: 'skillParams', skillIds: ['explosive_trap'], changes: [{ param: 'explodeRadius', increased: 0.25 }] }] },
+      b1: { modifiers: [dmg(0.2, 'fire')] },
+      b2: { mechanics: [{ kind: 'trapAura', radius: 150, slow: 0.3 }] },
       c1: {
-        name: 'Легкий крок',
         modifiers: [inc('movementSpeed', 0.06)],
         mechanics: [{ kind: 'skillParams', skillIds: ['roll'], changes: [{ param: 'cooldown', add: -0.5 }] }],
       },
@@ -415,41 +403,35 @@ const specDefs: SpecSpec[] = [
   },
   {
     id: 'pyromancer',
-    name: 'Піромант',
     classId: 'mage',
     prefix: 'py',
     side: 1,
     nodes: {
-      entry: { name: 'Жар', mechanics: [{ kind: 'ignite', damageType: 'fire', chance: 0.3, damageFraction: 0.5, duration: 3 }] },
+      entry: { mechanics: [{ kind: 'ignite', damageType: 'fire', chance: 0.3, damageFraction: 0.5, duration: 3 }] },
       key: {
-        name: 'Погребальне вогнище',
         mechanics: [{ kind: 'deathExplosion', status: 'ignite', radius: 100, lifeFraction: 0.3, damageType: 'fire', applyStatus: 'ignite' }],
       },
-      a1: { name: 'Розпал', modifiers: [flat('igniteChance', 0.2), inc('igniteDamage', 0.3)] },
+      a1: { modifiers: [flat('igniteChance', 0.2), inc('igniteDamage', 0.3)] },
       a2: {
-        name: 'Пекло',
         mechanics: [
           { kind: 'skillParams', skillIds: ['fireball'], changes: [{ param: 'explodeRadius', increased: 0.2 }] },
           { kind: 'deathExplosionRadius', increased: 0.2 },
         ],
       },
-      b1: { name: "Полум'яне серце", modifiers: [dmg(0.2, 'fire'), inc('castSpeed', 0.06)] },
+      b1: { modifiers: [dmg(0.2, 'fire'), inc('castSpeed', 0.06)] },
       b2: {
-        name: 'Попіл до попелу',
         mechanics: [{ kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'ignite' }, modifiers: [more('damage', 0.15)] }],
       },
-      c1: { name: 'Вогняна шкіра', modifiers: [flat('fireResistance', 0.2), inc('energyShield', 0.12)] },
+      c1: { modifiers: [flat('fireResistance', 0.2), inc('energyShield', 0.12)] },
     },
   },
   {
     id: 'cryomancer',
-    name: 'Кріомант',
     classId: 'mage',
     prefix: 'cr',
     side: -1,
     nodes: {
       entry: {
-        name: 'Крижана хватка',
         mechanics: [
           { kind: 'freezeSlowed', skillIds: ['frost_nova'], duration: 1, bossDuration: 0.3 },
           // Only the nova's slow is extended (the design says "сповільнення нови"), not the freeze.
@@ -457,17 +439,15 @@ const specDefs: SpecSpec[] = [
         ],
       },
       key: {
-        name: 'Розбиття',
         mechanics: [
           { kind: 'conditionalModifiers', condition: { kind: 'targetHasStatus', status: 'freeze' }, modifiers: [more('damage', 0.25)] },
           { kind: 'deathExplosion', status: 'freeze', radius: 90, lifeFraction: 0.2, damageType: 'cold' },
         ],
       },
-      a1: { name: 'Вічна мерзлота', modifiers: [inc('freezeDuration', 0.5)] },
-      a2: { name: 'Холодна кров', mechanics: [{ kind: 'skillParams', skillIds: ['wand_bolt'], addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.2 }] }] },
-      b1: { name: 'Холодне серце', modifiers: [dmg(0.2, 'cold'), inc('energyShield', 0.1)] },
+      a1: { modifiers: [inc('freezeDuration', 0.5)] },
+      a2: { mechanics: [{ kind: 'skillParams', skillIds: ['wand_bolt'], addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.2 }] }] },
+      b1: { modifiers: [dmg(0.2, 'cold'), inc('energyShield', 0.1)] },
       b2: {
-        name: 'Хуртовина',
         mechanics: [
           {
             kind: 'skillParams',
@@ -479,7 +459,7 @@ const specDefs: SpecSpec[] = [
           },
         ],
       },
-      c1: { name: 'Іній', modifiers: [flat('resource', 15), flat('resourceRegen', 1)] },
+      c1: { modifiers: [flat('resource', 15), flat('resourceRegen', 1)] },
     },
   },
 ];
@@ -488,7 +468,7 @@ const specNodes: PassiveNodeDef[] = specDefs.flatMap((spec) => {
   const pos = specPos(ANGLE[spec.classId], spec.side);
   return (Object.keys(spec.nodes) as (keyof SpecSpec['nodes'])[]).map((slot) => {
     const def = spec.nodes[slot];
-    return node(`${spec.prefix}_${slot}`, def.name, SPEC_NODE_TYPE[slot], pos(slot), def.modifiers ?? [], {
+    return node(`${spec.prefix}_${slot}`, SPEC_NODE_TYPE[slot], pos(slot), def.modifiers ?? [], {
       specId: spec.id,
       ...(def.mechanics ? { mechanics: def.mechanics } : {}),
     });
@@ -505,7 +485,7 @@ const specEdges: [string, string][] = specDefs.flatMap(({ classId, prefix: p }) 
   [`${p}_key`, `${p}_c1`],
 ]);
 
-const specs: Record<string, SpecBranchDef> = Object.fromEntries(specDefs.map(({ id, name, classId }) => [id, { id, name, classId }]));
+const specs: Record<string, SpecBranchDef> = Object.fromEntries(specDefs.map(({ id, classId }) => [id, { id, classId }]));
 
 export const passiveTree: PassiveTreeData = {
   nodes: Object.fromEntries([...wheel, ...specNodes].map((n) => [n.id, n])),

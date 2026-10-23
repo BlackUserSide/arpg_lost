@@ -54,8 +54,8 @@ export interface WeaponStats {
 }
 
 export interface BaseDef {
+  /** Also the key of its display name in the locale files (render). */
   readonly id: string;
-  readonly name: string;
   readonly slot: Slot;
   /** Minimum item level to drop. */
   readonly level: number;
@@ -78,6 +78,7 @@ export interface LootRules {
   readonly enforceLevelRequirement: boolean;
   /** Temporary arena rewards until runs end with a chest (docs/design/maps.md). */
   readonly arenaRewards: { readonly killsPerItem: number; readonly maxItems: number; readonly wavesPerItemLevel: number; readonly maxBonusLevels: number };
+  /** Rare name words; each word is also its translation key in the locale files (item.rare.first.<word>). */
   readonly rareNameWords: { readonly first: readonly string[]; readonly second: readonly string[] };
 }
 
@@ -100,6 +101,10 @@ export interface Item {
   readonly baseId: string;
   readonly level: number;
   readonly rarity: Rarity;
+  /**
+   * Rolled name of a rare item: two words from LootRules.rareNameWords ("Grim Ward"), which render translates word by
+   * word. Empty for other rarities (render names them by their base); older saves may still hold an English base name.
+   */
   readonly name: string;
   readonly implicit?: number;
   readonly armour?: number;

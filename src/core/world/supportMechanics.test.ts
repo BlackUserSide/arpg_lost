@@ -82,8 +82,6 @@ const hero: ClassDef = {
 
 const support = (id: string, bonus: SkillBonus, resourceCostMultiplier = 1, variants?: SupportDef['tiers'][number]['variants']): SupportDef => ({
   id,
-  name: id,
-  description: id,
   group: 'general',
   compatibility: {},
   resourceCostMultiplier,

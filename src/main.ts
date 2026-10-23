@@ -1,6 +1,5 @@
 import * as Phaser from 'phaser';
 import { LocalPlatform } from './platform/localPlatform';
-import { loadFonts } from './render/fonts';
 import { APP_KEY, createApp } from './render/app';
 import { CreateCharacterScene } from './render/CreateCharacterScene';
 import { InventoryScene } from './render/InventoryScene';
@@ -11,7 +10,7 @@ import { SupportsScene } from './render/SupportsScene';
 
 async function boot(): Promise<void> {
   const platform = new LocalPlatform();
-  await loadFonts();
+  // Resolves the language and loads its fonts before the first scene draws text.
   const app = await createApp(platform);
 
   const game = new Phaser.Game({

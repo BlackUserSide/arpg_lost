@@ -12,6 +12,8 @@ Source models are not stored in the repo: `npm run bake:fetch` downloads them in
 
 ## Fonts (bundled via @fontsource, SIL Open Font License 1.1)
 
+woff2 subsets Latin, Latin Extended and Cyrillic, declared with unicode ranges in `src/render/fonts.css`.
+
 | Font | Authors | License |
 |---|---|---|
 | Cormorant SC | The Cormorant Project Authors | OFL 1.1 |

@@ -12,15 +12,17 @@ import {
   type SkillLevelData,
   type WorldState,
 } from '../core/world/world';
+import { t, upper } from '../i18n';
 import { skillIcon } from './hudIcons';
-import { formatCost, resourceNames } from './resourceText';
+import { formatCost, resourceText } from './resourceText';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
 // In-run HUD: Diablo-style life / class-resource orbs, skill bar with cooldown shutters, XP bar, run info, buffs.
 // Render-only: reads world state every frame.
 
 const DEPTH = 10000;
-const SLOT_KEYS = ['LMB', 'RMB', 'Q', 'E'];
+/** Slot key captions; mouse buttons are translated ("LMB" / "ЛКМ"). */
+const slotKeys = (): string[] => [t('hud.key.lmb'), t('hud.key.rmb'), 'Q', 'E'];
 /** Energy shield colours, used when the shield fills the life orb. */
 const SHIELD_DEEP = 0x1d4f7a;
 const SHIELD_BRIGHT = 0x9fd8ff;
@@ -169,6 +171,10 @@ export class Hud {
   private readonly slots: Slot[];
   private readonly info: Phaser.GameObjects.Text;
   private infoFrame: Phaser.GameObjects.Image;
+  /** Run info last drawn: the text is rebuilt only when one of these changes (-1 = never drawn). */
+  private shownSeconds = -1;
+  private shownKills = -1;
+  private shownWave = -1;
   private buffIcons: Phaser.GameObjects.GameObject[] = [];
   private time = 0;
   /** Mechanics list the slot costs were computed for (the world replaces the array on change). */
@@ -193,15 +199,16 @@ export class Hud {
     this.life = this.createOrb(0x6a0d0d, 0xd23a2a);
     this.resourceLook = RESOURCE_LOOKS[classDef.resource.id] ?? FALLBACK_LOOK;
     this.resource = this.createOrb(this.resourceLook.deep, this.resourceLook.bright);
-    this.resourceName = label(scene, 0, 0, resourceNames(classDef.resource.id).en.toUpperCase(), 12, this.resourceLook.text, true)
+    this.resourceName = label(scene, 0, 0, upper(resourceText(classDef.resource.id)), 12, this.resourceLook.text, true)
       .setOrigin(0.5, 1)
       .setScrollFactor(0)
       .setDepth(DEPTH + 2);
     this.resourceName.setStroke('#000', 3).setLetterSpacing(1);
+    const keys = slotKeys();
     this.slots = [classDef.basicAttack, ...classDef.skills].map((action, i) => {
       const frame = makeFrame(scene, 0, 0, 56, 56, 'secondary').setScrollFactor(0).setDepth(DEPTH);
       const icon = scene.add.image(0, 0, skillIcon(scene, action.id)).setScrollFactor(0).setDepth(DEPTH + 1);
-      const key = label(scene, 0, 0, SLOT_KEYS[i] ?? '', 12, UI.goldBrightText, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 3);
+      const key = label(scene, 0, 0, keys[i] ?? '', 12, UI.goldBrightText, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 3);
       key.setStroke('#000', 3);
       const cdText = label(scene, 0, 0, '', 18, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 3);
       cdText.setStroke('#000', 4);
@@ -234,7 +241,7 @@ export class Hud {
     });
     this.infoFrame = makeFrame(scene, 0, 0, 240, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
     this.info = label(scene, 0, 0, '', 15, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
-    this.resourceNote = label(scene, 0, 0, 'скіли за\nжиття', 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
+    this.resourceNote = label(scene, 0, 0, t('hud.skillsCostLife'), 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
     this.resourceNote.setStroke('#000', 3);
   }
 
@@ -275,7 +282,11 @@ export class Hud {
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - levelStrip - size - (compact ? 10 : 14) - barH, w: total, h: barH };
     this.levelText.setPosition(this.xpRect.x - 8, this.xpRect.y + barH / 2).setFontSize(compact ? 13 : 15);
 
-    const infoW = compact ? 200 : 240;
+    // Wide enough for a long run in the longest wording (translations differ a lot in length).
+    const sample = this.info.text;
+    this.info.setText(t('hud.runInfo', { time: '00:00', kills: 9999, wave: 99 }));
+    const infoW = Math.max(compact ? 200 : 240, Math.ceil(this.info.width + 28));
+    this.info.setText(sample);
     this.infoFrame.destroy();
     this.infoFrame = makeFrame(this.scene, width / 2, margin + 18, infoW, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
     this.info.setPosition(width / 2, margin + 18);
@@ -371,7 +382,13 @@ export class Hud {
     }
 
     const seconds = Math.floor(world.time);
-    this.info.setText(`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}    Kills ${world.kills}    Wave ${world.spawn.wave}`);
+    if (seconds !== this.shownSeconds || world.kills !== this.shownKills || world.spawn.wave !== this.shownWave) {
+      this.shownSeconds = seconds;
+      this.shownKills = world.kills;
+      this.shownWave = world.spawn.wave;
+      const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+      this.info.setText(t('hud.runInfo', { time, kills: world.kills, wave: world.spawn.wave }));
+    }
     this.drawXp(world, dt);
     this.drawSkillLevels(world, dt);
     this.updateBuffs(world);
@@ -477,9 +494,12 @@ export class Hud {
       const x = first.x - first.size / 2 + size / 2 + i * (size + 6);
       const y = first.y - first.size / 2 - size / 2 - 28; // above the XP bar
       const icon = this.scene.add.image(x, y, skillIcon(this.scene, source?.id ?? buff.id)).setDisplaySize(size, size).setScrollFactor(0).setDepth(DEPTH);
-      const t = label(this.scene, x, y + size / 2 + 6, `${Math.ceil(buff.remaining)}s`, 12, UI.goldBrightText, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
-      t.setStroke('#000', 3);
-      this.buffIcons.push(icon, t);
+      const time = label(this.scene, x, y + size / 2 + 6, t('hud.buffSeconds', { seconds: Math.ceil(buff.remaining) }), 12, UI.goldBrightText, true)
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(DEPTH + 1);
+      time.setStroke('#000', 3);
+      this.buffIcons.push(icon, time);
     });
   }
 

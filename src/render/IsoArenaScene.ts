@@ -19,8 +19,10 @@ import { SkillFx } from './skillFx';
 import { SupportFx } from './supportFx';
 import { supportIcon, tierColor, tierColorNum } from './supportIcons';
 import { supportsWord, supportTitle } from './supportText';
-import { plural, shardsWord } from './passiveText';
-import { resourceNames } from './resourceText';
+import { shardsWord } from './passiveText';
+import { resourceText } from './resourceText';
+import { baseName, itemName } from './contentText';
+import { t } from '../i18n';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
@@ -332,17 +334,17 @@ export class IsoArenaScene extends Phaser.Scene {
     if (!findCharacter(getApp(this).profile, this.characterId)) return;
     const w = compact ? 96 : 150;
     const h = compact ? 34 : 40;
-    this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? 'Таланти' : 'Таланти (P)', () => this.openTree()), HUD_UI_DEPTH);
+    this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? t('arena.talents') : t('arena.talentsKey'), () => this.openTree()), HUD_UI_DEPTH);
     // Touch has no Esc: the pause menu (and with it "end the run", which keeps found supports) needs a button.
     const pw = compact ? 84 : 120;
     this.pauseButton = pinToScreen(
-      makeButton(this, width - margin - w - 10 - pw / 2, margin + 18, pw, h, compact ? 'Пауза' : 'Пауза (Esc)', () => {
+      makeButton(this, width - margin - w - 10 - pw / 2, margin + 18, pw, h, compact ? t('arena.pause') : t('arena.pauseKey'), () => {
         if (!this.paused && !this.treeOpen && !this.world.player.dead) this.setPaused(true);
       }),
       HUD_UI_DEPTH,
     );
     const bh = compact ? 34 : 40;
-    this.banner.setPosition(width / 2, margin + 36 + 10 + bh / 2, bh);
+    this.banner.setPosition(width / 2, margin + 36 + 10 + bh / 2, bh, width - margin * 2);
   }
 
   private refreshBanner(): void {
@@ -446,25 +448,35 @@ export class IsoArenaScene extends Phaser.Scene {
       gap?: number;
     }
     const lines: Line[] = [];
-    const lineH = (l: Line): number => (l.heading ? 28 : l.size + 8) + (l.gap ?? 0);
+    // Lines wrap at the panel width (long item names, longer translations): measure the wrapped height once per line.
+    const probe = label(this, 0, 0, '', UI.size.body).setVisible(false).setWordWrapWidth(panelW - 32);
+    const measured = new Map<Line, number>();
+    const lineH = (l: Line): number => {
+      let h = measured.get(l);
+      if (h === undefined) {
+        probe.setFontSize(l.size).setFontStyle(l.bold ? 'bold' : 'normal').setText(l.text);
+        h = l.heading ? 28 : Math.max(l.size + 8, probe.height + 6);
+        measured.set(l, h);
+      }
+      return h + (l.gap ?? 0);
+    };
     const pending = this.world.supportDrops.length;
     if (kind === 'pause') {
       if (pending > 0) {
-        lines.push({ text: `Знайдено: ${supportsWord(pending)}`, size: UI.size.body, color: UI.goldBrightText, bold: true });
-        lines.push({ text: 'Їх буде втрачено, якщо герой загине', size: UI.size.small, color: UI.muted });
+        lines.push({ text: t('arena.found', { supports: supportsWord(pending) }), size: UI.size.body, color: UI.goldBrightText, bold: true });
+        lines.push({ text: t('arena.foundWarning'), size: UI.size.small, color: UI.muted });
       }
     } else {
       const seconds = Math.floor(this.world.time);
       const kills = this.world.kills;
       const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-      lines.push({ text: `${time}  ·  ${kills} ${plural(kills, 'вбивство', 'вбивства', 'вбивств')}  ·  хвиля ${this.world.spawn.wave}`, size: UI.size.body, color: UI.muted });
-      lines.push({ text: `+${Math.floor(this.world.xpGained)} досвіду  ·  рівень ${this.world.player.level}`, size: UI.size.body, color: UI.goldBrightText, bold: true });
-      lines.push({ text: 'Здобич', size: 20, color: UI.goldBrightText, heading: true, gap: 8 });
+      lines.push({ text: t('arena.summary', { time, kills: t('unit.kills', { count: kills }), wave: this.world.spawn.wave }), size: UI.size.body, color: UI.muted });
+      lines.push({ text: t('arena.xp', { xp: Math.floor(this.world.xpGained), level: this.world.player.level }), size: UI.size.body, color: UI.goldBrightText, bold: true });
+      lines.push({ text: t('arena.loot'), size: 20, color: UI.goldBrightText, heading: true, gap: 8 });
       const list: Line[] = [];
       for (const item of this.rewards?.items ?? []) {
-        const base = itemsData.bases[item.baseId];
-        const name = item.rarity === 'rare' ? `${item.name} (${base?.name ?? ''})` : item.name;
-        list.push({ text: `${name}  ·  рівень ${item.level}`, size: UI.size.body, color: UI.rarity[item.rarity], bold: true });
+        const name = item.rarity === 'rare' ? t('arena.lootRare', { name: itemName(item), base: baseName(item.baseId) }) : itemName(item);
+        list.push({ text: t('arena.lootItem', { name, level: item.level }), size: UI.size.body, color: UI.rarity[item.rarity], bold: true });
       }
       const kept = this.supportRewards?.kept ?? [];
       const supports = this.content.supports?.supports ?? {};
@@ -475,31 +487,32 @@ export class IsoArenaScene extends Phaser.Scene {
       const notes: Line[] = [];
       if (list.length === 0) {
         const per = itemsData.rules.arenaRewards.killsPerItem;
-        notes.push({ text: `Цього разу нічого: предмет за кожні ${per} вбивств`, size: UI.size.small, color: UI.muted });
+        notes.push({ text: t('arena.noLoot', { count: per }), size: UI.size.small, color: UI.muted });
       }
-      if (this.rewards && this.rewards.salvaged > 0) notes.push({ text: `Сховище повне: розібрано на ${shardsWord(this.rewards.salvaged)}`, size: UI.size.small, color: UI.muted });
+      if (this.rewards && this.rewards.salvaged > 0) notes.push({ text: t('arena.stashFull', { shards: shardsWord(this.rewards.salvaged) }), size: UI.size.small, color: UI.muted });
       const salvaged = this.supportRewards?.salvagedCount ?? 0;
       if (salvaged > 0) {
-        notes.push({ text: `Вкладка модифікаторів повна: ${supportsWord(salvaged)} → ${shardsWord(this.supportRewards?.shards ?? 0)}`, size: UI.size.small, color: UI.muted });
+        notes.push({ text: t('arena.tabFull', { supports: supportsWord(salvaged), shards: shardsWord(this.supportRewards?.shards ?? 0) }), size: UI.size.small, color: UI.muted });
       }
-      if (kind === 'death' && pending > 0) notes.push({ text: `Втрачено: ${supportsWord(pending)} (герой загинув)`, size: UI.size.small, color: UI.danger, bold: true });
+      if (kind === 'death' && pending > 0) notes.push({ text: t('arena.lost', { supports: supportsWord(pending) }), size: UI.size.small, color: UI.danger, bold: true });
       // Trim the list on short screens: the fixed parts always fit, the rest becomes "і ще N".
       const fixedH = (compact ? 64 : 82) + (compact ? 96 : 116) + [...lines, ...notes].reduce((h, l) => h + lineH(l), 0);
       const room = Math.max(1, Math.floor((height - 16 - fixedH) / (UI.size.body + 8)));
       if (list.length > room) {
         const hidden = list.length - (room - 1);
         list.length = room - 1;
-        list.push({ text: `і ще ${hidden}…`, size: UI.size.small, color: UI.muted });
+        list.push({ text: t('arena.more', { count: hidden }), size: UI.size.small, color: UI.muted });
       }
       lines.push(...list, ...notes);
     }
     const headerH = compact ? 64 : 82;
     const footerH = compact ? 96 : 116;
     const bodyH = lines.reduce((h, l) => h + lineH(l), 0);
+    probe.destroy();
     const panelH = Math.min(height - 8, headerH + bodyH + footerH);
     objects.push(makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel'));
     const top = height / 2 - panelH / 2;
-    const titleText = kind === 'death' ? 'Ви загинули' : kind === 'results' ? 'Забіг завершено' : 'Пауза';
+    const titleText = kind === 'death' ? t('arena.titleDeath') : kind === 'results' ? t('arena.titleResults') : t('arena.titlePause');
     objects.push(heading(this, width / 2, top + (compact ? 30 : 40), titleText, compact ? 28 : 36).setOrigin(0.5));
     let y = top + headerH;
     for (const l of lines) {
@@ -515,14 +528,14 @@ export class IsoArenaScene extends Phaser.Scene {
     const buttonY = top + panelH - (compact ? 40 : 50);
     const primary =
       kind === 'pause'
-        ? makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, 'Продовжити', () => this.setPaused(false), 'primary')
-        : makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, kind === 'death' ? 'Ще раз' : 'Новий забіг', () => this.restartRun(), 'primary');
+        ? makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, t('arena.resume'), () => this.setPaused(false), 'primary')
+        : makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, kind === 'death' ? t('arena.retry') : t('arena.newRun'), () => this.restartRun(), 'primary');
     const secondary =
       kind === 'pause'
-        ? makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, 'Завершити забіг', () => this.finishRun())
-        : makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, 'До хабу', () => this.leaveToMenu());
+        ? makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.endRun'), () => this.finishRun())
+        : makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.toHub'), () => this.leaveToMenu());
     objects.push(primary, secondary);
-    const hint = kind === 'pause' ? 'Esc — продовжити' : `R — ${kind === 'death' ? 'ще раз' : 'новий забіг'}   ·   Esc — до хабу`;
+    const hint = kind === 'pause' ? t('arena.hintPause') : t(kind === 'death' ? 'arena.hintRetry' : 'arena.hintNewRun');
     objects.push(label(this, width / 2, buttonY - (compact ? 38 : 46), hint, UI.size.small, UI.muted).setOrigin(0.5));
     for (const o of objects) pinToScreen(o, 20000);
     const fadeTargets = objects.slice(1);
@@ -1152,12 +1165,13 @@ export class IsoArenaScene extends Phaser.Scene {
     this.tweens.add({ targets: pillar, scaleX: 0.1, alpha: 0, duration: 800, ease: 'Quad.easeIn', onComplete: () => pillar.destroy() });
 
     const { width, height } = this.scale;
-    const banner = heading(this, width / 2, height * 0.28, 'Level Up', 44).setOrigin(0.5);
+    const banner = heading(this, width / 2, height * 0.28, t('arena.levelUp'), 44).setOrigin(0.5);
     const classDef = getClass(this.content, this.classId);
     // Blood Magic: no resource to restore (max 0).
     const refills = classDef.resource.refillOnLevelUp && maxResource(classDef, this.world.player) > 0;
-    const restored = refills ? `life and ${resourceNames(classDef.resource.id).en.toLowerCase()} restored` : 'life restored';
-    const sub = label(this, width / 2, height * 0.28 + 38, `Level ${level}  ·  ${restored}`, UI.size.body, UI.goldBrightText, true).setOrigin(0.5);
+    const resId = classDef.resource.id;
+    const restored = refills ? t('arena.restoredBoth', { resName: resourceText(resId), resAcc: resourceText(resId, 'acc') }) : t('arena.restoredLife');
+    const sub = label(this, width / 2, height * 0.28 + 38, t('arena.levelUpLine', { level, restored }), UI.size.body, UI.goldBrightText, true).setOrigin(0.5);
     for (const t of [banner, sub]) {
       pinToScreen(t, 15000);
       t.setAlpha(0);

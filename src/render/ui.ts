@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { t } from '../i18n';
 import { BODY_FONT, HEADING_FONT } from './fonts';
 
 // UI kit: design tokens (docs/design/ui-style.md) and procedurally drawn components.
@@ -182,6 +183,28 @@ export function label(scene: Phaser.Scene, x: number, y: number, text: string, s
 
 export type ButtonStyle = 'primary' | 'secondary' | 'danger' | 'link';
 
+/** Horizontal room a button keeps around its caption. */
+const BUTTON_TEXT_PAD = 16;
+/** Never shrink captions below this (phone readability) or below this share of their size. */
+const MIN_FIT_SIZE = 10;
+const MIN_FIT_SCALE = 0.6;
+
+/**
+ * Makes a one-line text fit `maxW`: shrinks the font (translations run up to ~30% longer than the Ukrainian / English
+ * layout was made for), and as a last resort wraps to two centred lines if `maxH` has room for them.
+ */
+export function fitText(text: Phaser.GameObjects.Text, maxW: number, maxH = Number.POSITIVE_INFINITY): Phaser.GameObjects.Text {
+  if (text.width <= maxW || maxW <= 0) return text;
+  const start = parseFloat(String(text.style.fontSize)) || UI.size.body;
+  const min = Math.max(MIN_FIT_SIZE, Math.floor(start * MIN_FIT_SCALE));
+  // Width grows about linearly with the size: one estimate, then step down for rounding and stroke.
+  let size = Math.max(min, Math.floor((start * maxW) / text.width));
+  text.setFontSize(size);
+  while (text.width > maxW && size > min) text.setFontSize(--size);
+  if (text.width > maxW && maxH >= text.height * 2) text.setWordWrapWidth(maxW).setAlign('center');
+  return text;
+}
+
 /**
  * Fires onClick only for a press that started on this object. A bare pointer-up (e.g. a menu
  * appearing under a resting cursor right after an attack click) must not activate it.
@@ -238,6 +261,7 @@ export function makeButton(
       strokeThickness: style === 'primary' ? 3 : 0,
     })
     .setOrigin(0.5);
+  fitText(t, w - BUTTON_TEXT_PAD, h - 6);
   const button = scene.add.container(x, y, [bg, t]);
   const tweenTo = (scale: number): void => {
     scene.tweens.add({ targets: button, scale, duration: 120, ease: 'Quad.easeOut' });
@@ -271,19 +295,25 @@ export function makeCard(scene: Phaser.Scene, x: number, y: number, w: number, h
 }
 
 /** Modal confirmation above everything. */
-export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel: string, onConfirm: () => void, cancelLabel = 'Cancel'): void {
+export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel: string, onConfirm: () => void, cancelLabel = t('common.cancel')): void {
   const { width, height } = scene.scale;
   const shade = scene.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.7).setInteractive();
   const w = Math.min(440, width - 32);
-  const panel = makeFrame(scene, width / 2, height / 2, w, 180, 'panel');
-  const text = label(scene, width / 2, height / 2 - 36, message, UI.size.body + 2).setOrigin(0.5).setWordWrapWidth(w - 48).setAlign('center');
+  const text = label(scene, width / 2, 0, message, UI.size.body + 2).setOrigin(0.5).setWordWrapWidth(w - 48).setAlign('center');
+  // The panel grows with the message (longer translations wrap to more lines).
+  const panelH = Math.min(height - 16, Math.max(180, text.height + 132));
+  const top = height / 2 - panelH / 2;
+  text.setY(top + 24 + text.height / 2);
+  const panel = makeFrame(scene, width / 2, height / 2, w, panelH, 'panel');
   const parts: Phaser.GameObjects.GameObject[] = [];
   const close = (): void => parts.forEach((p) => p.destroy());
-  const yes = makeButton(scene, width / 2 - 90, height / 2 + 44, 150, 46, confirmLabel, () => {
+  const buttonY = top + panelH - 46;
+  const buttonW = Math.min(150, (w - 48) / 2);
+  const yes = makeButton(scene, width / 2 - buttonW / 2 - 15, buttonY, buttonW, 46, confirmLabel, () => {
     close();
     onConfirm();
   }, 'danger');
-  const no = makeButton(scene, width / 2 + 90, height / 2 + 44, 150, 46, cancelLabel, close);
+  const no = makeButton(scene, width / 2 + buttonW / 2 + 15, buttonY, buttonW, 46, cancelLabel, close);
   parts.push(shade, panel, text, yes, no);
   for (const p of [shade, panel, text, yes, no]) p.setDepth(1000);
   for (const p of [panel, text, yes, no]) p.setAlpha(0);

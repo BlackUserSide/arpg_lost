@@ -2,7 +2,9 @@ import * as Phaser from 'phaser';
 import { createCharacter, type CreateCharacterError } from '../core/progression/profile';
 import { content } from '../data';
 import { profileRules } from '../data/profile';
+import { t, type MessageKey } from '../i18n';
 import { getApp } from './app';
+import { classDescription, className } from './contentText';
 import { BODY_FONT } from './fonts';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
@@ -14,12 +16,15 @@ const SUGGESTED_NAMES: Record<string, readonly string[]> = {
   mage: ['Elowen', 'Mordecai', 'Ysolde', 'Zarek'],
 };
 
-const ERRORS: Record<CreateCharacterError, string> = {
-  limit: `You can have up to ${profileRules.maxCharacters} heroes.`,
-  'name-length': `Name must be ${profileRules.nameMinLength}–${profileRules.nameMaxLength} characters.`,
-  'name-chars': 'Use letters, digits, spaces, "-" or "_".',
-  'unknown-class': 'Choose a class.',
+const ERROR_KEY: Readonly<Record<CreateCharacterError, MessageKey>> = {
+  limit: 'create.error.limit',
+  'name-length': 'create.error.nameLength',
+  'name-chars': 'create.error.nameChars',
+  'unknown-class': 'create.error.unknownClass',
 };
+
+const errorText = (error: CreateCharacterError): string =>
+  t(ERROR_KEY[error], { max: error === 'limit' ? profileRules.maxCharacters : profileRules.nameMaxLength, min: profileRules.nameMinLength });
 
 function pickName(classId: string): string {
   const names = SUGGESTED_NAMES[classId] ?? ['Hero'];
@@ -100,12 +105,12 @@ export class CreateCharacterScene extends Phaser.Scene {
 
     this.backdrop.layout(sceneW * 0.55, height * 0.62, width, height);
     this.backdrop.setHero(CLASS_LOOKS.find((l) => l.classId === this.classId)?.sprite);
-    this.root.add(heading(this, compact ? 16 : 32, compact ? 10 : 22, 'New hero', compact ? 30 : UI.size.display));
+    this.root.add(heading(this, compact ? 16 : 32, compact ? 10 : 22, t('create.title'), compact ? 30 : UI.size.display));
 
     const top = compact ? 12 : 28;
     const bottom = height - top;
     this.root.add(makeFrame(this, panelX, (top + bottom) / 2, panelW, bottom - top, 'panel'));
-    this.root.add(heading(this, panelX - panelW / 2 + 18, top + 10, 'Choose a class', compact ? 18 : 22));
+    this.root.add(heading(this, panelX - panelW / 2 + 18, top + 10, t('create.chooseClass'), compact ? 18 : 22));
 
     const rowW = panelW - 24;
     const rowH = compact ? Math.max(44, Math.min(66, (bottom - top - 200) / 3)) : 92;
@@ -121,16 +126,16 @@ export class CreateCharacterScene extends Phaser.Scene {
       portrait.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
       this.root.add(portrait);
       const textX = left + rowH + 4;
-      this.root.add(label(this, textX, y - rowH / 2 + (compact ? 6 : 12), look.name, compact ? UI.size.body : UI.size.heading, isSelected ? UI.goldBrightText : UI.text, true));
+      this.root.add(label(this, textX, y - rowH / 2 + (compact ? 6 : 12), className(look.classId), compact ? UI.size.body : UI.size.heading, isSelected ? UI.goldBrightText : UI.text, true));
       if (rowH >= 56) {
-        this.root.add(label(this, textX, y - rowH / 2 + (compact ? 28 : 40), look.description, UI.size.small, UI.muted).setWordWrapWidth(rowW - rowH - 16));
+        this.root.add(label(this, textX, y - rowH / 2 + (compact ? 28 : 40), classDescription(look.classId), UI.size.small, UI.muted).setWordWrapWidth(rowW - rowH - 16));
       }
       this.root.add(label(this, panelX + rowW / 2 - 12, y - rowH / 2 + 8, String(i + 1), 12, UI.muted).setOrigin(1, 0));
       y += rowH + (compact ? 6 : 10);
     }
 
     const nameTop = y - rowH / 2 + (compact ? 2 : 8);
-    this.root.add(label(this, panelX - rowW / 2, nameTop, 'Name', UI.size.small, UI.muted));
+    this.root.add(label(this, panelX - rowW / 2, nameTop, t('create.name'), UI.size.small, UI.muted));
     const inputY = nameTop + 22;
     const inputH = compact ? 36 : 42;
     this.positionInput(panelX - rowW / 2, inputY, rowW, inputH);
@@ -138,15 +143,15 @@ export class CreateCharacterScene extends Phaser.Scene {
 
     const buttonsY = bottom - (compact ? 32 : 44);
     const buttonH = compact ? 42 : 52;
-    this.root.add(makeButton(this, panelX + rowW / 4 + 6, buttonsY, rowW / 2 - 6, buttonH, 'Create', () => this.submit(), 'primary'));
-    this.root.add(makeButton(this, panelX - rowW / 4 - 6, buttonsY, rowW / 2 - 6, buttonH, 'Back', () => this.back()));
+    this.root.add(makeButton(this, panelX + rowW / 4 + 6, buttonsY, rowW / 2 - 6, buttonH, t('create.create'), () => this.submit(), 'primary'));
+    this.root.add(makeButton(this, panelX - rowW / 4 - 6, buttonsY, rowW / 2 - 6, buttonH, t('common.back'), () => this.back()));
   }
 
   private submit(): void {
     const app = getApp(this);
     const result = createCharacter(app.profile, { name: this.nameInput?.value ?? '', classId: this.classId }, profileRules, Object.keys(content.classes));
     if (!result.ok) {
-      this.errorText = ERRORS[result.error];
+      this.errorText = errorText(result.error);
       this.build();
       return;
     }
@@ -166,7 +171,7 @@ export class CreateCharacterScene extends Phaser.Scene {
     input.maxLength = profileRules.nameMaxLength;
     input.autocomplete = 'off';
     input.spellcheck = false;
-    input.setAttribute('aria-label', 'Hero name');
+    input.setAttribute('aria-label', t('create.nameLabel'));
     Object.assign(input.style, {
       position: 'absolute',
       boxSizing: 'border-box',

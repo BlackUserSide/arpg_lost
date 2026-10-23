@@ -42,6 +42,11 @@ export class LocalPlatform implements Platform {
     this.listeners.push(listener);
   }
 
+  getLanguages(): readonly string[] {
+    if (typeof navigator === 'undefined') return [];
+    return navigator.languages.length > 0 ? navigator.languages : [navigator.language];
+  }
+
   loadingStart(): void {}
   loadingStop(): void {}
   gameplayStart(): void {}

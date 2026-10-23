@@ -21,11 +21,11 @@ const affixes: Record<string, AffixDef> = {
 };
 
 const bases: Record<string, BaseDef> = {
-  cap: { id: 'cap', name: 'Cap', slot: 'helmet', level: 1, armour: { min: 10, max: 10, step: 1 }, implicit: { stat: 'resource', kind: 'flat', range: { min: 5, max: 5, step: 1 } } },
-  crown: { id: 'crown', name: 'Crown', slot: 'helmet', level: 15, armour: { min: 40, max: 40, step: 1 } },
-  ring: { id: 'ring', name: 'Ring', slot: 'ring', level: 1 },
-  sword: { id: 'sword', name: 'Sword', slot: 'weapon', level: 1, weapon: { type: 'sword', damage: { physical: { min: 5, max: 9 } }, attacksPerSecond: 1.2, critChance: 0.05 } },
-  wand: { id: 'wand', name: 'Wand', slot: 'weapon', level: 1, weapon: { type: 'wand', damage: { lightning: { min: 3, max: 7 } }, attacksPerSecond: 1.5, critChance: 0.07 } },
+  cap: { id: 'cap', slot: 'helmet', level: 1, armour: { min: 10, max: 10, step: 1 }, implicit: { stat: 'resource', kind: 'flat', range: { min: 5, max: 5, step: 1 } } },
+  crown: { id: 'crown', slot: 'helmet', level: 15, armour: { min: 40, max: 40, step: 1 } },
+  ring: { id: 'ring', slot: 'ring', level: 1 },
+  sword: { id: 'sword', slot: 'weapon', level: 1, weapon: { type: 'sword', damage: { physical: { min: 5, max: 9 } }, attacksPerSecond: 1.2, critChance: 0.05 } },
+  wand: { id: 'wand', slot: 'weapon', level: 1, weapon: { type: 'wand', damage: { lightning: { min: 3, max: 7 } }, attacksPerSecond: 1.5, critChance: 0.07 } },
 };
 
 const data: ItemsData = {
@@ -70,6 +70,9 @@ describe('item generation', () => {
           expect(prefixes).toBeLessThanOrEqual(3);
           expect(suffixes).toBeLessThanOrEqual(3);
           expect(item.name).toBe('Grim Bane');
+        } else {
+          // Display names are not core's job: normal / magic items are named by their base in render.
+          expect(item.name).toBe('');
         }
         expect(new Set(item.affixes.map((a) => a.affixId)).size).toBe(item.affixes.length);
         // Prefixes listed first.
