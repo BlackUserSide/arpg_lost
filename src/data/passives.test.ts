@@ -36,7 +36,6 @@ describe('passive tree data', () => {
   it('ids are unique and match their keys', () => {
     for (const [key, node] of Object.entries(tree.nodes)) expect(node.id).toBe(key);
     for (const [key, spec] of Object.entries(tree.specs)) expect(spec.id).toBe(key);
-    for (const n of nodes) expect(n.name.length, n.id).toBeGreaterThan(0);
   });
 
   it('wheel has 63 nodes (48 small, 9 notable, 6 keystones) costing 84, plus 3 starts', () => {
@@ -122,7 +121,6 @@ describe('passive tree data', () => {
 
   it('Bloodsucker and Glass Cannon data (PROPOSAL numbers)', () => {
     expect(tree.nodes.k_leech).toMatchObject({
-      name: 'Кровопивець',
       cost: 3,
       modifiers: [{ stat: 'lifeRegen', kind: 'more', value: -1 }],
       mechanics: [
@@ -131,7 +129,6 @@ describe('passive tree data', () => {
       ],
     });
     expect(tree.nodes.k_glass).toMatchObject({
-      name: 'Скляна гармата',
       cost: 3,
       modifiers: [
         { stat: 'damage', kind: 'more', value: 0.4 },

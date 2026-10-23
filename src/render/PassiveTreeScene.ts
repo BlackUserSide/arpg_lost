@@ -22,7 +22,9 @@ import { findCharacter, type CharacterRecord } from '../core/progression/profile
 import { classes } from '../data/classes';
 import { passiveTree } from '../data/passives';
 import { getApp, type App } from './app';
-import { ALLOCATE_ERRORS, costLabel, describeNode, NODE_TYPE_LABEL, PENDING_EFFECT, plural, pointsWord, RESPEC_ERRORS, shardsWord } from './passiveText';
+import { t } from '../i18n';
+import { passiveName, specName } from './contentText';
+import { allocateError, costLabel, describeNode, nodesWord, nodeTypeLabel, pendingEffect, pointsWord, respecError, shardsWord } from './passiveText';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, UI } from './ui';
 
 // Passive tree screen: the wheel + specialization branches, pan/zoom (mouse drag + wheel, touch drag + pinch),
@@ -147,7 +149,6 @@ const DIAMOND = unitPolygon(4, -Math.PI / 2);
 const POLY_BUFFERS = new Map([OCTAGON, DIAMOND].map((u) => [u, u.map(() => new Phaser.Math.Vector2())]));
 
 const isSpecType = (t: PassiveNodeType): boolean => t === 'spec' || t === 'specEntry' || t === 'specKeystone';
-const nodesWord = (n: number): string => `${n} ${plural(n, 'вузол', 'вузли', 'вузлів')}`;
 
 /** Currency the respec action would take, by running the core action on a copy with ample funds. */
 const PROBE_FUNDS = 1e9;
@@ -546,55 +547,56 @@ export class PassiveTreeScene extends Phaser.Scene {
   private tryAllocate(id: string): void {
     const error = allocate(TREE, this.hero(), id);
     if (error) {
-      this.setMessage(ALLOCATE_ERRORS[error]);
+      this.setMessage(allocateError(error));
       return;
     }
-    this.afterChange(`Взято: ${TREE.nodes[id]?.name ?? id}`);
+    const taken = TREE.nodes[id];
+    this.afterChange(t('tree.taken', { name: taken ? passiveName(taken) : id }));
   }
 
   private tryPath(id: string): void {
     const count = this.path?.nodes.length ?? 0;
     const error = allocatePath(TREE, this.hero(), id);
     if (error) {
-      this.setMessage(ALLOCATE_ERRORS[error]);
+      this.setMessage(allocateError(error));
       return;
     }
-    this.afterChange(`Взято шлях: ${nodesWord(count)}`);
+    this.afterChange(t('tree.takenPath', { nodes: nodesWord(count) }));
   }
 
   private requestRefund(id: string): void {
     const hero = this.hero();
     const { cost, error } = dryRun(hero, (h, w) => refundNode(TREE, h, id, w));
     if (error) {
-      this.setMessage(RESPEC_ERRORS[error]);
+      this.setMessage(respecError(error));
       return;
     }
-    const name = TREE.nodes[id]?.name ?? id;
+    const target = TREE.nodes[id];
+    const name = target ? passiveName(target) : id;
     const run = (): void => {
       const e = refundNode(TREE, this.hero(), id, this.app.profile.currency);
-      if (e) this.setMessage(RESPEC_ERRORS[e]);
-      else this.afterChange(`Знято: ${name}`);
+      if (e) this.setMessage(respecError(e));
+      else this.afterChange(t('tree.refunded', { name }));
     };
     if (cost === 0) run();
-    else confirmDialog(this, `Зняти «${name}»?\nЦіна: ${shardsWord(cost)}.`, 'Зняти', run, 'Скасувати');
+    else confirmDialog(this, t('tree.refundConfirm', { name, price: shardsWord(cost) }), t('tree.refund'), run);
   }
 
   private requestWheelReset(): void {
     const { cost, error } = dryRun(this.hero(), (h, w) => refundWheel(TREE, h, w));
     if (error) {
-      this.setMessage(RESPEC_ERRORS[error], UI.muted);
+      this.setMessage(respecError(error), UI.muted);
       return;
     }
     confirmDialog(
       this,
-      `Скинути все колесо?\nОчки талантів повернуться.\nЦіна: ${costLabel(cost)}.`,
-      'Скинути',
+      t('tree.wheelConfirm', { price: costLabel(cost) }),
+      t('tree.reset'),
       () => {
         const e = refundWheel(TREE, this.hero(), this.app.profile.currency);
-        if (e) this.setMessage(RESPEC_ERRORS[e]);
-        else this.afterChange('Колесо скинуто');
+        if (e) this.setMessage(respecError(e));
+        else this.afterChange(t('tree.wheelReset'));
       },
-      'Скасувати',
     );
   }
 
@@ -602,20 +604,19 @@ export class PassiveTreeScene extends Phaser.Scene {
     const hero = this.hero();
     const { cost, error } = dryRun(hero, (h, w) => changeSpec(TREE, h, w));
     if (error) {
-      this.setMessage(error === 'nothing-to-reset' ? 'Спеціалізацію ще не обрано.' : RESPEC_ERRORS[error], UI.muted);
+      this.setMessage(error === 'nothing-to-reset' ? t('tree.noSpec') : respecError(error), UI.muted);
       return;
     }
-    const name = hero.passives.spec ? (TREE.specs[hero.passives.spec]?.name ?? '') : '';
+    const name = hero.passives.spec ? specName(hero.passives.spec) : '';
     confirmDialog(
       this,
-      `Змінити спеціалізацію${name ? ` «${name}»` : ''}?\nОчки спеціалізації повернуться.\nЦіна: ${costLabel(cost)}.`,
-      'Змінити',
+      name ? t('tree.specConfirmNamed', { name, price: costLabel(cost) }) : t('tree.specConfirm', { price: costLabel(cost) }),
+      t('tree.change'),
       () => {
         const e = changeSpec(TREE, this.hero(), this.app.profile.currency);
-        if (e) this.setMessage(RESPEC_ERRORS[e]);
-        else this.afterChange('Спеціалізацію скинуто: оберіть гілку');
+        if (e) this.setMessage(respecError(e));
+        else this.afterChange(t('tree.specReset'));
       },
-      'Скасувати',
     );
   }
 
@@ -644,7 +645,7 @@ export class PassiveTreeScene extends Phaser.Scene {
       if (node.type === 'small' || node.type === 'spec' || node.type === 'specEntry') continue;
       const start = node.type === 'start';
       const text = this.add
-        .text(0, 0, node.name, {
+        .text(0, 0, passiveName(node), {
           fontFamily: start ? UI.headingFont : UI.bodyFont,
           fontStyle: 'bold',
           fontSize: start ? '24px' : '13px',
@@ -658,7 +659,7 @@ export class PassiveTreeScene extends Phaser.Scene {
     }
     for (const spec of Object.values(TREE.specs)) {
       const text = this.add
-        .text(0, 0, spec.name, { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '20px', color: UI.text, stroke: '#000', strokeThickness: 4 })
+        .text(0, 0, specName(spec.id), { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '20px', color: UI.text, stroke: '#000', strokeThickness: 4 })
         .setOrigin(0.5)
         .setDepth(2);
       this.specLabels.set(spec.id, text);
@@ -754,14 +755,15 @@ export class PassiveTreeScene extends Phaser.Scene {
     }
     for (const [specId, text] of this.specLabels) {
       const spec = TREE.specs[specId]!;
+      const name = specName(specId);
       const p = SPEC_LABEL_POS.get(specId)!;
       const own = spec.classId === hero.classId;
       text.setPosition(this.sx(p.x), this.sy(p.y)).setFontSize(this.compact ? 16 : 20);
-      if (!own) text.setText(spec.name).setColor(UI.muted).setAlpha(0.45);
-      else if (chosenSpec === specId) text.setText(`${spec.name} ✓`).setColor(UI.goldBrightText).setAlpha(1);
+      if (!own) text.setText(name).setColor(UI.muted).setAlpha(0.45);
+      else if (chosenSpec === specId) text.setText(`${name} ✓`).setColor(UI.goldBrightText).setAlpha(1);
       // The other branch of the own class: dimmed like its nodes; the tooltip says why.
-      else if (chosenSpec) text.setText(spec.name).setColor(UI.muted).setAlpha(0.55);
-      else text.setText(spec.name).setColor(UI.text).setAlpha(1);
+      else if (chosenSpec) text.setText(name).setColor(UI.muted).setAlpha(0.55);
+      else text.setText(name).setColor(UI.text).setAlpha(1);
     }
   }
 
@@ -840,20 +842,20 @@ export class PassiveTreeScene extends Phaser.Scene {
     // Header: blocks taps, shows points and shards.
     ui.add(this.add.rectangle(0, 0, width, headerH, 0x0e0b10, 0.97).setOrigin(0).setInteractive());
     ui.add(this.add.rectangle(0, headerH - 2, width, 2, 0x9a6a22, 1).setOrigin(0));
-    const title = heading(this, m + 4, compact ? 6 : 10, 'Таланти', compact ? 24 : 32);
+    const title = heading(this, m + 4, compact ? 6 : 10, t('tree.title'), compact ? 24 : 32);
     ui.add(title);
     const level = this.hero().level;
-    if (width >= 900) ui.add(label(this, title.x + title.width + 14, headerH / 2, `${character.name} · рівень ${level}`, UI.size.small, UI.muted).setOrigin(0, 0.5));
+    if (width >= 900) ui.add(label(this, title.x + title.width + 14, headerH / 2, t('tree.heroLine', { name: character.name, level }), UI.size.small, UI.muted).setOrigin(0, 0.5));
 
     const closeW = compact ? 44 : this.run ? 150 : 120;
-    const closeText = compact ? '✕' : this.run ? 'Закрити (P)' : 'Назад';
+    const closeText = compact ? '✕' : this.run ? t('tree.closeRun') : t('common.back');
     ui.add(makeButton(this, width - m - closeW / 2, headerH / 2, closeW, compact ? 34 : 42, closeText, () => this.close()));
 
     const shards = this.app.profile.currency[TREE.respec.currency] ?? 0;
     const { points, specPoints } = this.points;
     const stats = [
-      { text: `Очки: ${points}`, color: points > 0 ? UI.goldBrightText : UI.muted },
-      { text: `Спеціалізація: ${specPoints}`, color: specPoints > 0 ? UI.goldBrightText : UI.muted },
+      { text: t('tree.points', { count: points }), color: points > 0 ? UI.goldBrightText : UI.muted },
+      { text: t('tree.specPoints', { count: specPoints }), color: specPoints > 0 ? UI.goldBrightText : UI.muted },
       { text: `◆ ${shards}`, color: UI.text },
     ];
     let right = width - m - closeW - (compact ? 10 : 20);
@@ -870,9 +872,9 @@ export class PassiveTreeScene extends Phaser.Scene {
     const by = height - m - bh / 2;
     const wheel = dryRun(hero, (h, w) => refundWheel(TREE, h, w));
     const spec = dryRun(hero, (h, w) => changeSpec(TREE, h, w));
-    const price = (r: { cost: number; error: RespecError | null }): string => (r.error ? '' : r.cost > 0 ? ` · ${r.cost} ◆` : compact ? ' · 0 ◆' : ' · безкоштовно');
-    const wheelText = `Скинути колесо${price(wheel)}`;
-    const specText = `${compact ? 'Змінити спец.' : 'Змінити спеціалізацію'}${price(spec)}`;
+    const price = (r: { cost: number; error: RespecError | null }): string => (r.error ? '' : r.cost > 0 ? ` · ${r.cost} ◆` : compact ? ' · 0 ◆' : ` · ${t('common.free')}`);
+    const wheelText = t('tree.resetWheel', { price: price(wheel) });
+    const specText = t(compact ? 'tree.changeSpecShort' : 'tree.changeSpec', { price: price(spec) });
     const bw1 = compact ? 170 : 220;
     const bw2 = compact ? 180 : 280;
     const resetBtn = makeButton(this, m + bw1 / 2, by, bw1, bh, wheelText, () => this.requestWheelReset());
@@ -886,7 +888,7 @@ export class PassiveTreeScene extends Phaser.Scene {
     const zoomButtons: Array<[string, number, () => void]> = [
       ['−', compact ? 36 : 42, () => this.zoomAt(this.view.x + this.view.w / 2, this.view.y + this.view.h / 2, this.zoom / 1.3)],
       ['+', compact ? 36 : 42, () => this.zoomAt(this.view.x + this.view.w / 2, this.view.y + this.view.h / 2, this.zoom * 1.3)],
-      ['Огляд', compact ? 70 : 90, () => this.fitView()],
+      [t('tree.overview'), compact ? 70 : 90, () => this.fitView()],
     ];
     let zx = width - m;
     for (let i = zoomButtons.length - 1; i >= 0; i--) {
@@ -896,7 +898,7 @@ export class PassiveTreeScene extends Phaser.Scene {
     }
 
     // Message line above the bottom buttons; a hint when nothing happened yet.
-    const hint = this.touchUi ? 'Торкніться вузла, щоб побачити його. Ще раз — щоб узяти.' : 'ЛКМ — взяти · ПКМ — зняти · колесо миші — масштаб';
+    const hint = this.touchUi ? t('tree.hintTouch') : t('tree.hintMouse');
     const msg = this.message || hint;
     const msgText = label(this, m + 4, by - bh / 2 - 8, msg, compact ? 13 : UI.size.small, this.message ? this.messageTone : UI.muted, !!this.message).setOrigin(0, 1);
     msgText.setStroke('#000', 3);
@@ -932,41 +934,41 @@ export class PassiveTreeScene extends Phaser.Scene {
       y += t.height + gap;
     };
     const nameColor = node.type === 'keystone' || node.type === 'specKeystone' ? '#ffb070' : node.type === 'notable' || node.type === 'start' ? UI.goldBrightText : UI.text;
-    add(node.name, UI.size.heading - 2, nameColor, true, 2);
+    add(passiveName(node), UI.size.heading - 2, nameColor, true, 2);
     if (node.type === 'start') {
-      add(NODE_TYPE_LABEL.start, 12, UI.muted, false, 8);
-      add(id === this.ownStart ? 'Ваша стартова точка: шляхи ростуть звідси.' : 'Старт іншого класу: прохід закрито.', UI.size.small, UI.muted);
+      add(nodeTypeLabel('start'), 12, UI.muted, false, 8);
+      add(id === this.ownStart ? t('tree.ownStart') : t('tree.otherStart'), UI.size.small, UI.muted);
       return y;
     }
     const spec = node.specId ? TREE.specs[node.specId] : undefined;
-    const cost = `${pointsWord(node.cost)} ${spec ? 'спеціалізації' : 'талантів'}`;
-    add(`${NODE_TYPE_LABEL[node.type]} · ${cost}`, 12, UI.muted, false, spec ? 2 : 8);
-    if (spec) add(`Гілка: ${spec.name}`, 12, UI.muted, false, 8);
+    const cost = t(spec ? 'banner.specPoints' : 'banner.talentPoints', { count: node.cost });
+    add(t('tree.typeCost', { type: nodeTypeLabel(node.type), cost }), 12, UI.muted, false, spec ? 2 : 8);
+    if (spec) add(t('tree.branch', { name: specName(spec.id) }), 12, UI.muted, false, 8);
     for (const line of describeNode(node, classes[hero.classId]?.resource.id)) add(line, UI.size.small, '#8fb3ff', false, 3);
-    if (hasPendingMechanics(node)) add(PENDING_EFFECT, 12, '#c9a46a', true, 3);
+    if (hasPendingMechanics(node)) add(pendingEffect(), 12, '#c9a46a', true, 3);
     y += 6;
 
     const state = this.states.get(id);
     const error = this.errors.get(id) ?? null;
     if (state === 'allocated') {
-      add('Взято', UI.size.small, UI.goldBrightText, true);
+      add(t('tree.allocated'), UI.size.small, UI.goldBrightText, true);
       const blocked = canDeallocate(TREE, hero, id);
-      if (blocked) add(RESPEC_ERRORS[blocked], 12, UI.muted);
+      if (blocked) add(respecError(blocked), 12, UI.muted);
       else if (withHints) {
         // The panel shows the price on its button instead.
         const { cost: refund } = dryRun(hero, (h, w) => refundNode(TREE, h, id, w));
-        add(`Зняти: ${costLabel(refund)}${withHints && !this.touchUi ? ' (ПКМ)' : ''}`, 12, UI.muted);
+        add(t(withHints && !this.touchUi ? 'tree.refundPriceRmb' : 'tree.refundPrice', { price: costLabel(refund) }), 12, UI.muted);
       }
     } else if (state === 'allocatable') {
-      add(withHints && !this.touchUi ? 'Можна взяти — ЛКМ' : 'Можна взяти', UI.size.small, '#9fd67a', true);
+      add(withHints && !this.touchUi ? t('tree.canTakeLmb') : t('tree.canTake'), UI.size.small, '#9fd67a', true);
     } else if (error) {
       add(this.reason(error, node), UI.size.small, UI.danger, false);
     }
     const path = id === this.selected ? this.path : state === 'locked' || state === 'reachable' ? findPath(TREE, hero, id) : null;
     if (path && path.nodes.length > 1) {
       const enough = path.cost <= (spec ? this.points.specPoints : this.points.points);
-      add(`Шлях: ${nodesWord(path.nodes.length)}, ${pointsWord(path.cost)}`, UI.size.small, enough ? UI.goldBrightText : UI.muted, true);
-      if (withHints && !this.touchUi) add('ЛКМ — показати шлях', 12, UI.muted);
+      add(t('tree.path', { nodes: nodesWord(path.nodes.length), points: pointsWord(path.cost) }), UI.size.small, enough ? UI.goldBrightText : UI.muted, true);
+      if (withHints && !this.touchUi) add(t('tree.showPath'), 12, UI.muted);
     }
     return y;
   }
@@ -975,14 +977,14 @@ export class PassiveTreeScene extends Phaser.Scene {
     if (error === 'no-spec-points') {
       const level = this.hero().level;
       const next = nextSpecMilestone(TREE, level);
-      return next !== undefined ? `${ALLOCATE_ERRORS[error]} Наступне — на рівні ${next}.` : ALLOCATE_ERRORS[error];
+      return next !== undefined ? t('tree.nextSpecPoint', { error: allocateError(error), level: next }) : allocateError(error);
     }
     if (error === 'exclusive') {
       const passives = this.hero().passives;
       const other = [...passives.nodes, ...passives.specNodes].map((id) => TREE.nodes[id]).find((n) => n && n.exclusiveGroup === node.exclusiveGroup);
-      if (other) return `Несумісний із «${other.name}».`;
+      if (other) return t('tree.incompatible', { name: passiveName(other) });
     }
-    return ALLOCATE_ERRORS[error];
+    return allocateError(error);
   }
 
   private showTooltip(id: string): void {
@@ -1025,12 +1027,12 @@ export class PassiveTreeScene extends Phaser.Scene {
     const cxBtn = left + w / 2;
     const buttons: Phaser.GameObjects.Container[] = [];
     if (state === 'allocatable') {
-      buttons.push(makeButton(this, cxBtn, 0, bw, bh, 'Взяти', () => this.tryAllocate(id), 'primary'));
+      buttons.push(makeButton(this, cxBtn, 0, bw, bh, t('tree.take'), () => this.tryAllocate(id), 'primary'));
     } else if (state === 'allocated' && node.type !== 'start' && !canDeallocate(TREE, this.hero(), id)) {
       const { cost } = dryRun(this.hero(), (h, wl) => refundNode(TREE, h, id, wl));
-      buttons.push(makeButton(this, cxBtn, 0, bw, bh, `Зняти · ${costLabel(cost)}`, () => this.requestRefund(id), 'danger'));
+      buttons.push(makeButton(this, cxBtn, 0, bw, bh, t('tree.refundButton', { price: costLabel(cost) }), () => this.requestRefund(id), 'danger'));
     } else if (this.path && this.path.nodes.length > 1) {
-      buttons.push(makeButton(this, cxBtn, 0, bw, bh, `Взяти шлях · ${pointsWord(this.path.cost)}`, () => this.tryPath(id), 'primary'));
+      buttons.push(makeButton(this, cxBtn, 0, bw, bh, t('tree.takePath', { points: pointsWord(this.path.cost) }), () => this.tryPath(id), 'primary'));
     }
     for (const b of buttons) {
       b.setY(y + bh / 2);

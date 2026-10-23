@@ -18,17 +18,16 @@ export const SPRITE_SETS = manifest.characters as Record<string, SpriteSet>;
 export const FRAME_SIZE = manifest.frameSize;
 export const ORIGIN_Y = manifest.originY / manifest.frameSize;
 
+/** Visual look of a class; its name and description come from the locale files (render/contentText.ts). */
 export interface ClassLook {
   classId: string;
   sprite: string;
-  name: string;
-  description: string;
 }
 
 export const CLASS_LOOKS: readonly ClassLook[] = [
-  { classId: 'warrior', sprite: 'knight', name: 'Warrior', description: 'Melee. Cleave, shield charge, battle cry.' },
-  { classId: 'ranger', sprite: 'ranger', name: 'Ranger', description: 'Crossbow. Volley, explosive trap, roll.' },
-  { classId: 'mage', sprite: 'mage', name: 'Mage', description: 'Spells. Fireball, frost nova, teleport.' },
+  { classId: 'warrior', sprite: 'knight' },
+  { classId: 'ranger', sprite: 'ranger' },
+  { classId: 'mage', sprite: 'mage' },
 ];
 
 export const MOB_SPRITES: Readonly<Record<string, string>> = {

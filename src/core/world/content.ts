@@ -126,9 +126,8 @@ export type SelfEffect =
 
 /** Basic attack or skill. */
 export interface ActionDef {
+  /** Also the key of its display name in the locale files (render). */
   readonly id: string;
-  /** Display name (Ukrainian). */
-  readonly name?: string;
   readonly tags: readonly SkillTag[];
   /** Cost in the class resource (in life under bloodMagic, see actionCost). */
   readonly resourceCost: number;

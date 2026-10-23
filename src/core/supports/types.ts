@@ -45,12 +45,9 @@ export interface SupportTierDef {
   readonly variants?: readonly SupportVariant[];
 }
 
+/** Display name and one-line description are not data: render looks them up by id in the locale files. */
 export interface SupportDef {
   readonly id: string;
-  /** Display name (Ukrainian). */
-  readonly name: string;
-  /** One-line effect summary for tooltips (Ukrainian); exact numbers come from the tier's bonus. */
-  readonly description: string;
   /** Design group (for UI sorting / filters). */
   readonly group: 'melee' | 'projectile' | 'spell' | 'general';
   readonly compatibility: SupportCompatibility;

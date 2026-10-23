@@ -1,6 +1,7 @@
 import type { AffixDef, AffixTier, BaseDef, ItemsData, LootRules, Slot, StatLine } from '../core/items/types';
 
 // See docs/design/items.md. All numbers are PROPOSAL until a balance pass.
+// Base names are keyed by id in src/i18n/locales (base.<id>.name); rare name words double as their keys.
 
 const TIER_LEVELS = [1, 8, 15, 23, 30] as const;
 
@@ -64,56 +65,56 @@ const range = (min: number, max: number, step = 1): { min: number; max: number; 
 
 const baseList: BaseDef[] = [
   // Weapons: one type per class (docs/design/classes.md).
-  { id: 'rusty_sword', name: 'Rusty Sword', slot: 'weapon', level: 1, weapon: { type: 'sword', damage: { physical: { min: 6, max: 11 } }, attacksPerSecond: 1.6, critChance: 0.05 }, implicit: { stat: 'critChance', kind: 'increased', range: range(0.1, 0.15, 0.01) } },
-  { id: 'broadsword', name: 'Broadsword', slot: 'weapon', level: 10, weapon: { type: 'sword', damage: { physical: { min: 9, max: 16 } }, attacksPerSecond: 1.55, critChance: 0.05 }, implicit: { stat: 'critChance', kind: 'increased', range: range(0.15, 0.2, 0.01) } },
-  { id: 'war_sword', name: 'War Sword', slot: 'weapon', level: 20, weapon: { type: 'sword', damage: { physical: { min: 13, max: 22 } }, attacksPerSecond: 1.5, critChance: 0.05 }, implicit: { stat: 'critChance', kind: 'increased', range: range(0.2, 0.25, 0.01) } },
-  { id: 'light_crossbow', name: 'Light Crossbow', slot: 'weapon', level: 1, weapon: { type: 'crossbow', damage: { physical: { min: 6, max: 12 } }, attacksPerSecond: 1.4, critChance: 0.06 }, implicit: { stat: 'damage', kind: 'increased', tags: ['projectile'], range: range(0.06, 0.1, 0.01) } },
-  { id: 'heavy_crossbow', name: 'Heavy Crossbow', slot: 'weapon', level: 10, weapon: { type: 'crossbow', damage: { physical: { min: 10, max: 18 } }, attacksPerSecond: 1.3, critChance: 0.06 }, implicit: { stat: 'damage', kind: 'increased', tags: ['projectile'], range: range(0.1, 0.14, 0.01) } },
-  { id: 'arbalest', name: 'Arbalest', slot: 'weapon', level: 20, weapon: { type: 'crossbow', damage: { physical: { min: 14, max: 25 } }, attacksPerSecond: 1.3, critChance: 0.06 }, implicit: { stat: 'damage', kind: 'increased', tags: ['projectile'], range: range(0.14, 0.18, 0.01) } },
-  { id: 'driftwood_wand', name: 'Driftwood Wand', slot: 'weapon', level: 1, weapon: { type: 'wand', damage: { lightning: { min: 4, max: 9 } }, attacksPerSecond: 1.5, critChance: 0.07 }, implicit: { stat: 'damage', kind: 'increased', tags: ['spell'], range: range(0.06, 0.1, 0.01) } },
-  { id: 'bone_wand', name: 'Bone Wand', slot: 'weapon', level: 10, weapon: { type: 'wand', damage: { lightning: { min: 6, max: 13 } }, attacksPerSecond: 1.5, critChance: 0.07 }, implicit: { stat: 'damage', kind: 'increased', tags: ['spell'], range: range(0.1, 0.14, 0.01) } },
-  { id: 'runed_wand', name: 'Runed Wand', slot: 'weapon', level: 20, weapon: { type: 'wand', damage: { lightning: { min: 9, max: 18 } }, attacksPerSecond: 1.45, critChance: 0.07 }, implicit: { stat: 'damage', kind: 'increased', tags: ['spell'], range: range(0.14, 0.18, 0.01) } },
+  { id: 'rusty_sword', slot: 'weapon', level: 1, weapon: { type: 'sword', damage: { physical: { min: 6, max: 11 } }, attacksPerSecond: 1.6, critChance: 0.05 }, implicit: { stat: 'critChance', kind: 'increased', range: range(0.1, 0.15, 0.01) } },
+  { id: 'broadsword', slot: 'weapon', level: 10, weapon: { type: 'sword', damage: { physical: { min: 9, max: 16 } }, attacksPerSecond: 1.55, critChance: 0.05 }, implicit: { stat: 'critChance', kind: 'increased', range: range(0.15, 0.2, 0.01) } },
+  { id: 'war_sword', slot: 'weapon', level: 20, weapon: { type: 'sword', damage: { physical: { min: 13, max: 22 } }, attacksPerSecond: 1.5, critChance: 0.05 }, implicit: { stat: 'critChance', kind: 'increased', range: range(0.2, 0.25, 0.01) } },
+  { id: 'light_crossbow', slot: 'weapon', level: 1, weapon: { type: 'crossbow', damage: { physical: { min: 6, max: 12 } }, attacksPerSecond: 1.4, critChance: 0.06 }, implicit: { stat: 'damage', kind: 'increased', tags: ['projectile'], range: range(0.06, 0.1, 0.01) } },
+  { id: 'heavy_crossbow', slot: 'weapon', level: 10, weapon: { type: 'crossbow', damage: { physical: { min: 10, max: 18 } }, attacksPerSecond: 1.3, critChance: 0.06 }, implicit: { stat: 'damage', kind: 'increased', tags: ['projectile'], range: range(0.1, 0.14, 0.01) } },
+  { id: 'arbalest', slot: 'weapon', level: 20, weapon: { type: 'crossbow', damage: { physical: { min: 14, max: 25 } }, attacksPerSecond: 1.3, critChance: 0.06 }, implicit: { stat: 'damage', kind: 'increased', tags: ['projectile'], range: range(0.14, 0.18, 0.01) } },
+  { id: 'driftwood_wand', slot: 'weapon', level: 1, weapon: { type: 'wand', damage: { lightning: { min: 4, max: 9 } }, attacksPerSecond: 1.5, critChance: 0.07 }, implicit: { stat: 'damage', kind: 'increased', tags: ['spell'], range: range(0.06, 0.1, 0.01) } },
+  { id: 'bone_wand', slot: 'weapon', level: 10, weapon: { type: 'wand', damage: { lightning: { min: 6, max: 13 } }, attacksPerSecond: 1.5, critChance: 0.07 }, implicit: { stat: 'damage', kind: 'increased', tags: ['spell'], range: range(0.1, 0.14, 0.01) } },
+  { id: 'runed_wand', slot: 'weapon', level: 20, weapon: { type: 'wand', damage: { lightning: { min: 9, max: 18 } }, attacksPerSecond: 1.45, critChance: 0.07 }, implicit: { stat: 'damage', kind: 'increased', tags: ['spell'], range: range(0.14, 0.18, 0.01) } },
 
   // Helmets: armour / energy shield / hybrid; implicit +resource (max of the class resource).
-  { id: 'iron_cap', name: 'Iron Cap', slot: 'helmet', level: 1, armour: range(8, 12), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
-  { id: 'hood', name: 'Hood', slot: 'helmet', level: 1, energyShield: range(6, 9), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
-  { id: 'leather_helm', name: 'Leather Helm', slot: 'helmet', level: 1, armour: range(4, 6), energyShield: range(3, 5), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
-  { id: 'great_helm', name: 'Great Helm', slot: 'helmet', level: 15, armour: range(25, 35), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
-  { id: 'sage_hood', name: 'Sage Hood', slot: 'helmet', level: 15, energyShield: range(18, 26), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
-  { id: 'warded_helm', name: 'Warded Helm', slot: 'helmet', level: 15, armour: range(12, 18), energyShield: range(9, 13), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
+  { id: 'iron_cap', slot: 'helmet', level: 1, armour: range(8, 12), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
+  { id: 'hood', slot: 'helmet', level: 1, energyShield: range(6, 9), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
+  { id: 'leather_helm', slot: 'helmet', level: 1, armour: range(4, 6), energyShield: range(3, 5), implicit: { stat: 'resource', kind: 'flat', range: range(5, 8) } },
+  { id: 'great_helm', slot: 'helmet', level: 15, armour: range(25, 35), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
+  { id: 'sage_hood', slot: 'helmet', level: 15, energyShield: range(18, 26), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
+  { id: 'warded_helm', slot: 'helmet', level: 15, armour: range(12, 18), energyShield: range(9, 13), implicit: { stat: 'resource', kind: 'flat', range: range(9, 14) } },
 
   // Body armour; implicit +life.
-  { id: 'chainmail', name: 'Chainmail', slot: 'armour', level: 1, armour: range(20, 30), implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
-  { id: 'robe', name: 'Robe', slot: 'armour', level: 1, energyShield: range(15, 22), implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
-  { id: 'brigandine', name: 'Brigandine', slot: 'armour', level: 1, armour: range(10, 15), energyShield: range(8, 11), implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
-  { id: 'plate_armour', name: 'Plate Armour', slot: 'armour', level: 15, armour: range(60, 80), implicit: { stat: 'life', kind: 'flat', range: range(18, 25) } },
-  { id: 'arcane_robe', name: 'Arcane Robe', slot: 'armour', level: 15, energyShield: range(45, 60), implicit: { stat: 'life', kind: 'flat', range: range(18, 25) } },
-  { id: 'scale_robe', name: 'Scale Robe', slot: 'armour', level: 15, armour: range(30, 40), energyShield: range(22, 30), implicit: { stat: 'life', kind: 'flat', range: range(18, 25) } },
+  { id: 'chainmail', slot: 'armour', level: 1, armour: range(20, 30), implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
+  { id: 'robe', slot: 'armour', level: 1, energyShield: range(15, 22), implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
+  { id: 'brigandine', slot: 'armour', level: 1, armour: range(10, 15), energyShield: range(8, 11), implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
+  { id: 'plate_armour', slot: 'armour', level: 15, armour: range(60, 80), implicit: { stat: 'life', kind: 'flat', range: range(18, 25) } },
+  { id: 'arcane_robe', slot: 'armour', level: 15, energyShield: range(45, 60), implicit: { stat: 'life', kind: 'flat', range: range(18, 25) } },
+  { id: 'scale_robe', slot: 'armour', level: 15, armour: range(30, 40), energyShield: range(22, 30), implicit: { stat: 'life', kind: 'flat', range: range(18, 25) } },
 
   // Gloves; implicit increased crit chance.
-  { id: 'iron_gauntlets', name: 'Iron Gauntlets', slot: 'gloves', level: 1, armour: range(5, 8), implicit: { stat: 'critChance', kind: 'increased', range: range(0.05, 0.08, 0.01) } },
-  { id: 'silk_gloves', name: 'Silk Gloves', slot: 'gloves', level: 1, energyShield: range(4, 6), implicit: { stat: 'critChance', kind: 'increased', range: range(0.05, 0.08, 0.01) } },
-  { id: 'wrapped_mitts', name: 'Wrapped Mitts', slot: 'gloves', level: 1, armour: range(3, 4), energyShield: range(2, 3), implicit: { stat: 'critChance', kind: 'increased', range: range(0.05, 0.08, 0.01) } },
-  { id: 'steel_gauntlets', name: 'Steel Gauntlets', slot: 'gloves', level: 15, armour: range(16, 22), implicit: { stat: 'critChance', kind: 'increased', range: range(0.09, 0.12, 0.01) } },
-  { id: 'sorcerer_gloves', name: 'Sorcerer Gloves', slot: 'gloves', level: 15, energyShield: range(12, 16), implicit: { stat: 'critChance', kind: 'increased', range: range(0.09, 0.12, 0.01) } },
-  { id: 'studded_gloves', name: 'Studded Gloves', slot: 'gloves', level: 15, armour: range(8, 11), energyShield: range(6, 8), implicit: { stat: 'critChance', kind: 'increased', range: range(0.09, 0.12, 0.01) } },
+  { id: 'iron_gauntlets', slot: 'gloves', level: 1, armour: range(5, 8), implicit: { stat: 'critChance', kind: 'increased', range: range(0.05, 0.08, 0.01) } },
+  { id: 'silk_gloves', slot: 'gloves', level: 1, energyShield: range(4, 6), implicit: { stat: 'critChance', kind: 'increased', range: range(0.05, 0.08, 0.01) } },
+  { id: 'wrapped_mitts', slot: 'gloves', level: 1, armour: range(3, 4), energyShield: range(2, 3), implicit: { stat: 'critChance', kind: 'increased', range: range(0.05, 0.08, 0.01) } },
+  { id: 'steel_gauntlets', slot: 'gloves', level: 15, armour: range(16, 22), implicit: { stat: 'critChance', kind: 'increased', range: range(0.09, 0.12, 0.01) } },
+  { id: 'sorcerer_gloves', slot: 'gloves', level: 15, energyShield: range(12, 16), implicit: { stat: 'critChance', kind: 'increased', range: range(0.09, 0.12, 0.01) } },
+  { id: 'studded_gloves', slot: 'gloves', level: 15, armour: range(8, 11), energyShield: range(6, 8), implicit: { stat: 'critChance', kind: 'increased', range: range(0.09, 0.12, 0.01) } },
 
   // Boots; implicit increased movement speed.
-  { id: 'iron_greaves', name: 'Iron Greaves', slot: 'boots', level: 1, armour: range(5, 8), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.03, 0.05, 0.01) } },
-  { id: 'silk_slippers', name: 'Silk Slippers', slot: 'boots', level: 1, energyShield: range(4, 6), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.03, 0.05, 0.01) } },
-  { id: 'leather_boots', name: 'Leather Boots', slot: 'boots', level: 1, armour: range(3, 4), energyShield: range(2, 3), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.03, 0.05, 0.01) } },
-  { id: 'steel_greaves', name: 'Steel Greaves', slot: 'boots', level: 15, armour: range(16, 22), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.05, 0.07, 0.01) } },
-  { id: 'mystic_slippers', name: 'Mystic Slippers', slot: 'boots', level: 15, energyShield: range(12, 16), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.05, 0.07, 0.01) } },
-  { id: 'ranger_boots', name: 'Ranger Boots', slot: 'boots', level: 15, armour: range(8, 11), energyShield: range(6, 8), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.05, 0.07, 0.01) } },
+  { id: 'iron_greaves', slot: 'boots', level: 1, armour: range(5, 8), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.03, 0.05, 0.01) } },
+  { id: 'silk_slippers', slot: 'boots', level: 1, energyShield: range(4, 6), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.03, 0.05, 0.01) } },
+  { id: 'leather_boots', slot: 'boots', level: 1, armour: range(3, 4), energyShield: range(2, 3), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.03, 0.05, 0.01) } },
+  { id: 'steel_greaves', slot: 'boots', level: 15, armour: range(16, 22), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.05, 0.07, 0.01) } },
+  { id: 'mystic_slippers', slot: 'boots', level: 15, energyShield: range(12, 16), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.05, 0.07, 0.01) } },
+  { id: 'ranger_boots', slot: 'boots', level: 15, armour: range(8, 11), energyShield: range(6, 8), implicit: { stat: 'movementSpeed', kind: 'increased', range: range(0.05, 0.07, 0.01) } },
 
   // Rings and amulets.
-  { id: 'iron_ring', name: 'Iron Ring', slot: 'ring', level: 1, implicit: { stat: 'life', kind: 'flat', range: range(8, 12) } },
-  { id: 'ruby_ring', name: 'Ruby Ring', slot: 'ring', level: 1, implicit: { stat: 'fireResistance', kind: 'flat', range: range(0.08, 0.12, 0.01) } },
-  { id: 'sapphire_ring', name: 'Sapphire Ring', slot: 'ring', level: 1, implicit: { stat: 'coldResistance', kind: 'flat', range: range(0.08, 0.12, 0.01) } },
-  { id: 'topaz_ring', name: 'Topaz Ring', slot: 'ring', level: 1, implicit: { stat: 'lightningResistance', kind: 'flat', range: range(0.08, 0.12, 0.01) } },
-  { id: 'amber_amulet', name: 'Amber Amulet', slot: 'amulet', level: 1, implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
-  { id: 'jade_amulet', name: 'Jade Amulet', slot: 'amulet', level: 1, implicit: { stat: 'lifeRegen', kind: 'flat', range: range(0.5, 1, 0.1) } },
-  { id: 'lapis_amulet', name: 'Lapis Amulet', slot: 'amulet', level: 1, implicit: { stat: 'resource', kind: 'flat', range: range(10, 15) } },
+  { id: 'iron_ring', slot: 'ring', level: 1, implicit: { stat: 'life', kind: 'flat', range: range(8, 12) } },
+  { id: 'ruby_ring', slot: 'ring', level: 1, implicit: { stat: 'fireResistance', kind: 'flat', range: range(0.08, 0.12, 0.01) } },
+  { id: 'sapphire_ring', slot: 'ring', level: 1, implicit: { stat: 'coldResistance', kind: 'flat', range: range(0.08, 0.12, 0.01) } },
+  { id: 'topaz_ring', slot: 'ring', level: 1, implicit: { stat: 'lightningResistance', kind: 'flat', range: range(0.08, 0.12, 0.01) } },
+  { id: 'amber_amulet', slot: 'amulet', level: 1, implicit: { stat: 'life', kind: 'flat', range: range(10, 15) } },
+  { id: 'jade_amulet', slot: 'amulet', level: 1, implicit: { stat: 'lifeRegen', kind: 'flat', range: range(0.5, 1, 0.1) } },
+  { id: 'lapis_amulet', slot: 'amulet', level: 1, implicit: { stat: 'resource', kind: 'flat', range: range(10, 15) } },
 ];
 
 const rules: LootRules = {

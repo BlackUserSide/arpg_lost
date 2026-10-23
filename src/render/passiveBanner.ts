@@ -2,7 +2,7 @@ import * as Phaser from 'phaser';
 import { unspentBanner } from './passiveText';
 import { makeButton, pinToScreen, UI } from './ui';
 
-// "Маєте N очок талантів" call-to-action, shared by the hub and the in-run HUD. Click opens the tree.
+// "You have N talent points" call-to-action, shared by the hub and the in-run HUD. Click opens the tree.
 // Rebuilt only when the numbers change, so it can be fed every frame without allocating.
 
 const PULSE_MS = 900;
@@ -15,19 +15,23 @@ export class PointsBanner {
   private x = 0;
   private y = 0;
   private height = 40;
+  private maxWidth: number;
 
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly onClick: () => void,
-    private readonly opts: { depth: number; pinned: boolean; parent?: Phaser.GameObjects.Container },
-  ) {}
+    private readonly opts: { depth: number; pinned: boolean; parent?: Phaser.GameObjects.Container; maxWidth?: number },
+  ) {
+    this.maxWidth = opts.maxWidth ?? Number.POSITIVE_INFINITY;
+  }
 
-  /** Centre of the banner. */
-  setPosition(x: number, y: number, height = this.height): void {
-    if (x === this.x && y === this.y && height === this.height) return;
+  /** Centre of the banner; `maxWidth` caps it on narrow screens (the caption shrinks instead). */
+  setPosition(x: number, y: number, height = this.height, maxWidth = this.maxWidth): void {
+    if (x === this.x && y === this.y && height === this.height && maxWidth === this.maxWidth) return;
     this.x = x;
     this.y = y;
     this.height = height;
+    this.maxWidth = maxWidth;
     this.rebuild();
   }
 
@@ -57,7 +61,8 @@ export class PointsBanner {
     const fontSize = Math.round(Math.min(this.height * 0.42, 24));
     // Measure with the same font the button uses (heading font for primary buttons).
     const probe = this.scene.add.text(0, 0, text, { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: `${fontSize}px` });
-    const width = Math.ceil(probe.width + 44);
+    // Long translations: the button never grows past maxWidth, its caption shrinks to fit instead (makeButton).
+    const width = Math.min(Math.ceil(probe.width + 44), this.maxWidth);
     probe.destroy();
     this.glow = this.scene.add.rectangle(this.x, this.y, width + 10, this.height + 10, 0xff7a2a, 0.35).setBlendMode(Phaser.BlendModes.ADD);
     this.button = makeButton(this.scene, this.x, this.y, width, this.height, text, this.onClick, 'primary');

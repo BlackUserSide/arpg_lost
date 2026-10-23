@@ -81,7 +81,7 @@ export function generateItem(rng: Rng, id: string, options: GenerateOptions, dat
     baseId: base.id,
     level: options.itemLevel,
     rarity,
-    name: rarity === 'rare' ? rareName(rng, data) : base.name,
+    name: rarity === 'rare' ? rareName(rng, data) : '',
     affixes: sortAffixes(affixes, data),
     ...(base.implicit ? { implicit: rollValue(rng, base.implicit.range) } : {}),
     ...(base.armour ? { armour: rollValue(rng, base.armour) } : {}),

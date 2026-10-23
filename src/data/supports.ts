@@ -4,6 +4,7 @@ import type { SupportData, SupportDef, SupportRules } from '../core/supports/typ
 // Skill modifiers ("supports"), docs/design/skill-modifiers.md: 14 supports, 3 tiers each (index 0 = tier 1).
 // Structure (slots, tab size, compatibility, which mechanic each support uses) follows the design and the
 // designer's decisions of 2026-10-23. Every number marked BALANCE-TBD is a placeholder for balance-analyst.
+// Names and descriptions are keyed by id in src/i18n/locales (support.<id>.name, support.<id>.description).
 
 const rules: SupportRules = {
   // Design: 2 slots per skill, the basic attack has none.
@@ -27,8 +28,6 @@ const supportList: SupportDef[] = [
   // ── Melee ──
   {
     id: 'wider_swing',
-    name: 'Ширший замах',
-    description: 'Ширша дуга й більша зона удару, трохи менше урону.',
     group: 'melee',
     // Arcs grow (angle, radius), a charge widens its path; nothing to widen on other deliveries.
     // Designer decision: Wider Swing also fits Shield Charge (wider path).
@@ -44,8 +43,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'stun',
-    name: 'Оглушення',
-    description: 'Шанс оглушити при ударі. У героя зі шкалою оглушення (Страж) — сильніше наповнює шкалу.',
     group: 'melee',
     compatibility: { tags: [['melee']], damaging: true },
     resourceCostMultiplier: 1.2, // BALANCE-TBD
@@ -60,8 +57,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'bleed',
-    name: 'Кровотеча',
-    description: 'Удар накладає кровотечу: фізичний урон з часом, до 3 стаків.',
     group: 'melee',
     compatibility: { tags: [['melee']], damaging: true },
     resourceCostMultiplier: 1.25, // BALANCE-TBD
@@ -76,8 +71,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'knockback',
-    name: 'Відкидання',
-    description: 'Вороги відлітають від удару. Бос не відлітає, еліти — слабше.',
     group: 'melee',
     compatibility: { tags: [['melee']], damaging: true },
     resourceCostMultiplier: 1.2, // BALANCE-TBD
@@ -94,8 +87,6 @@ const supportList: SupportDef[] = [
   // ── Projectiles ──
   {
     id: 'extra_projectiles',
-    name: 'Додаткові снаряди',
-    description: 'Більше снарядів (віяло +2, одиночний +1), кожен слабший.',
     group: 'projectile',
     compatibility: { tags: [['projectile']], deliveries: ['projectile'] },
     resourceCostMultiplier: 1.3, // BALANCE-TBD
@@ -112,8 +103,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'pierce',
-    name: 'Пробиття',
-    description: 'Снаряд пролітає крізь ще 1 ворога.',
     group: 'projectile',
     // A projectile that explodes on its first hit cannot pierce: Fireball does not qualify.
     compatibility: { tags: [['projectile']], deliveries: ['projectile'], nonExploding: true },
@@ -128,8 +117,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'fast_projectiles',
-    name: 'Швидкі снаряди',
-    description: 'Вища швидкість польоту й дальність, більше урону.',
     group: 'projectile',
     compatibility: { tags: [['projectile']], deliveries: ['projectile'] },
     resourceCostMultiplier: 1.2, // BALANCE-TBD
@@ -145,8 +132,6 @@ const supportList: SupportDef[] = [
   // ── Spells ──
   {
     id: 'increased_area',
-    name: 'Збільшена область',
-    description: 'Більший радіус вибуху, нови чи пастки.',
     group: 'spell',
     // Ground zones keep their own radius (classes.md decision): only the area that hits grows.
     compatibility: { tags: [['area']] },
@@ -161,8 +146,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'ignite_on_hit',
-    name: 'Підпал при попаданні',
-    description: 'Шанс підпалити; частина урону стає вогняною.',
     group: 'spell',
     // Designer decision 2026-10-23: any skill that hits (attacks, spells and the trap).
     // Designer decision: «частина урону → вогонь» is conversion of part of the hit to fire (not extra fire damage).
@@ -178,8 +161,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'chain_lightning',
-    name: 'Ланцюгова блискавка',
-    description: 'Попадання випускає блискавку, що стрибає по 2–3 ворогах.',
     group: 'spell',
     compatibility: { tags: [['spell']], damaging: true },
     resourceCostMultiplier: 1.3, // BALANCE-TBD
@@ -194,8 +175,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'cast_speed',
-    name: 'Прискорення касту',
-    description: 'Швидше застосування цього скіла (каст або атака).',
     group: 'spell',
     // Designer decision 2026-10-23: spells and attacks.
     // Designer decision 2026-10-23: not on cooldown-gated skills (Shield Charge, Frost Nova, Teleport), where a faster
@@ -214,8 +193,6 @@ const supportList: SupportDef[] = [
   // ── General ──
   {
     id: 'pure_power',
-    name: 'Чиста сила',
-    description: 'Значно більше урону, дорога мана.',
     group: 'general',
     compatibility: { damaging: true },
     resourceCostMultiplier: 1.4, // BALANCE-TBD
@@ -229,8 +206,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'vampirism',
-    name: 'Вампіризм',
-    description: 'Частина урону цим скілом лікує.',
     group: 'general',
     compatibility: { damaging: true },
     resourceCostMultiplier: 1.2, // BALANCE-TBD
@@ -244,8 +219,6 @@ const supportList: SupportDef[] = [
   },
   {
     id: 'echo',
-    name: 'Луна',
-    description: 'Шанс, що скіл спрацює двічі.',
     group: 'general',
     // Designer decision 2026-10-23: not for movement skills (dash, roll, teleport) or buffs.
     compatibility: { excludeDeliveries: ['dash', 'teleport', 'self'] },

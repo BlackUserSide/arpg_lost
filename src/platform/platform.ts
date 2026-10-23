@@ -26,6 +26,11 @@ export interface Platform {
   /** Opens the portal login popup. Resolves with the user, or null if cancelled. Never call automatically. */
   showLogin(): Promise<PlatformUser | null>;
   onAuthChange(listener: (user: PlatformUser | null) => void): void;
+  /**
+   * The user's language preferences, best first, as BCP 47 tags ("uk-UA"). Locally the browser's; with the
+   * CrazyGames SDK the portal's user language should come first.
+   */
+  getLanguages(): readonly string[];
   readonly storage: KeyValueStorage;
   loadingStart(): void;
   loadingStop(): void;

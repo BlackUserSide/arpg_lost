@@ -12,7 +12,7 @@ export default tseslint.config(
         {
           patterns: [
             { group: ['phaser', 'phaser/*'], message: 'core/ must not depend on Phaser.' },
-            { group: ['**/render/**', '**/platform/**', '**/save/**'], message: 'core/ must not import render/, platform/ or save/.' },
+            { group: ['**/render/**', '**/platform/**', '**/save/**', '**/i18n/**'], message: 'core/ must not import render/, platform/, save/ or i18n/ (no display text in core).' },
           ],
         },
       ],
