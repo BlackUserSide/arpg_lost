@@ -197,7 +197,7 @@ function leechCap(classDef: ClassDef, player: PlayerState, maxPerSecond: number)
  * `actionLeech`: the hit's own leech fraction (ActionDef.leech, Vampirism support), added to the mechanics' fraction.
  * The per-second cap comes from the lifeLeech mechanics only; without one, action leech is uncapped.
  */
-// DESIGN-TBD: should Vampirism (support) leech obey a per-second cap of its own when the hero has no lifeLeech keystone?
+// Designer decision: Vampirism (support) leech is uncapped without the lifeLeech keystone; with it, shares its cap.
 export function applyLeech(classDef: ClassDef, player: PlayerState, damage: number, actionLeech = 0): number {
   const mechanic = leechStats(player.mechanics);
   const fraction = (mechanic?.fraction ?? 0) + Math.max(0, actionLeech);

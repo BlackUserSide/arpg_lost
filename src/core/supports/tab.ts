@@ -54,7 +54,7 @@ export interface SupportRewards {
   readonly shards: number;
 }
 
-// DESIGN-TBD: are supports dropped during a run kept when the hero dies (items: arena rewards are granted either way)?
+// Designer decision: supports dropped during a run are lost if the hero dies — call this only for a survived run.
 export function grantSupportDrops(profile: Profile, owner: SupportOwner, drops: readonly SupportRef[], data: SupportData): SupportRewards {
   const kept: SupportItem[] = [];
   let salvagedCount = 0;

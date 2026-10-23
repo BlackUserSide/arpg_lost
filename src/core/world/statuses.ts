@@ -97,8 +97,7 @@ function statusEvent(ctx: Ctx, mob: MobState, status: StatusEffect['status'], du
  * cap the oldest stack is replaced. A damage over time: not reduced by armour, no crit, no leech. The 'status'
  * event carries the stack count.
  */
-// DESIGN-TBD: bleed ignores armour (PoE convention); confirm, and whether a new stack past the cap should replace the
-// oldest (current) or the weakest.
+// Designer decision: bleed ignores armour; a new stack past the cap replaces the oldest.
 export function applyBleed(ctx: Ctx, mob: MobState, amount: number, duration: number, maxStacks: number): void {
   if (duration <= 0 || amount <= 0) return;
   const cap = Math.max(1, Math.floor(maxStacks));

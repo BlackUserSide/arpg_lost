@@ -31,7 +31,7 @@ const supportList: SupportDef[] = [
     description: 'Ширша дуга й більша зона удару, трохи менше урону.',
     group: 'melee',
     // Arcs grow (angle, radius), a charge widens its path; nothing to widen on other deliveries.
-    // DESIGN-TBD: should Wider Swing fit Shield Charge (wider path) or only arc swings?
+    // Designer decision: Wider Swing also fits Shield Charge (wider path).
     compatibility: { tags: [['melee']], deliveries: ['arc', 'dash'] },
     resourceCostMultiplier: 1.2, // BALANCE-TBD
     weight: 100, // BALANCE-TBD
@@ -163,7 +163,7 @@ const supportList: SupportDef[] = [
     description: 'Шанс підпалити; частина урону стає вогняною.',
     group: 'spell',
     // Designer decision 2026-10-23: any skill that hits (attacks, spells and the trap).
-    // DESIGN-TBD: «частина урону → вогонь» implemented as conversion of part of the hit to fire (not extra fire damage).
+    // Designer decision: «частина урону → вогонь» is conversion of part of the hit to fire (not extra fire damage).
     compatibility: { damaging: true },
     resourceCostMultiplier: 1.25, // BALANCE-TBD
     weight: 100, // BALANCE-TBD

@@ -339,7 +339,7 @@ export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, 
  * passives and damage modifiers like any hit of the action, and can crit, leech, gain resource and fill the stun
  * bar), without on-hit statuses, knockback, zones or further chains.
  */
-// DESIGN-TBD: every impact chains, so each projectile of a fan and each Fireball split child releases its own bolt.
+// Designer decision: every impact chains, so each projectile of a fan and each Fireball split child releases its own bolt.
 export function releaseChain(ctx: Ctx, action: ActionDef, from: MobState, excludeIds: readonly number[], castModifiers?: readonly Modifier[]): void {
   const chain = action.chainHit;
   if (!chain || !action.damage || chain.hops < 1) return;
