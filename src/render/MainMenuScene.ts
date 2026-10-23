@@ -1,6 +1,7 @@
 import * as Phaser from 'phaser';
 import { unspentPoints } from '../core/passives/allocation';
 import { deleteCharacter, findCharacter, type CharacterRecord } from '../core/progression/profile';
+import { availableMaps, unlockedMap } from '../core/run/progress';
 import { passiveTree } from '../data/passives';
 import { profileRules } from '../data/profile';
 import { getLocale, LOCALE_NAMES, LOCALES, t, type Locale } from '../i18n';
@@ -10,6 +11,7 @@ import { loadGlyphs } from './fonts';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
+import type { RunSceneData } from './RunScene';
 import type { SupportsSceneData } from './SupportsScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { confirmDialog, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, UI } from './ui';
@@ -25,6 +27,8 @@ export class MainMenuScene extends Phaser.Scene {
   private languageOpen = false;
   /** A language switch (or the list's fonts) is loading: the switcher ignores taps until it is done. */
   private languageBusy = false;
+  /** The map list (replay a lower map) is open over the menu. */
+  private mapsOpen = false;
 
   constructor() {
     super('main-menu');
@@ -48,6 +52,7 @@ export class MainMenuScene extends Phaser.Scene {
     this.backdrop = new MenuBackdrop(this);
     this.languageOpen = false;
     this.languageBusy = false;
+    this.mapsOpen = false;
     this.build();
     fadeIn(this);
 
@@ -102,43 +107,54 @@ export class MainMenuScene extends Phaser.Scene {
       const modW = compact ? 120 : 160;
       const sideH = compact ? 40 : 48;
       const gap = compact ? 8 : 12;
+      // The map selector sits right next to the play button (only when there is a lower map to replay).
+      const multiMap = unlockedMap(selected) > 1;
+      const mapsW = multiMap ? (compact ? 84 : 104) : 0;
+      const mapsGap = multiMap ? 6 : 0;
       // Room left of the character list (phones in landscape have far less than the one-row layout needs).
       const room = sceneW - (compact ? 16 : 32);
-      const rowW = sideW * 2 + modW + playW + gap * 3;
+      const rowW = sideW * 2 + modW + playW + mapsGap + mapsW + gap * 3;
       const openInventory = (): void => {
         this.scene.start('inventory', { characterId: selected.id });
       };
-      let playX: number;
+      /** Centre of the play button and the map selector together (name and banner line up with it). */
+      let groupX: number;
       let nameY: number;
       if (rowW <= room) {
-        // [Inventory] [Enter] [Talents] [Supports]: the build screens side by side, the row centred as a whole.
+        // [Inventory] [Enter][Maps] [Talents] [Supports]: the build screens side by side, the row centred as a whole.
         const rowLeft = sceneW / 2 - rowW / 2;
-        playX = rowLeft + sideW + gap + playW / 2;
-        this.root.add(makeButton(this, playX, playY, playW, playH, t('menu.play'), () => this.play(selected.id), 'primary'));
+        const playX = rowLeft + sideW + gap + playW / 2;
+        this.addPlayButton(selected, playX, playY, playW, playH, compact);
+        if (multiMap) this.addMapsButton(playX + playW / 2 + mapsGap + mapsW / 2, playY, mapsW, playH);
         this.root.add(makeButton(this, rowLeft + sideW / 2, playY, sideW, sideH, t('menu.inventory'), openInventory));
-        const talentsX = playX + playW / 2 + gap + sideW / 2;
+        const talentsX = playX + playW / 2 + mapsGap + mapsW + gap + sideW / 2;
         this.root.add(makeButton(this, talentsX, playY, sideW, sideH, t('menu.talents'), () => this.openTree(selected.id)));
         this.root.add(makeButton(this, talentsX + sideW / 2 + gap + modW / 2, playY, modW, sideH, t('menu.supports'), () => this.openSupports(selected.id)));
         nameY = playY - (compact ? 38 : 50);
+        groupX = playX + (mapsGap + mapsW) / 2;
       } else {
-        // Too narrow: the three build screens in a row above the play button.
+        // Too narrow: the three build screens in a row above the play button and the map selector.
         const w3 = Math.min(modW, (room - gap * 2) / 3);
         const left = Math.max(8, sceneW / 2 - (w3 * 3 + gap * 2) / 2);
-        playX = left + (w3 * 3 + gap * 2) / 2;
+        groupX = left + (w3 * 3 + gap * 2) / 2;
+        const bigW = Math.min(playW + 40, room - mapsGap - mapsW);
+        const playX = groupX - (bigW + mapsGap + mapsW) / 2 + bigW / 2;
         const sideY = playY - playH / 2 - gap - sideH / 2;
-        this.root.add(makeButton(this, playX, playY, Math.min(playW + 40, room), playH, t('menu.play'), () => this.play(selected.id), 'primary'));
+        this.addPlayButton(selected, playX, playY, bigW, playH, compact);
+        if (multiMap) this.addMapsButton(playX + bigW / 2 + mapsGap + mapsW / 2, playY, mapsW, playH);
         this.root.add(makeButton(this, left + w3 / 2, sideY, w3, sideH, t('menu.inventory'), openInventory));
         this.root.add(makeButton(this, left + w3 * 1.5 + gap, sideY, w3, sideH, t('menu.talents'), () => this.openTree(selected.id)));
         this.root.add(makeButton(this, left + w3 * 2.5 + gap * 2, sideY, w3, sideH, t('menu.supports'), () => this.openSupports(selected.id)));
         nameY = sideY - sideH / 2 - 12;
       }
-      this.root.add(label(this, playX, nameY, selected.name, compact ? UI.size.body : UI.size.heading, UI.goldBrightText, true).setOrigin(0.5));
+      this.root.add(label(this, groupX, nameY, selected.name, compact ? UI.size.body : UI.size.heading, UI.goldBrightText, true).setOrigin(0.5));
       // Unspent passive points: a call to action above the hero's name.
       const { points, specPoints } = unspentPoints(passiveTree, selected);
       const banner = new PointsBanner(this, () => this.openTree(selected.id), { depth: 5, pinned: false, parent: this.root, maxWidth: room });
-      banner.setPosition(playX, nameY - (compact ? 38 : 48), compact ? 34 : 40);
+      banner.setPosition(groupX, nameY - (compact ? 38 : 48), compact ? 34 : 40);
       banner.setPoints(points, specPoints);
     } else {
+      this.mapsOpen = false;
       this.root.add(label(this, sceneW / 2, playY, t('menu.noHero'), UI.size.heading, UI.muted).setOrigin(0.5));
     }
     if (!compact) this.buildRecords(32, 92);
@@ -146,6 +162,77 @@ export class MainMenuScene extends Phaser.Scene {
     this.root.add(label(this, 12, height - 8, `v${__APP_VERSION__}`, 12, UI.muted).setOrigin(0, 1).setAlpha(0.6));
     // Last, so its list draws over everything else.
     this.buildLanguageSwitcher(title.x + title.width + (compact ? 12 : 20), title.y + title.height / 2, compact);
+    if (selected && this.mapsOpen) this.buildMapList(selected, compact);
+  }
+
+  /** "Enter the dungeon" with the map it leads to (the hero's highest unlocked map) on a second line. */
+  private addPlayButton(hero: CharacterRecord, x: number, y: number, w: number, h: number, compact: boolean): void {
+    const button = makeButton(this, x, y, w, h, t('menu.play'), () => this.play(hero.id), 'primary');
+    const caption = button.list[1] as Phaser.GameObjects.Text;
+    const subSize = compact ? 12 : 14;
+    fitText(caption, w - 24, h - subSize - 14);
+    caption.setY(-subSize * 0.5);
+    const sub = label(this, 0, caption.y + caption.height / 2 + subSize * 0.55, t('menu.mapN', { map: unlockedMap(hero) }), subSize, UI.goldBrightText, true).setOrigin(0.5);
+    sub.setStroke('#120a04', 3);
+    button.add(fitText(sub, w - 24));
+    this.root.add(button);
+  }
+
+  private addMapsButton(x: number, y: number, w: number, h: number): void {
+    this.root.add(
+      makeButton(this, x, y, w, h, t('menu.maps'), () => {
+        this.mapsOpen = true;
+        this.build();
+      }),
+    );
+  }
+
+  /**
+   * Map choice (docs/design/maps.md): every unlocked map of the hero as a tile, the highest one highlighted; a tap
+   * starts that map. Tapping outside or the cross closes the list.
+   */
+  private buildMapList(hero: CharacterRecord, compact: boolean): void {
+    const { width, height } = this.scale;
+    const close = (): void => {
+      this.mapsOpen = false;
+      this.build();
+    };
+    const shade = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.6).setInteractive();
+    shade.on('pointerup', close);
+    const maps = availableMaps(hero);
+    const highest = maps[maps.length - 1] ?? 1;
+    const panelW = Math.min(compact ? 620 : 680, width - 16);
+    const pad = compact ? 12 : 20;
+    const headerH = compact ? 50 : 66;
+    const hintH = compact ? 26 : 32;
+    const tileGap = compact ? 6 : 8;
+    // Columns: as many as fit at a comfortable touch size (at most 10), but no more than there are maps.
+    const minTileW = compact ? 52 : 60;
+    const cols = Math.max(1, Math.min(maps.length, 10, Math.floor((panelW - pad * 2 + tileGap) / (minTileW + tileGap))));
+    const rows = Math.ceil(maps.length / cols);
+    const tileW = Math.min(compact ? 72 : 84, (panelW - pad * 2 - tileGap * (cols - 1)) / cols);
+    const freeH = height - 16 - headerH - hintH - pad;
+    const tileH = Math.max(30, Math.min(compact ? 44 : 54, (freeH - tileGap * (rows - 1)) / rows));
+    const gridW = cols * tileW + (cols - 1) * tileGap;
+    const gridH = rows * tileH + (rows - 1) * tileGap;
+    const panelH = Math.min(height - 8, headerH + gridH + hintH + pad);
+    const top = height / 2 - panelH / 2;
+    // The panel swallows taps so only the shade around it closes the list.
+    const panel = makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel').setInteractive();
+    this.root.add([shade, panel]);
+    const closeSize = compact ? 34 : 40;
+    this.root.add(fitText(heading(this, width / 2, top + (compact ? 25 : 33), t('menu.mapsTitle'), compact ? 22 : 28).setOrigin(0.5), panelW - closeSize * 2 - 40));
+    this.root.add(makeButton(this, width / 2 + panelW / 2 - closeSize / 2 - 10, top + closeSize / 2 + 10, closeSize, closeSize, '✕', close));
+    const left = width / 2 - gridW / 2;
+    const gridTop = top + headerH;
+    maps.forEach((map, i) => {
+      const x = left + (i % cols) * (tileW + tileGap) + tileW / 2;
+      const y = gridTop + Math.floor(i / cols) * (tileH + tileGap) + tileH / 2;
+      const current = map === highest;
+      this.root.add(makeCard(this, x, y, tileW, tileH, current, () => this.play(hero.id, map)));
+      this.root.add(label(this, x, y, String(map), compact ? UI.size.body : UI.size.heading, current ? UI.goldBrightText : UI.text, true).setOrigin(0.5));
+    });
+    this.root.add(fitText(label(this, width / 2, gridTop + gridH + hintH / 2 + 2, t('menu.mapsHint'), UI.size.small, UI.muted).setOrigin(0.5), panelW - pad * 2));
   }
 
   /**
@@ -322,7 +409,8 @@ export class MainMenuScene extends Phaser.Scene {
     app.loginHint = 'shown';
     const w = Math.min(460, sceneW - 24);
     const h = compact ? 52 : 60;
-    const y = compact ? 82 : 110;
+    // Desktop: below the records block in the top left (four rows from y 92), so it never covers them.
+    const y = compact ? 82 : 92 + 4 * 22 + 46;
     const x = sceneW / 2;
     const panel = makeFrame(this, x, y, w, h, 'panel');
     const text = label(this, x - w / 2 + 18, y, t('menu.loginHint'), UI.size.small, UI.text).setOrigin(0, 0.5);
@@ -350,9 +438,12 @@ export class MainMenuScene extends Phaser.Scene {
     this.scene.start('supports', data);
   }
 
-  private play(characterId: string): void {
+  /** Starts a map run: `mapLevel` from the map list, else the hero's highest unlocked map (RunScene decides). */
+  private play(characterId: string, mapLevel?: number): void {
     this.app.selectedCharacterId = characterId;
+    this.mapsOpen = false;
+    const data: RunSceneData = { characterId, ...(mapLevel !== undefined ? { mapLevel } : {}) };
     this.cameras.main.fadeOut(200, 10, 9, 12);
-    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('iso-arena', { characterId }));
+    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('run', data));
   }
 }

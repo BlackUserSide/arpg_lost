@@ -1,4 +1,4 @@
-import type { Profile } from '../progression/profile';
+import { addCurrency, type Profile } from '../progression/profile';
 import type { Rng } from '../rng';
 import {
   affixGroups,
@@ -184,7 +184,8 @@ export function applyCraft(profile: Profile, itemId: string, op: CraftOp, args: 
   affixes = sortAffixes(affixes, items);
 
   for (const [currency, amount] of Object.entries(cost)) {
-    if (amount > 0) profile.currency[currency] = (profile.currency[currency] ?? 0) - amount;
+    // Rounded: essence can be fractional (0.1 per elite), 1.3 − 1 must leave 0.3.
+    if (amount > 0) addCurrency(profile, currency, -amount);
   }
   const crafted: Item = {
     ...item,

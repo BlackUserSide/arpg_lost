@@ -4,7 +4,7 @@ import { SALVAGE_CURRENCY } from '../core/items/inventory';
 import type { Item } from '../core/items/types';
 import type { Profile } from '../core/progression/profile';
 import { t, upper } from '../i18n';
-import { AFFIX_OPS, costParts, craftEffect, craftReason, CRAFT_OP_NAME, currencyWord } from './craftText';
+import { AFFIX_OPS, costParts, craftEffect, craftReason, CRAFT_OP_NAME, currencyAmount, currencyWord } from './craftText';
 import { describeItem, rarityLabel } from './itemText';
 import { fitText, label, makeButton, makeFrame, UI } from './ui';
 
@@ -191,7 +191,7 @@ function buildOps(scene: Phaser.Scene, parent: Phaser.GameObjects.Container, o: 
   const spentParts = o.flash ? costParts(o.flash.spent) : [];
   if (spentParts.length > 0) {
     // "−6 ◆  −1 ✦" right of the wallet (language-neutral, so it stays short), drifting up and fading.
-    const text = spentParts.map((p) => `−${p.amount} ${lookOf(p.currency).glyph}`).join('  ');
+    const text = spentParts.map((p) => `−${currencyAmount(p.currency, p.amount)} ${lookOf(p.currency).glyph}`).join('  ');
     const spent = label(scene, walletRight, walletY, text, UI.size.small, UI.danger, true).setOrigin(1, 0);
     parent.add(spent);
     scene.tweens.add({ targets: spent, y: walletY - 12, alpha: 0, duration: 1400, delay: 700, ease: 'Quad.easeIn' });
@@ -236,7 +236,7 @@ function buildOps(scene: Phaser.Scene, parent: Phaser.GameObjects.Container, o: 
     for (const part of costParts(cost)) {
       const look = lookOf(part.currency);
       const short = (wallet[part.currency] ?? 0) < part.amount;
-      const text = label(scene, cx, y, `${look.glyph} ${part.amount}`, 13, short ? UI.danger : look.color, true);
+      const text = label(scene, cx, y, `${look.glyph} ${currencyAmount(part.currency, part.amount)}`, 13, short ? UI.danger : look.color, true);
       costLine.push(text);
       cx += text.width + 12;
     }

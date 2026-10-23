@@ -10,7 +10,7 @@ import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './st
 import { resourceOnHeroHit, startResourceUse } from './resource';
 import { spawnDecoy, spawnZone } from './zones';
 import type { DamageType, Modifier } from '../stats/types';
-import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
+import { allModifiers, clampToArena, getMob, heroConditionalModifiers, mobRank, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
 
 /** The hero's effective action (class data + skill changes, see PlayerState.actions). */
 export function findAction(ctx: Ctx, id: string): ActionDef {
@@ -132,7 +132,7 @@ const TIME_EPSILON = 1e-9;
 
 /** Resolves the action's delivery for one use: hits, projectiles, motion, teleport or trap. */
 function deliver(ctx: Ctx, action: ActionDef, use: ActionUse): void {
-  const { world, content, events } = ctx;
+  const { world, events } = ctx;
   const player = world.player;
   const delivery = action.delivery;
   switch (delivery.kind) {
@@ -185,7 +185,7 @@ function deliver(ctx: Ctx, action: ActionDef, use: ActionUse): void {
       const offset = sub(use.aim, player.pos);
       const dist = Math.min(delivery.range, distance(use.aim, player.pos));
       const from = player.pos;
-      movePlayer(player, clampToArena(add(player.pos, scale(normalize(offset), dist)), player.radius, content));
+      movePlayer(player, clampToArena(add(player.pos, scale(normalize(offset), dist)), player.radius, ctx.world));
       events.push({ type: 'teleport', from, to: player.pos });
       break;
     }
@@ -195,7 +195,7 @@ function deliver(ctx: Ctx, action: ActionDef, use: ActionUse): void {
         id: world.nextId++,
         actionId: action.id,
         action,
-        pos: clampToArena(add(player.pos, scale(use.facing, dist)), 0, content),
+        pos: clampToArena(add(player.pos, scale(use.facing, dist)), 0, ctx.world),
         armTimer: delivery.armTime,
         lifetime: delivery.lifetime,
         triggerRadius: delivery.triggerRadius,
@@ -250,14 +250,14 @@ export function placeTrap(ctx: Ctx, trap: Trap, maxActive: number | undefined): 
  * including targets already hit on the way. A dash cut short by the hero's death has no landing.
  */
 export function updateMotion(ctx: Ctx, dt: number): boolean {
-  const { world, content } = ctx;
+  const { world } = ctx;
   const player = world.player;
   const motion = player.motion;
   if (!motion) return false;
 
   const stepLen = Math.min(motion.speed * dt, motion.remaining);
   const target = add(player.pos, scale(motion.dir, stepLen));
-  const clamped = clampToArena(target, player.radius, content);
+  const clamped = clampToArena(target, player.radius, ctx.world);
   const blocked = clamped.x !== target.x || clamped.y !== target.y;
   movePlayer(player, clamped);
   motion.remaining -= stepLen;
@@ -266,7 +266,7 @@ export function updateMotion(ctx: Ctx, dt: number): boolean {
     const action = motion.action;
     for (const mob of world.mobs) {
       if (mob.life <= 0 || motion.hitIds.includes(mob.id)) continue;
-      if (distance(mob.pos, player.pos) > motion.hitRadius + getMob(content, mob.defId).radius) continue;
+      if (distance(mob.pos, player.pos) > motion.hitRadius + mob.radius) continue;
       motion.hitIds.push(mob.id);
       damageMob(ctx, action, mob);
       releaseChain(ctx, action, mob, motion.hitIds);
@@ -299,7 +299,7 @@ export interface HitArcOptions {
 
 /** Hits every living mob in the sector (closest first, up to maxTargets). Returns the ids of the mobs it hit, in order. */
 export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, radius: number, angleDeg: number, opts: HitArcOptions = {}): number[] {
-  const { world, content, events } = ctx;
+  const { world, events } = ctx;
   const { maxTargets, castModifiers, chain = false, trigger, effectiveness = 1 } = opts;
   events.push({
     type: 'area',
@@ -314,7 +314,7 @@ export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, 
   const halfAngleCos = Math.cos(((angleDeg / 2) * Math.PI) / 180);
   const targets = world.mobs
     .filter((mob) => mob.life > 0)
-    .map((mob) => ({ mob, mobRadius: getMob(content, mob.defId).radius, dist: distance(origin, mob.pos) }))
+    .map((mob) => ({ mob, mobRadius: mob.radius, dist: distance(origin, mob.pos) }))
     .filter(({ mob, mobRadius, dist }) => {
       if (dist > radius + mobRadius) return false;
       if (angleDeg >= 360 || dist <= mobRadius) return true;
@@ -343,7 +343,7 @@ export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, 
 export function releaseChain(ctx: Ctx, action: ActionDef, from: MobState, excludeIds: readonly number[], castModifiers?: readonly Modifier[]): void {
   const chain = action.chainHit;
   if (!chain || !action.damage || chain.hops < 1) return;
-  const { world, content } = ctx;
+  const { world } = ctx;
   const hit = new Set(excludeIds);
   hit.add(from.id);
   const path: MobState[] = [];
@@ -353,7 +353,7 @@ export function releaseChain(ctx: Ctx, action: ActionDef, from: MobState, exclud
     for (const mob of world.mobs) {
       if (mob.life <= 0 || hit.has(mob.id)) continue;
       const dist = distance(current, mob.pos);
-      if (dist > chain.range + getMob(content, mob.defId).radius) continue;
+      if (dist > chain.range + mob.radius) continue;
       if (!best || dist < best.dist || (dist === best.dist && mob.id < best.mob.id)) best = { mob, dist };
     }
     if (!best) break;
@@ -392,10 +392,10 @@ function chainBoltAction(action: ActionDef, damageType: DamageType): ActionDef {
  */
 function applyKnockback(ctx: Ctx, mob: MobState, knockback: KnockbackDef): void {
   if (mob.life <= 0) return;
-  const def = getMob(ctx.content, mob.defId);
-  if (def.boss) return;
+  const rank = mobRank(getMob(ctx.content, mob.defId), mob);
+  if (rank === 'boss') return;
   if (knockback.chance !== undefined && !ctx.rng.chance(knockback.chance)) return;
-  const dist = knockback.distance * (def.elite ? knockback.eliteMultiplier : 1);
+  const dist = knockback.distance * (rank === 'elite' ? knockback.eliteMultiplier : 1);
   if (dist <= 0 || knockback.speed <= 0) return;
   const player = ctx.world.player;
   const away = normalize(sub(mob.pos, player.pos));

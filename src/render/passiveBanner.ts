@@ -78,3 +78,60 @@ export class PointsBanner {
     }
   }
 }
+
+/**
+ * In-run version of the call to action: a small pulsing badge with the number of unspent points (talent +
+ * specialization) on the corner of the Talents button, so it never covers the fight. Not interactive: taps go to the
+ * button under it. Rebuilt only when the numbers or the place change.
+ */
+export class PointsBadge {
+  private parts: Phaser.GameObjects.GameObject[] = [];
+  private glow: Phaser.GameObjects.Arc | undefined;
+  private total = 0;
+  private x = 0;
+  private y = 0;
+  private radius = 11;
+
+  constructor(
+    private readonly scene: Phaser.Scene,
+    private readonly depth: number,
+  ) {}
+
+  setPosition(x: number, y: number, radius: number): void {
+    if (x === this.x && y === this.y && radius === this.radius) return;
+    this.x = x;
+    this.y = y;
+    this.radius = radius;
+    this.rebuild();
+  }
+
+  setPoints(points: number, specPoints: number): void {
+    const total = Math.max(0, points) + Math.max(0, specPoints);
+    if (total === this.total) return;
+    this.total = total;
+    this.rebuild();
+  }
+
+  destroy(): void {
+    if (this.glow) this.scene.tweens.killTweensOf(this.glow);
+    for (const p of this.parts) p.destroy();
+    this.parts = [];
+    this.glow = undefined;
+  }
+
+  private rebuild(): void {
+    this.destroy();
+    if (this.total <= 0) return;
+    const r = this.radius;
+    const caption = this.total > 99 ? '99+' : String(this.total);
+    const glow = this.scene.add.circle(this.x, this.y, r + 5, 0xff7a2a, 0.45).setBlendMode(Phaser.BlendModes.ADD);
+    const disc = this.scene.add.circle(this.x, this.y, r, 0xb4451a, 1).setStrokeStyle(2, 0xf3d58a, 1);
+    const text = this.scene.add
+      .text(this.x, this.y, caption, { fontFamily: UI.bodyFont, fontStyle: 'bold', fontSize: `${Math.round(r * (caption.length > 2 ? 0.9 : 1.15))}px`, color: '#fff1c4', stroke: '#120a04', strokeThickness: 3 })
+      .setOrigin(0.5);
+    this.parts = [glow, disc, text];
+    this.parts.forEach((p, i) => pinToScreen(p, this.depth + i));
+    this.glow = glow;
+    this.scene.tweens.add({ targets: glow, alpha: 0.05, scale: 1.25, duration: PULSE_MS, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  }
+}

@@ -3,7 +3,7 @@ import type { Equipment } from '../core/items/equipment';
 import type { Item } from '../core/items/types';
 import { createAllocation, validateAllocation } from '../core/passives/allocation';
 import type { PassiveAllocation, PassiveTreeData } from '../core/passives/types';
-import { createProfile, type Profile } from '../core/progression/profile';
+import { createProfile, type MapProgress, type Profile } from '../core/progression/profile';
 import { passiveTree } from '../data/passives';
 import { skillLevels } from '../data/skillLevels';
 import { readSkillProgress, type SkillLevelRules, type SkillProgress } from '../core/skills/levels';
@@ -11,13 +11,14 @@ import { validateSockets } from '../core/supports/tab';
 import type { SupportData, SupportItem } from '../core/supports/types';
 import type { ClassDef } from '../core/world/content';
 import { classes } from '../data/classes';
+import { mapsData } from '../data/maps';
 import { supportsData } from '../data/supports';
 import type { KeyValueStorage } from '../platform/platform';
 
 // Versioned profile persistence. Bump SAVE_VERSION and add a migration whenever the Profile shape changes.
 
 export const SAVE_KEY = 'arpg.profile';
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 interface SaveFile {
   version: number;
@@ -63,7 +64,22 @@ const migrations: Record<number, (profile: unknown) => unknown> = {
     const p = data as { characters?: Array<Record<string, unknown>> };
     return { ...p, characters: (p.characters ?? []).map((c) => ({ supports: [], ...c })) };
   },
+  // v7: map runs. Every hero gets a map ladder. New heroes start at map 1 (designer decision 2026-10-23); heroes from
+  // before maps get every map up to their level (capped), so a level-20 hero is not sent back through 19 maps at the
+  // low-map XP penalty. Cap frozen here (not read from data) so the migration never changes.
+  6: (data) => {
+    const p = data as { characters?: Array<Record<string, unknown>> };
+    return {
+      ...p,
+      characters: (p.characters ?? []).map((c) => {
+        const level = typeof c.level === 'number' && Number.isFinite(c.level) ? Math.floor(c.level) : 1;
+        return { maps: { unlocked: Math.max(1, Math.min(level, V7_MAX_MAP)) }, ...c };
+      }),
+    };
+  },
 };
+
+const V7_MAX_MAP = 40;
 
 const V4_AFFIX_RENAMES: Readonly<Record<string, string>> = { mana_flat: 'resource_flat', mana_regen: 'resource_regen' };
 /**
@@ -100,6 +116,11 @@ export interface LoadResult {
   backupKey?: string;
 }
 
+/** Highest map a stored ladder may hold (RunRules.maxLinearMap); see normalizeMaps. */
+export interface MapValidation {
+  readonly maxLinearMap: number;
+}
+
 /** Data the supports tab is validated against on load (see normalizeSupports). */
 export interface SupportValidation {
   readonly classes: Readonly<Record<string, ClassDef>>;
@@ -116,6 +137,7 @@ export function loadProfile(
   tree: PassiveTreeData = passiveTree,
   skillRules: SkillLevelRules = skillLevels.rules,
   supportCheck: SupportValidation = { classes, supports: supportsData },
+  mapCheck: MapValidation = mapsData.rules,
 ): LoadResult {
   const raw = storage.getItem(SAVE_KEY);
   if (!raw) return { profile: createProfile() };
@@ -128,7 +150,7 @@ export function loadProfile(
       if (!migrate) throw new Error(`No migration from version ${v}`);
       data = migrate(data);
     }
-    const profile = normalize(data, skillRules, supportCheck);
+    const profile = normalize(data, skillRules, supportCheck, mapCheck);
     resetInvalidPassives(profile, tree);
     return { profile };
   } catch {
@@ -144,7 +166,7 @@ export function saveProfile(storage: KeyValueStorage, profile: Profile): void {
 }
 
 /** Fills fields missing from older or partial saves with defaults. */
-function normalize(data: unknown, skillRules: SkillLevelRules, supportCheck: SupportValidation): Profile {
+function normalize(data: unknown, skillRules: SkillLevelRules, supportCheck: SupportValidation, mapCheck: MapValidation): Profile {
   if (typeof data !== 'object' || data === null) throw new Error('Profile is not an object');
   const base = createProfile();
   const p = data as Partial<Profile>;
@@ -156,6 +178,7 @@ function normalize(data: unknown, skillRules: SkillLevelRules, supportCheck: Sup
       passives: normalizePassives(c.passives),
       skills: normalizeSkills(c.skills, skillRules),
       supports: normalizeSupports(c.supports, supportCheck.classes[c.classId], supportCheck.supports),
+      maps: normalizeMaps(c.maps, mapCheck),
     })),
     // A stash without an item array (malformed / tampered) falls back to an empty one.
     stash: p.stash && Array.isArray(p.stash.items) ? { ...p.stash, items: p.stash.items.map(normalizeItem) } : base.stash,
@@ -221,6 +244,16 @@ function normalizeSupports(raw: unknown, classDef: ClassDef | undefined, data: S
   }
   if (classDef) validateSockets({ supports: out }, classDef, data);
   return out;
+}
+
+/**
+ * The map ladder, sanitized: `unlocked` is a whole number in 1..maxLinearMap (missing / malformed → 1). Other fields
+ * are kept for later additions (keys).
+ */
+function normalizeMaps(raw: unknown, check: MapValidation): MapProgress {
+  const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const value = typeof record.unlocked === 'number' && Number.isFinite(record.unlocked) ? Math.floor(record.unlocked) : 1;
+  return { ...record, unlocked: Math.min(Math.max(1, check.maxLinearMap), Math.max(1, value)) };
 }
 
 /** Fills a partial or malformed allocation with defaults (missing / non-array fields become empty). */

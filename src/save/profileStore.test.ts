@@ -201,7 +201,8 @@ describe('profile store migrations', () => {
     storage.setItem(SAVE_KEY, JSON.stringify(v4));
     const { profile, backupKey } = loadProfile(storage);
     expect(backupKey).toBeUndefined();
-    expect(profile.characters[0]).toEqual({ ...character, skills: {}, supports: [] });
+    // Level 7 hero from before maps: maps 1..7 unlocked (v7 migration).
+    expect(profile.characters[0]).toEqual({ ...character, skills: {}, supports: [], maps: { unlocked: 7 } });
     expect(classSkillProgress(content.classes.mage!, profile.characters[0]!.skills, skillLevels.rules)).toEqual({
       fireball: { level: 1, xp: 0 },
       frost_nova: { level: 1, xp: 0 },
@@ -259,9 +260,8 @@ describe('profile store migrations', () => {
     storage.setItem(SAVE_KEY, JSON.stringify(v5));
     const { profile, backupKey } = loadProfile(storage);
     expect(backupKey).toBeUndefined();
-    expect(profile.characters[0]).toEqual({ ...character, supports: [] });
+    expect(profile.characters[0]).toEqual({ ...character, supports: [], maps: { unlocked: 7 } });
     expect(profile.nextItemId).toBe(5);
-    expect(SAVE_VERSION).toBe(6);
   });
 
   it('round-trips the supports tab and sanitizes it on load (unknown defs, tiers, invalid sockets back to the tab)', () => {
@@ -346,7 +346,6 @@ describe('profile store migrations', () => {
     profile.characters[0]!.equipment.ring1 = { id: 'i5', ...base, crafts: Number.NaN };
     profile.characters[0]!.equipment.ring2 = { id: 'i6', ...base, crafts: 4 };
     saveProfile(storage, profile);
-    expect(SAVE_VERSION).toBe(6);
     const loaded = loadProfile(storage).profile;
     expect(loaded.stash.items.map((i) => i.crafts)).toEqual([undefined, 3, 0, 2]);
     expect(loaded.stash.items[0]).not.toHaveProperty('crafts');
@@ -374,5 +373,62 @@ describe('profile store migrations', () => {
     result.character.passives = { nodes: ['m_a1', 'm_a2'], spec: 'pyromancer', specNodes: ['py_entry'] };
     saveProfile(storage, profile);
     expect(loadProfile(storage).profile.characters[0]!.passives).toEqual({ nodes: ['m_a1', 'm_a2'], spec: 'pyromancer', specNodes: ['py_entry'] });
+  });
+});
+
+describe('profile store: map ladder (v7)', () => {
+  const v6Character = (level: unknown): Record<string, unknown> => ({
+    id: 'c1',
+    name: 'Aria',
+    classId: 'mage',
+    level,
+    xp: 0,
+    stats: { runs: 0, deaths: 0, kills: 0, longestRun: 0 },
+    equipment: {},
+    passives: { nodes: [], spec: null, specNodes: [] },
+    skills: {},
+    supports: [],
+  });
+  const v6 = (characters: unknown[]): string =>
+    JSON.stringify({
+      version: 6,
+      profile: { characters, stash: { items: [] }, currency: {}, records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 0 }, nextCharacterId: 9, nextItemId: 1 },
+    });
+
+  it('is save version 7', () => {
+    expect(SAVE_VERSION).toBe(7);
+  });
+
+  it('upgrades v6 heroes: maps up to their level are unlocked (at least 1, at most 40), other fields kept', () => {
+    const storage = memoryStorage();
+    storage.setItem(SAVE_KEY, v6([v6Character(1), { ...v6Character(12), id: 'c2' }, { ...v6Character(40), id: 'c3' }, { ...v6Character(55), id: 'c4' }, { ...v6Character('x'), id: 'c5' }]));
+    const { profile, backupKey } = loadProfile(storage);
+    expect(backupKey).toBeUndefined();
+    expect(profile.characters.map((c) => c.maps)).toEqual([{ unlocked: 1 }, { unlocked: 12 }, { unlocked: 40 }, { unlocked: 40 }, { unlocked: 1 }]);
+    expect(profile.characters[1]).toEqual({ ...v6Character(12), id: 'c2', maps: { unlocked: 12 } });
+  });
+
+  it('new heroes start at map 1 and the ladder round-trips', () => {
+    const storage = memoryStorage();
+    const profile = createProfile();
+    createCharacter(profile, { name: 'Aria', classId: 'mage' }, rules, ['mage']);
+    expect(profile.characters[0]!.maps).toEqual({ unlocked: 1 });
+    profile.characters[0]!.maps.unlocked = 6;
+    saveProfile(storage, profile);
+    expect(loadProfile(storage).profile).toEqual(profile);
+  });
+
+  it('sanitizes stored ladders: whole number in 1..maxLinearMap, malformed → 1, extra fields kept', () => {
+    const storage = memoryStorage();
+    const profile = createProfile();
+    for (const name of ['Aa', 'Bb', 'Cc', 'Dd', 'Ee']) createCharacter(profile, { name, classId: 'mage' }, rules, ['mage']);
+    saveProfile(storage, profile);
+    const raw = JSON.parse(storage.getItem(SAVE_KEY)!) as { profile: { characters: Array<Record<string, unknown>> } };
+    const stored: unknown[] = [{ unlocked: 7.8 }, { unlocked: 999 }, { unlocked: -3 }, 'broken', { unlocked: 3, key: 2 }];
+    raw.profile.characters.forEach((c, i) => (c.maps = stored[i]));
+    delete raw.profile.characters[2]!.maps;
+    storage.setItem(SAVE_KEY, JSON.stringify(raw));
+    const loaded = loadProfile(storage, undefined, undefined, undefined, { maxLinearMap: 40 }).profile;
+    expect(loaded.characters.map((c) => c.maps)).toEqual([{ unlocked: 7 }, { unlocked: 40 }, { unlocked: 1 }, { unlocked: 1 }, { unlocked: 3, key: 2 }]);
   });
 });

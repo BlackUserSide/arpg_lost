@@ -41,6 +41,17 @@ export interface CharacterRecord {
    * (SupportItem.socket). At most SupportRules.tabSize; operations in core/supports/tab.ts. Empty for a new hero.
    */
   supports: SupportItem[];
+  /** Map ladder progress (docs/design/maps.md, own per hero); see core/run/progress.ts. */
+  maps: MapProgress;
+}
+
+/**
+ * Per-hero map progress. `unlocked`: the highest map the hero may enter (every map 1..unlocked can be replayed);
+ * beating the boss of map N unlocks N + 1, up to RunRules.maxLinearMap. Keys after the linear ladder
+ * (docs/design/endgame.md) will be a separate field.
+ */
+export interface MapProgress {
+  unlocked: number;
 }
 
 export interface ProfileRecords {
@@ -73,6 +84,16 @@ export interface RunResult {
   readonly progress?: { readonly level: number; readonly xp: number };
   /** Skill levels and XP at the end of the run, per skill id (PlayerState.skillProgress; kept on death). */
   readonly skills?: Readonly<Record<string, Readonly<SkillProgress>>>;
+}
+
+/** Currency amounts are kept to this many decimals (fractional essence, docs/design/crafting.md); structural. */
+const CURRENCY_DECIMALS = 4;
+
+/** Adds (or with a negative amount, spends) account currency; the total is rounded so fractions never drift. */
+export function addCurrency(profile: Profile, currency: string, amount: number): void {
+  if (amount === 0) return;
+  const scale = 10 ** CURRENCY_DECIMALS;
+  profile.currency[currency] = Math.round(((profile.currency[currency] ?? 0) + amount) * scale) / scale;
 }
 
 export type CreateCharacterError = 'limit' | 'name-length' | 'name-chars' | 'unknown-class';
@@ -118,6 +139,8 @@ export function createCharacter(
     skills: {},
     // Designer decision 2026-10-23: no starter supports, only loot.
     supports: [],
+    // Designer decision 2026-10-23: a new hero starts at map 1.
+    maps: { unlocked: 1 },
   };
   profile.characters.push(character);
   return { ok: true, character };

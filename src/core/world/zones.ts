@@ -78,7 +78,7 @@ function tickZone(ctx: Ctx, zone: GroundZone): void {
   const { world, content, classDef, rng, events } = ctx;
   const tick = zone.action.zone?.tick;
   if (!tick) return;
-  const targets = world.mobs.filter((mob) => mob.life > 0 && distance(mob.pos, zone.pos) <= zone.radius + getMob(content, mob.defId).radius);
+  const targets = world.mobs.filter((mob) => mob.life > 0 && distance(mob.pos, zone.pos) <= zone.radius + mob.radius);
   if (targets.length === 0) return;
   const rolled = rollBaseDamage(rng, tick.damage);
   const action = zone.action;

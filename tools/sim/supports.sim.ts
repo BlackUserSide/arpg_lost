@@ -58,7 +58,7 @@ function addMob(world: WorldState, content: Content, defId: string, pos: Vec2): 
   const def = content.mobs[defId]!;
   const mob: MobState = {
     id: world.nextId++, defId, pos, facing: vec(0, 1), life: def.life, maxLife: def.life, attackTimer: def.attack.interval,
-    stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0, auraSlow: 0,
+    stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0, auraSlow: 0, radius: def.radius,
   };
   world.mobs.push(mob);
   return mob;

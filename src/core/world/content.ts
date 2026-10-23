@@ -337,6 +337,9 @@ export interface ClassDef {
   readonly skills: readonly ActionDef[];
 }
 
+/** Mob rank: from the def (MobDef.boss / elite) or given at spawn (MobState.rank, map runs). */
+export type MobRank = 'normal' | 'elite' | 'boss';
+
 export interface MobDef {
   readonly id: string;
   readonly radius: number;

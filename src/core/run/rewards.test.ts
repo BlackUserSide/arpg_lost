@@ -1,0 +1,236 @@
+// End-of-run rewards (docs/design/maps.md «Нагорода»), map ladder, and finishRun on the real game data.
+import { describe, expect, it } from 'vitest';
+import { content } from '../../data/index';
+import { itemsData } from '../../data/items';
+import { mapsData } from '../../data/maps';
+import { supportsData } from '../../data/supports';
+import { ESSENCE_CURRENCY } from '../items/craft';
+import { SALVAGE_CURRENCY } from '../items/inventory';
+import { vec } from '../math';
+import { addCurrency, createCharacter, createProfile, type CharacterRecord, type Profile } from '../progression/profile';
+import { createRng } from '../rng';
+import { finishRun, keepsSupportDrops } from './finish';
+import { availableMaps, canEnterMap, unlockedMap, unlockNextMap } from './progress';
+import { essenceFor, grantRunRewards, planRunRewards, rewardItemLevel, speedTier, type RunOutcome } from './rewards';
+import { createRun, currentTemplate, openDoor, stepRun } from './run';
+import type { RunInput, RunRewardRules, RunState } from './types';
+
+const rules: RunRewardRules = {
+  chest: {
+    items: 2,
+    bossItemLevelBonus: 1,
+    maxItemLevelBonus: 3,
+    speedTiers: [
+      { minTimeLeft: 0.4, extraItems: 2, itemLevelBonus: 2, luck: 0.3 },
+      { minTimeLeft: 0.2, extraItems: 1, itemLevelBonus: 1, luck: 0.15 },
+    ],
+  },
+  shardsPerRoom: 2,
+  bossRoomConsolationItems: 1,
+  essence: { perElite: 0.1, perBoss: 0.5 },
+};
+
+const won = (timeLeftFraction: number, extra: Partial<RunOutcome> = {}): RunOutcome => ({
+  won: true,
+  mapLevel: 10,
+  timeLeftFraction,
+  roomsCleared: 3,
+  reachedBossRoom: true,
+  elitesKilled: 4,
+  bossKilled: true,
+  ...extra,
+});
+
+describe('reward planning', () => {
+  it('speed tiers: the best tier whose threshold is reached', () => {
+    expect(speedTier(0.19, rules)).toBeUndefined();
+    expect(speedTier(0.2, rules)?.minTimeLeft).toBe(0.2);
+    expect(speedTier(0.39, rules)?.minTimeLeft).toBe(0.2);
+    expect(speedTier(0.9, rules)?.minTimeLeft).toBe(0.4);
+  });
+
+  it('chest: more and better items the more time is left; item level = map + boss + speed, never above map + 3', () => {
+    expect(planRunRewards(won(0.1), rules)).toEqual({ items: [{ itemLevel: 11, luck: 0 }, { itemLevel: 11, luck: 0 }], shards: 6, essence: 0.9 });
+    const mid = planRunRewards(won(0.25), rules);
+    expect(mid.items).toEqual(Array(3).fill({ itemLevel: 12, luck: 0.15 }));
+    expect(mid.speedTier).toBe(rules.chest.speedTiers[1]);
+    expect(planRunRewards(won(0.5), rules).items).toEqual(Array(4).fill({ itemLevel: 13, luck: 0.3 }));
+    // Boss +2 and speed +2 would be +4: capped at +3.
+    const greedy = { ...rules, chest: { ...rules.chest, bossItemLevelBonus: 2 } };
+    expect(planRunRewards(won(0.5), greedy).items[0]!.itemLevel).toBe(13);
+    expect(rewardItemLevel(10, 99, rules)).toBe(13);
+    expect(rewardItemLevel(0, 0, rules)).toBe(1);
+  });
+
+  it('consolation: shards per room cleared, +1 map-level item if the boss room was reached, elite essence only', () => {
+    const fail = { won: false, mapLevel: 7, timeLeftFraction: 0.6, roomsCleared: 2, reachedBossRoom: false, elitesKilled: 3, bossKilled: false };
+    expect(planRunRewards(fail, rules)).toEqual({ items: [], shards: 4, essence: 0.3 });
+    expect(planRunRewards({ ...fail, roomsCleared: 3, reachedBossRoom: true }, rules)).toEqual({ items: [{ itemLevel: 7, luck: 0 }], shards: 6, essence: 0.3 });
+    expect(planRunRewards({ ...fail, roomsCleared: 0, elitesKilled: 0 }, rules)).toEqual({ items: [], shards: 0, essence: 0 });
+  });
+
+  it('essence: 0.1 per elite + 0.5 per boss, without float noise; fractions accumulate on the profile', () => {
+    expect(essenceFor(3, false, rules)).toBe(0.3);
+    expect(essenceFor(7, true, rules)).toBe(1.2);
+    const profile = createProfile();
+    for (let i = 0; i < 10; i++) addCurrency(profile, ESSENCE_CURRENCY, 0.1);
+    expect(profile.currency[ESSENCE_CURRENCY]).toBe(1);
+    addCurrency(profile, ESSENCE_CURRENCY, 0.3);
+    addCurrency(profile, ESSENCE_CURRENCY, -1);
+    expect(profile.currency[ESSENCE_CURRENCY]).toBe(0.3);
+  });
+
+  it('granting rolls the items into the stash, salvages what does not fit, adds shards and essence', () => {
+    const profile = createProfile();
+    profile.currency[SALVAGE_CURRENCY] = 5;
+    const plan = planRunRewards(won(0.5), rules);
+    const got = grantRunRewards(profile, createRng(42), plan, itemsData);
+    expect(got.items.map((i) => [i.id, i.level])).toEqual([['i1', 13], ['i2', 13], ['i3', 13], ['i4', 13]]);
+    expect(profile.stash.items).toEqual(got.items);
+    expect(got).toMatchObject({ salvagedIds: [], shards: 6, essence: 0.9 });
+    expect(profile.currency).toEqual({ [SALVAGE_CURRENCY]: 11, [ESSENCE_CURRENCY]: 0.9 });
+    // Same seed, same items.
+    expect(grantRunRewards(createProfile(), createRng(42), plan, itemsData).items).toEqual(got.items);
+
+    const full = createProfile();
+    const small = { ...itemsData, rules: { ...itemsData.rules, stashSize: 1 } };
+    const overflow = grantRunRewards(full, createRng(42), plan, small);
+    expect(full.stash.items.map((i) => i.id)).toEqual(['i1']);
+    expect(overflow.salvagedIds).toEqual(['i2', 'i3', 'i4']);
+    const salvage = overflow.items.slice(1).reduce((sum, i) => sum + small.rules.salvage[i.rarity], 0);
+    expect(overflow.shards).toBe(6 + salvage);
+    expect(full.currency[SALVAGE_CURRENCY]).toBe(6 + salvage);
+  });
+});
+
+describe('map ladder', () => {
+  const hero = (unlocked: number): Pick<CharacterRecord, 'maps'> => ({ maps: { unlocked } });
+
+  it('lists 1..unlocked; only those can be entered', () => {
+    expect(availableMaps(hero(3))).toEqual([1, 2, 3]);
+    expect(availableMaps(hero(0))).toEqual([1]);
+    expect(unlockedMap(hero(0))).toBe(1);
+    expect([0, 1, 3, 4, 2.5].map((l) => canEnterMap(hero(3), l))).toEqual([false, true, true, false, false]);
+  });
+
+  it('beating the highest map unlocks the next, up to the cap; replays change nothing', () => {
+    const h = hero(3);
+    expect(unlockNextMap(h, 2, 40)).toBeNull();
+    expect(h.maps.unlocked).toBe(3);
+    expect(unlockNextMap(h, 3, 40)).toBe(4);
+    expect(h.maps.unlocked).toBe(4);
+    const top = hero(39);
+    expect(unlockNextMap(top, 39, 40)).toBe(40);
+    expect(unlockNextMap(top, 40, 40)).toBeNull();
+    expect(top.maps.unlocked).toBe(40);
+  });
+});
+
+// ── finishRun on the real data ──
+
+const DT = 1 / 60;
+const idle: RunInput = { move: vec(0, 0), aim: vec(0, 0), basicAttack: false, skills: [] };
+
+function newHero(): { profile: Profile; character: CharacterRecord } {
+  const profile = createProfile();
+  const r = createCharacter(profile, { name: 'Aria', classId: 'warrior' }, { maxCharacters: 5, nameMinLength: 2, nameMaxLength: 16 }, ['warrior']);
+  if (!r.ok) throw new Error('create failed');
+  return { profile, character: r.character };
+}
+
+const tick = (run: RunState, input: RunInput = idle): void => void stepRun(run, input, content, mapsData, DT);
+
+/** Plays the run to the boss room: every wave is killed as it appears, the hero walks through each door. */
+function toBossRoom(run: RunState): void {
+  for (let i = 0; i < 100000 && run.rooms[run.room]!.kind === 'combat'; i++) {
+    for (const m of run.world.mobs) m.life = 0;
+    const door = openDoor(run, mapsData);
+    if (door) run.world.player.pos = vec(door.x, door.y);
+    tick(run);
+  }
+}
+
+function winRun(run: RunState): void {
+  toBossRoom(run);
+  const t = currentTemplate(run, mapsData);
+  if (t.kind !== 'boss') throw new Error('boss room expected');
+  run.world.player.pos = vec(t.altar.x, t.altar.y + 40);
+  for (let i = 0; i < 1000 && run.bossId === null; i++) tick(run, { ...idle, interact: true });
+  run.world.mobs.find((m) => m.id === run.bossId)!.life = 0;
+  tick(run);
+  expect(run.status).toBe('won');
+}
+
+describe('finishRun', () => {
+  it('a fast win: chest at map + 3, essence for elites and boss, map unlock, records and supports', () => {
+    const { profile, character } = newHero();
+    const run = createRun(content, mapsData, 'warrior', 1234, {}, 1);
+    winRun(run);
+    run.world.supportDrops.push({ defId: Object.keys(supportsData.supports)[0]!, tier: 1 });
+    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, supports: supportsData })!;
+    // The whole run took a few seconds: the best speed tier (+2 items, +2 levels), boss +1 → map level + 3.
+    expect(summary.plan.speedTier).toBe(mapsData.rewards.chest.speedTiers[1]);
+    expect(summary.rewards.items.map((i) => i.level)).toEqual([4, 4, 4, 4]);
+    expect(run.elitesKilled).toBeGreaterThanOrEqual(3);
+    expect(summary.rewards.essence).toBe(essenceFor(run.elitesKilled, true, mapsData.rewards));
+    expect(summary.rewards.shards).toBe(6);
+    expect(profile.currency[ESSENCE_CURRENCY]).toBe(summary.rewards.essence);
+    expect(summary.unlockedMap).toBe(2);
+    expect(character.maps.unlocked).toBe(2);
+    expect(summary.supports?.kept).toHaveLength(1);
+    expect(summary.bonusXp).toBeCloseTo(run.world.xpGained * 0.07, 10);
+    expect(character.stats).toMatchObject({ runs: 1, deaths: 0, kills: run.world.kills });
+    expect(profile.records).toMatchObject({ bestMapLevel: 1, bossKills: 1, bestClearTime: run.elapsed });
+    expect(character.level).toBe(run.world.player.level);
+    // Recorded once.
+    expect(finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, supports: supportsData })).toBeNull();
+    expect(profile.stash.items).toHaveLength(4);
+  });
+
+  it('is deterministic from the run seed (same seed and inputs → same chest)', () => {
+    const chest = (): unknown => {
+      const { profile, character } = newHero();
+      const run = createRun(content, mapsData, 'warrior', 99, {}, 5);
+      winRun(run);
+      return finishRun(profile, character.id, run, { maps: mapsData, items: itemsData })!.rewards;
+    };
+    expect(chest()).toEqual(chest());
+  });
+
+  it('death: consolation (shards per room, boss-room item), elite essence only, supports lost, no unlock', () => {
+    const { profile, character } = newHero();
+    character.maps.unlocked = 3;
+    const run = createRun(content, mapsData, 'warrior', 77, {}, 3);
+    toBossRoom(run);
+    run.world.supportDrops.push({ defId: Object.keys(supportsData.supports)[0]!, tier: 1 });
+    run.world.player.life = 0;
+    run.world.player.dead = true;
+    run.status = 'failed';
+    run.failReason = 'death';
+    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, supports: supportsData })!;
+    expect(summary.plan).toEqual({ items: [{ itemLevel: 3, luck: 0 }], shards: 6, essence: essenceFor(run.elitesKilled, false, mapsData.rewards) });
+    expect(summary.rewards.items.map((i) => i.level)).toEqual([3]);
+    expect(summary.supports).toBeUndefined();
+    expect(character.supports).toEqual([]);
+    expect(summary.unlockedMap).toBeNull();
+    expect(character.maps.unlocked).toBe(3);
+    expect(character.stats.deaths).toBe(1);
+    expect(profile.records.bossKills).toBe(0);
+  });
+
+  it('timeout keeps the supports; abandoning an active run fails it and loses them', () => {
+    const timeout = createRun(content, mapsData, 'warrior', 5, {}, 1);
+    timeout.status = 'failed';
+    timeout.failReason = 'timeout';
+    expect(keepsSupportDrops(timeout)).toBe(true);
+
+    const { profile, character } = newHero();
+    const run = createRun(content, mapsData, 'warrior', 5, {}, 1);
+    run.world.supportDrops.push({ defId: Object.keys(supportsData.supports)[0]!, tier: 1 });
+    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, supports: supportsData })!;
+    expect(run).toMatchObject({ status: 'failed', failReason: 'abandoned', recorded: true });
+    expect(summary.plan).toEqual({ items: [], shards: 0, essence: 0 });
+    expect(summary.supports).toBeUndefined();
+    expect(character.stats.deaths).toBe(0);
+  });
+});

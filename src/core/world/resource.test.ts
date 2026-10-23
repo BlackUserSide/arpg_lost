@@ -80,7 +80,7 @@ const useSlam: PlayerInput = { ...idle, skills: [true] };
 
 /** A mob next to the hero (hero at 500, 500). `attackTimer` 10 keeps it from attacking during a test. */
 function addMob(world: WorldState, x = 520, y = 500, life = 1000, attackTimer = 10): MobState {
-  const mob: MobState = { id: world.nextId++, defId: 'dummy', pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0, auraSlow: 0 };
+  const mob: MobState = { id: world.nextId++, defId: 'dummy', pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0, auraSlow: 0, radius: 10 };
   world.mobs.push(mob);
   return mob;
 }

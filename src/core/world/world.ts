@@ -1,4 +1,4 @@
-import { add, clamp, normalize, scale, sub, vec } from '../math';
+import { add, clamp, normalize, scale, sub, vec, type Vec2 } from '../math';
 import { createRng } from '../rng';
 import { computeStat } from '../stats/modifiers';
 import { performAction, pickAction, updateEchoes, updateMotion } from './actions';
@@ -14,10 +14,11 @@ import { syncCharges, tickCooldowns } from './charges';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { updateDecoys, updateZones } from './zones';
-import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Ctx, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
+import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Bounds, type Ctx, type Obstacle, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
-export { applyLeech, recoverLife, setLoadoutModifiers } from './experience';
+export { applyLeech, grantBonusXp, recoverLife, setLoadoutModifiers } from './experience';
+export { spawnMob, spawnRadius, type MobSpawn } from './mobs';
 export { inCombat, maxResource, recoverResource } from './resource';
 export { canAfford } from './actions';
 export { supportChangeSets, supportFits, supportTier } from '../supports/rules';
@@ -73,8 +74,28 @@ export interface Loadout {
 /** Mixed into the world seed for the loot stream (WorldState.lootRngState); structural, not balance. */
 const LOOT_STREAM = 0x9e3779b9;
 
-/** `areaLevel` defaults to the hero's level. */
-export function createWorld(content: Content, classId: string, seed: number, loadout: Loadout = {}, areaLevel = loadout.level ?? 1): WorldState {
+/** Where the world takes place: the endless arena (default) or a room of a map run (core/run). */
+export interface WorldPlace {
+  readonly bounds: Bounds;
+  readonly obstacles?: readonly Obstacle[];
+  /** Hero spawn point; default: the centre of the bounds. */
+  readonly start?: Vec2;
+  /** Runs the endless arena spawner (Content.arena.spawn). */
+  readonly endless: boolean;
+}
+
+/**
+ * `areaLevel` defaults to the hero's level (the arena); a map run passes the map level. `place` defaults to the
+ * endless arena (Content.arena).
+ */
+export function createWorld(
+  content: Content,
+  classId: string,
+  seed: number,
+  loadout: Loadout = {},
+  areaLevel = loadout.level ?? 1,
+  place: WorldPlace = { bounds: { width: content.arena.width, height: content.arena.height }, endless: true },
+): WorldState {
   const classDef = getClass(content, classId);
   const level = loadout.level ?? 1;
   const gearModifiers = [...(loadout.modifiers ?? [])];
@@ -86,7 +107,7 @@ export function createWorld(content: Content, classId: string, seed: number, loa
   const player: PlayerState = {
     id: PLAYER_ID,
     classId,
-    pos: vec(content.arena.width / 2, content.arena.height / 2),
+    pos: place.start ? vec(place.start.x, place.start.y) : vec(place.bounds.width / 2, place.bounds.height / 2),
     facing: vec(1, 0),
     radius: classDef.radius,
     life: 0,
@@ -121,6 +142,9 @@ export function createWorld(content: Content, classId: string, seed: number, loa
   syncCharges(player, true);
   return {
     time: 0,
+    bounds: { width: place.bounds.width, height: place.bounds.height },
+    obstacles: (place.obstacles ?? []).map((o) => ({ pos: vec(o.pos.x, o.pos.y), radius: o.radius })),
+    endless: place.endless,
     rngState: seed >>> 0,
     lootRngState: (seed ^ LOOT_STREAM) >>> 0,
     supportDrops: [],
@@ -163,7 +187,7 @@ export function step(world: WorldState, input: PlayerInput, content: Content, dt
 }
 
 function updatePlayer(ctx: Ctx, dt: number): void {
-  const { world, content, classDef, input } = ctx;
+  const { world, classDef, input } = ctx;
   const player = world.player;
 
   player.buffs = player.buffs.filter((b) => (b.remaining -= dt) > 0);
@@ -189,7 +213,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
 
   const move = normalize(input.move);
   const speed = playerStat(classDef, player, 'movementSpeed');
-  movePlayer(player, clampToArena(add(player.pos, scale(move, speed * dt)), player.radius, content));
+  movePlayer(player, clampToArena(add(player.pos, scale(move, speed * dt)), player.radius, world));
 
   const aimDir = normalize(sub(input.aim, player.pos));
   if (aimDir.x !== 0 || aimDir.y !== 0) player.facing = aimDir;

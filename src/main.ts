@@ -3,7 +3,7 @@ import { LocalPlatform } from './platform/localPlatform';
 import { APP_KEY, createApp } from './render/app';
 import { CreateCharacterScene } from './render/CreateCharacterScene';
 import { InventoryScene } from './render/InventoryScene';
-import { IsoArenaScene } from './render/IsoArenaScene';
+import { RunScene } from './render/RunScene';
 import { MainMenuScene } from './render/MainMenuScene';
 import { PassiveTreeScene } from './render/PassiveTreeScene';
 import { SupportsScene } from './render/SupportsScene';
@@ -20,7 +20,7 @@ async function boot(): Promise<void> {
     scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' },
     // Two touch pointers for pinch zoom on the passive tree.
     input: { activePointers: 2 },
-    scene: [MainMenuScene, CreateCharacterScene, InventoryScene, IsoArenaScene, PassiveTreeScene, SupportsScene],
+    scene: [MainMenuScene, CreateCharacterScene, InventoryScene, RunScene, PassiveTreeScene, SupportsScene],
     callbacks: { preBoot: (g) => g.registry.set(APP_KEY, app) },
   });
 

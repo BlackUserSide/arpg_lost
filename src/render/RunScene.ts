@@ -1,42 +1,51 @@
 import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
-import type { Content } from '../core/world/content';
-import { createWorld, distanceDamageMore, getClass, getMob, maxResource, PLAYER_ID, setLoadoutModifiers, step, type PlayerInput, type WorldEvent, type WorldState } from '../core/world/world';
+import type { Content, MobRank } from '../core/world/content';
+import { distanceDamageMore, getClass, getMob, maxResource, mobRank, PLAYER_ID, setLoadoutModifiers, type WorldEvent, type WorldState } from '../core/world/world';
 import { unspentPoints } from '../core/passives/allocation';
 import { equippedWeapon } from '../core/items/equipment';
-import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
 import { heroMechanics, heroModifiers } from '../core/progression/hero';
-import { applyRunResult, findCharacter } from '../core/progression/profile';
-import { createRng } from '../core/rng';
-import { grantSupportDrops, socketedSupports, type SupportRewards } from '../core/supports/tab';
+import { findCharacter } from '../core/progression/profile';
+import { finishRun, keepsSupportDrops, type RunSummary } from '../core/run/finish';
+import { canEnterMap, unlockedMap } from '../core/run/progress';
+import { abandonRun, canActivateAltar, createRun, currentTemplate, openDoor, stepRun } from '../core/run/run';
+import type { RunEvent, RunInput, RunState, RunStepEvent } from '../core/run/types';
+import { socketedSupports } from '../core/supports/tab';
 import { itemsData } from '../data/items';
+import { mapsData } from '../data/maps';
 import { content } from '../data';
 import { passiveTree } from '../data/passives';
 import { getApp } from './app';
 import { CombatFx, STUN_BAR_FLASH, statusLook } from './combatFx';
 import { Hud } from './hud';
+import { RoomView, type AltarLook } from './roomView';
+import { RunHud } from './runHud';
+import { formatCountdown, formatElapsed } from './runText';
 import { SkillFx } from './skillFx';
 import { SupportFx } from './supportFx';
 import { supportIcon, tierColor, tierColorNum } from './supportIcons';
 import { supportsWord, supportTitle } from './supportText';
 import { shardsWord } from './passiveText';
 import { resourceText } from './resourceText';
-import { baseName, itemName } from './contentText';
+import { baseName, itemName, mobName } from './contentText';
+import { currencyWord } from './craftText';
+import { ESSENCE_CURRENCY } from '../core/items/craft';
+import { SALVAGE_CURRENCY } from '../core/items/inventory';
 import { t } from '../i18n';
-import { PointsBanner } from './passiveBanner';
+import { PointsBadge } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
-import { fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
+import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
 import { screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
 
-// Isometric arena: Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker).
+// A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
+// Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
+// this scene sends the player's input into stepRun and draws the state it returns.
 
 const DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
 
-const TILE_WORLD = 68; // world units per floor tile side (96px wide diamond at ISO_K)
-const TILE_SCALE = 0.5;
 const CORPSE_TIME = 2.5;
 const AREA_TTL = 0.18;
 const LIGHT_RADIUS = 520;
@@ -57,9 +66,10 @@ const MOVING_SPEED = 8;
 const STUN_BAR_SMOOTHING = 18;
 /** Ignite damage is summed per mob and shown as one number this often (seconds). */
 const DOT_NUMBER_INTERVAL = 0.5;
-
-const PLAIN_FLOORS = [0, 1, 2, 3, 20, 21, 22, 23];
-const DETAIL_FLOORS = [16, 17, 18, 19, 24, 25, 26, 27, 28, 29, 30, 31];
+/** Seconds between the boss falling and the chest screen (its death animation and the chest burst play first). */
+const WIN_SCREEN_DELAY = 1.6;
+/** Room change: fade in from black (ms). */
+const ROOM_FADE = 380;
 
 /** Visual-only colors per action / damage flavour. */
 const AREA_COLORS: Record<string, number> = { cleave: 0xff9a3c, fireball: 0xff6a1a, explosive_trap: 0xff8a2a, frost_nova: 0x8fd3ff };
@@ -69,6 +79,15 @@ const MOB_PROJECTILE_COLOR = 0xff4b4b;
 const CHAIN_AREA_COLOR = 0xffd23a;
 /** Far Shot (distanceDamage) glow around bolts. */
 const FAR_SHOT_GLOW = 0xfff0a0;
+
+/**
+ * How ranked mobs stand out (visual only; their strength is core rank scaling). Their size is not here: the sprite
+ * scales with the core body radius (MobState.radius / MobDef.radius), so what is drawn is what gets hit.
+ */
+const RANK_LOOKS: Readonly<Record<Exclude<MobRank, 'normal'>, { ring: number; tint: number }>> = {
+  elite: { ring: 0xffc23a, tint: 0xfff0d0 },
+  boss: { ring: 0xff3a2a, tint: 0xffd0c8 },
+};
 
 type Mechanics = Parameters<typeof distanceDamageMore>[0];
 type Tags = Parameters<typeof distanceDamageMore>[1];
@@ -100,6 +119,10 @@ interface Actor {
   stunBarShown: number;
   /** Remaining full-bar flash after the stun bar stunned this mob (seconds, visual only). */
   stunBarFlash: number;
+  /** Mob rank (core mobRank); 'normal' for the hero. */
+  rank: MobRank;
+  /** Drawn size: the mob's body radius over its def radius (core rank radius scale); 1 for the hero. */
+  scale: number;
 }
 
 interface Corpse {
@@ -125,7 +148,7 @@ interface DotTally {
   bleed: boolean;
 }
 
-type OverlayKind = 'pause' | 'death' | 'results';
+type OverlayKind = 'pause' | 'end';
 
 /** Lift of Chain Lightning bolts above the floor (screen px): roughly mid-body. */
 const CHAIN_HEIGHT = 30;
@@ -141,28 +164,34 @@ const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: numb
   bleed: { color: '#ff6a6a', size: 14, rise: 20, duration: 700 },
 };
 
-type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'P' | 'ESC', Phaser.Input.Keyboard.Key>;
+/** F wakes the altar: LMB / RMB / Q / E are the skills (CLAUDE.md), R restarts, P opens the talents. */
+type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'P' | 'F' | 'ESC', Phaser.Input.Keyboard.Key>;
 
 const NO_MOVE = vec(0, 0);
 const NO_SKILLS: readonly boolean[] = [false, false, false];
 const HUD_UI_DEPTH = 10010;
 
-export class IsoArenaScene extends Phaser.Scene {
+export interface RunSceneData {
+  readonly characterId?: string;
+  readonly mode?: RunMode;
+  /** Map to enter; default (or a locked map): the hero's highest unlocked map. */
+  readonly mapLevel?: number;
+}
+
+export class RunScene extends Phaser.Scene {
   private readonly content: Content = content;
   private characterId = '';
   private classId = 'warrior';
-  private runRecorded = false;
-  private rewards: RunRewards | undefined;
-  /** Supports granted at the end of a survived run (undefined: not granted, e.g. the hero died). */
-  private supportRewards: SupportRewards | undefined;
-  /** The run was ended alive from the pause menu: the results screen is up. */
-  private finished = false;
+  private requestedMap: number | undefined;
+  private run!: RunState;
+  private world!: WorldState;
+  /** finishRun result once the run is recorded (null: recorded without a hero, nothing granted). */
+  private summary: RunSummary | null | undefined;
   private overlayKind: OverlayKind | undefined;
   /** Support modifier visuals (chain bolts, echo ghost, knockback, bleed, support drops). */
   private supportFx!: SupportFx;
   private readonly chainXs: number[] = [];
   private readonly chainYs: number[] = [];
-  private world!: WorldState;
   private accumulator = 0;
   private alpha = 1;
   private prevPositions = new Map<number, Vec2>();
@@ -173,17 +202,28 @@ export class IsoArenaScene extends Phaser.Scene {
   private areas: AreaFx[] = [];
   private fx!: Phaser.GameObjects.Graphics;
   private fxTop!: Phaser.GameObjects.Graphics;
+  /** Screen-edge arrow towards an open door out of view. */
+  private pointer!: Phaser.GameObjects.Graphics;
   private light!: Phaser.GameObjects.Container;
+  private room!: RoomView;
   private hud!: Hud;
+  private runHud!: RunHud;
   private overlay: Phaser.GameObjects.GameObject[] | undefined;
   private paused = false;
+  /** gameplayStart was sent and not yet matched by gameplayStop. */
+  private gameplayActive = false;
   private textPool: Phaser.GameObjects.Text[] = [];
   private combatFx!: CombatFx;
   /** Level-3 skill effect visuals (ground zones, decoy ghost, split / whirl / slam bursts). */
   private skillFx!: SkillFx;
+  /** Ground zones and decoys alive in core (a room change drops them without expire events). */
+  private readonly liveZones = new Set<number>();
+  private readonly liveDecoys = new Set<number>();
   private dotTallies = new Map<number, DotTally>();
   private skillWasDown: boolean[] = [];
   private skillBuffer: number[] = [];
+  /** The altar button was tapped: sent as RunInput.interact with the next step. */
+  private interactQueued = false;
   private mode: RunMode = SOLO_MODE;
   /** The passive tree is open over the run (the run keeps going only if the mode does not pause on menus). */
   private treeOpen = false;
@@ -191,26 +231,32 @@ export class IsoArenaScene extends Phaser.Scene {
   private pauseAfterTree = false;
   private treeButton: Phaser.GameObjects.Container | undefined;
   private pauseButton: Phaser.GameObjects.Container | undefined;
-  private banner!: PointsBanner;
+  /** Unspent talent points: a badge on the Talents button (the full banner is the hub's; in a run it would cover the fight). */
+  private badge!: PointsBadge;
   /** The current mouse/touch press started on a HUD control, so it must not attack. */
   private uiPress = false;
   /** The hero's counter-attack animation and the direction it faces while it plays (core keeps the hero's facing). */
   private counterShot: Actor['oneShot'];
   private counterFacing: Vec2 = vec(1, 0);
+  /** Center-screen announcement (room cleared, level up, …): one at a time, a new one replaces it. */
+  private announcement: Phaser.GameObjects.Text[] = [];
+  /** Where the boss died (the chest burst plays there). */
+  private bossFall: Vec2 | undefined;
 
   constructor() {
-    super('iso-arena');
+    super('run');
   }
 
-  init(data: { characterId?: string; mode?: RunMode }): void {
+  init(data: RunSceneData): void {
     if (data.characterId) this.characterId = data.characterId;
     this.mode = data.mode ?? SOLO_MODE;
+    this.requestedMap = data.mapLevel;
     this.classId = findCharacter(getApp(this).profile, this.characterId)?.classId ?? 'warrior';
-    this.runRecorded = false;
+    this.summary = undefined;
   }
 
   preload(): void {
-    this.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
+    if (!this.textures.exists('floor')) this.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
     loadSprites(this);
   }
 
@@ -230,14 +276,14 @@ export class IsoArenaScene extends Phaser.Scene {
           supports: socketedSupports(character),
         }
       : {};
-    // TEMPORARY (until maps, 0.4): the arena's area level follows the hero, so there is no low-area penalty.
-    this.world = createWorld(this.content, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout);
-    this.rewards = undefined;
-    this.supportRewards = undefined;
-    this.finished = false;
+    const requested = this.requestedMap;
+    const mapLevel = character ? (requested !== undefined && canEnterMap(character, requested) ? requested : unlockedMap(character)) : 1;
+    this.run = createRun(this.content, mapsData, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout, mapLevel);
+    this.world = this.run.world;
+    this.summary = undefined;
     this.overlayKind = undefined;
-    // Dev-only handle for debugging and automated checks from the console.
-    if (import.meta.env.DEV) (window as unknown as { __world: WorldState }).__world = this.world;
+    // Dev-only handles for debugging and automated checks from the console.
+    if (import.meta.env.DEV) Object.assign(window as object, { __world: this.world, __run: this.run });
     this.accumulator = 0;
     this.alpha = 1;
     this.prevPositions.clear();
@@ -246,20 +292,25 @@ export class IsoArenaScene extends Phaser.Scene {
     this.areas = [];
     this.textPool = [];
     this.dotTallies.clear();
+    this.liveZones.clear();
+    this.liveDecoys.clear();
     this.skillWasDown = [];
     this.skillBuffer = [];
+    this.interactQueued = false;
     this.counterShot = undefined;
+    this.announcement = [];
+    this.bossFall = undefined;
 
     for (const [set, anims] of Object.entries(SPRITE_SETS)) {
       for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
     }
 
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,P,ESC') as Keys;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,P,F,ESC') as Keys;
     this.input.on('pointerdown', (_p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => (this.uiPress = over.length > 0));
     this.input.on('pointerup', () => (this.uiPress = false));
 
-    this.buildFloor();
+    this.room = new RoomView(this);
     this.fx = this.add.graphics().setDepth(-1000);
     this.fxTop = this.add.graphics().setDepth(4000);
     this.combatFx = new CombatFx(this);
@@ -268,16 +319,12 @@ export class IsoArenaScene extends Phaser.Scene {
     const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
     this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
     this.light = this.createLight();
-
-    const { width, height } = this.content.arena;
-    const left = toScreen(vec(0, height)).x;
-    const right = toScreen(vec(width, 0)).x;
-    const bottom = toScreen(vec(width, height)).y;
-    this.cameras.main.setBounds(left - 200, -200, right - left + 400, bottom + 400);
     this.cameras.main.setBackgroundColor('#07070a');
+    this.buildRoom();
 
     this.hud = new Hud(this, getClass(this.content, this.classId), this.content.progression, this.content.skillLevels);
-    this.hud.layout(this.scale.width, this.scale.height);
+    this.runHud = new RunHud(this, mapsData, () => (this.interactQueued = true));
+    this.pointer = pinToScreen(this.add.graphics(), HUD_UI_DEPTH - 2);
     this.overlay = undefined;
     this.paused = false;
     this.treeOpen = false;
@@ -285,12 +332,11 @@ export class IsoArenaScene extends Phaser.Scene {
     this.uiPress = false;
     this.treeButton = undefined;
     this.pauseButton = undefined;
-    this.banner = new PointsBanner(this, () => this.openTree(), { depth: HUD_UI_DEPTH, pinned: true });
-    this.layoutTreeUi();
+    this.badge = new PointsBadge(this, HUD_UI_DEPTH + 2);
+    this.layoutUi();
     this.refreshBanner();
     const relayout = (): void => {
-      this.hud.layout(this.scale.width, this.scale.height);
-      this.layoutTreeUi();
+      this.layoutUi();
       if (this.overlay && this.overlayKind) this.showOverlay(this.overlayKind);
     };
     this.scale.on('resize', relayout);
@@ -298,7 +344,7 @@ export class IsoArenaScene extends Phaser.Scene {
     const autoPause = (): void => {
       // With the tree open, remember it: closing the tree must not resume a run nobody is watching.
       if (this.treeOpen) this.pauseAfterTree = true;
-      else if (!this.paused && !this.world.player.dead) this.setPaused(true);
+      else if (!this.paused && !this.ended()) this.setPaused(true);
     };
     const back = (): void => {
       this.pauseAfterTree = false;
@@ -308,7 +354,8 @@ export class IsoArenaScene extends Phaser.Scene {
     this.game.events.on(Phaser.Core.Events.FOCUS, back);
     this.game.events.on(Phaser.Core.Events.VISIBLE, back);
 
-    getApp(this).platform.gameplayStart();
+    this.gameplayActive = false;
+    this.setGameplay(true);
     fadeIn(this);
     this.events.once('shutdown', () => {
       this.scale.off('resize', relayout);
@@ -318,33 +365,72 @@ export class IsoArenaScene extends Phaser.Scene {
       this.game.events.off(Phaser.Core.Events.VISIBLE, back);
       if (this.treeOpen) this.scene.stop('passive-tree');
       this.treeOpen = false;
-      this.endRun();
+      // Leaving mid-run (closing the screen) records it as abandoned.
+      this.recordRun();
     });
   }
 
-  /** Talents and pause buttons (top right) and the unspent points banner under the run info. */
-  private layoutTreeUi(): void {
+  /** The run is over (won or failed); only its end screen is left. */
+  private ended(): boolean {
+    return this.run.status !== 'active';
+  }
+
+  /** Draws the room the hero is in and fits the camera to it. */
+  private buildRoom(): void {
+    const t = currentTemplate(this.run, mapsData);
+    this.room.build(t, mapsData.rules.doorRadius, mapsData.rules.altarRadius);
+    const b = this.room.cameraBounds();
+    this.cameras.main.setBounds(b.x, b.y, b.width, b.height);
+    this.hero.display = this.world.player.pos;
+    const s = toScreen(this.hero.display);
+    this.cameras.main.centerOn(s.x, s.y - 30);
+  }
+
+  /** Everything of the previous room is gone in core: drop its sprites and effects too, without interpolation. */
+  private enterRoom(): void {
+    for (const actor of this.mobs.values()) actor.sprite.destroy();
+    this.mobs.clear();
+    for (const corpse of this.corpses) corpse.actor.sprite.destroy();
+    this.corpses = [];
+    this.areas = [];
+    this.dotTallies.clear();
+    this.prevPositions.clear();
+    for (const id of this.liveZones) this.skillFx.zoneExpired(id);
+    for (const id of this.liveDecoys) this.skillFx.decoyExpired(id);
+    this.liveZones.clear();
+    this.liveDecoys.clear();
+    this.counterShot = undefined;
+    this.supportFx.clearRoom();
+    this.buildRoom();
+    this.cameras.main.fadeIn(ROOM_FADE, 7, 7, 10);
+  }
+
+  /** Top right buttons (Talents with the unspent points badge), the run HUD in the top centre. */
+  private layoutUi(): void {
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
     const margin = compact ? 12 : 22;
+    this.hud.layout(width, height);
     this.treeButton?.destroy();
     this.treeButton = undefined;
     this.pauseButton?.destroy();
     this.pauseButton = undefined;
-    if (!findCharacter(getApp(this).profile, this.characterId)) return;
     const w = compact ? 96 : 150;
     const h = compact ? 34 : 40;
-    this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? t('arena.talents') : t('arena.talentsKey'), () => this.openTree()), HUD_UI_DEPTH);
-    // Touch has no Esc: the pause menu (and with it "end the run", which keeps found supports) needs a button.
     const pw = compact ? 84 : 120;
+    const reserved = margin + w + 10 + pw;
+    this.runHud.layout(width, height, reserved);
+    if (!findCharacter(getApp(this).profile, this.characterId)) return;
+    this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? t('arena.talents') : t('arena.talentsKey'), () => this.openTree()), HUD_UI_DEPTH);
+    // Touch has no Esc: the pause menu (and with it "end the run") needs a button.
     this.pauseButton = pinToScreen(
       makeButton(this, width - margin - w - 10 - pw / 2, margin + 18, pw, h, compact ? t('arena.pause') : t('arena.pauseKey'), () => {
-        if (!this.paused && !this.treeOpen && !this.world.player.dead) this.setPaused(true);
+        if (!this.paused && !this.treeOpen && !this.ended()) this.setPaused(true);
       }),
       HUD_UI_DEPTH,
     );
-    const bh = compact ? 34 : 40;
-    this.banner.setPosition(width / 2, margin + 36 + 10 + bh / 2, bh, width - margin * 2);
+    // The unspent points badge sits on the Talents button's top right corner.
+    this.badge.setPosition(width - margin - 4, margin + 18 - h / 2 + 4, compact ? 10 : 12);
   }
 
   private refreshBanner(): void {
@@ -352,12 +438,12 @@ export class IsoArenaScene extends Phaser.Scene {
     if (!character) return;
     const hero = { classId: character.classId, level: this.world.player.level, passives: character.passives };
     const { points, specPoints } = unspentPoints(passiveTree, hero);
-    this.banner.setPoints(points, specPoints);
+    this.badge.setPoints(points, specPoints);
   }
 
   /** Opens the passive tree over the run; whether the run pauses is the mode's rule. */
   private openTree(): void {
-    if (this.treeOpen || this.paused || this.world.player.dead) return;
+    if (this.treeOpen || this.paused || this.ended()) return;
     const app = getApp(this);
     if (!findCharacter(app.profile, this.characterId)) return;
     this.treeOpen = true;
@@ -367,7 +453,7 @@ export class IsoArenaScene extends Phaser.Scene {
       closed: () => this.closeTree(),
     };
     if (this.mode.pauseOnMenus) {
-      app.platform.gameplayStop();
+      this.setGameplay(false);
       this.scene.pause();
     }
     const data: PassiveTreeSceneData = { characterId: this.characterId, run };
@@ -394,59 +480,60 @@ export class IsoArenaScene extends Phaser.Scene {
     const away = this.pauseAfterTree || document.hidden;
     this.pauseAfterTree = false;
     if (this.mode.pauseOnMenus) this.scene.resume();
-    if (away && !this.world.player.dead) {
+    if (away && !this.ended()) {
       // Back to the pause menu instead of live play; gameplay stays stopped for the portal.
       this.paused = true;
-      if (!this.mode.pauseOnMenus) getApp(this).platform.gameplayStop();
+      this.setGameplay(false);
       this.showOverlay('pause');
     } else if (this.mode.pauseOnMenus) {
-      getApp(this).platform.gameplayStart();
+      this.setGameplay(true);
     }
     // Keys and buttons held when the tree opened must not fire now.
     this.input.keyboard?.resetKeys();
     this.skillBuffer = [];
     this.skillWasDown = [];
+    this.interactQueued = false;
     this.uiPress = false;
     this.accumulator = 0;
   }
 
+  /** Tells the portal gameplay started / stopped, only on a change (pause, tree, run end can overlap). */
+  private setGameplay(active: boolean): void {
+    if (active === this.gameplayActive) return;
+    this.gameplayActive = active;
+    const platform = getApp(this).platform;
+    if (active) platform.gameplayStart();
+    else platform.gameplayStop();
+  }
+
   private setPaused(paused: boolean): void {
     this.paused = paused;
-    const platform = getApp(this).platform;
     if (paused) {
-      platform.gameplayStop();
+      this.setGameplay(false);
       this.showOverlay('pause');
     } else {
-      platform.gameplayStart();
+      this.setGameplay(true);
       this.hideOverlay();
       this.accumulator = 0;
     }
   }
 
   /**
-   * Pause menu, death screen and run results. The results of a run list the loot; supports found during the run
-   * are granted only if the hero survived (designer decision 2026-10-23), so the death screen says they are lost.
+   * Pause menu and the end of the run: the chest of a won run, the consolation of a failed one (docs/design/maps.md).
+   * Supports found during the run are kept unless the hero died or the run was abandoned (core keepsSupportDrops).
    */
   private showOverlay(kind: OverlayKind): void {
     this.hideOverlay();
     this.overlayKind = kind;
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
+    const died = kind === 'end' && this.run.failReason === 'death';
     const objects: Phaser.GameObjects.GameObject[] = [];
-    const shade = this.add.rectangle(width / 2, height / 2, width, height, kind === 'death' ? 0x1a0303 : 0x000000, kind === 'death' ? 0.6 : 0.55).setInteractive();
+    const shade = this.add.rectangle(width / 2, height / 2, width, height, died ? 0x1a0303 : 0x000000, died ? 0.6 : 0.55).setInteractive();
     objects.push(shade);
-    const panelW = Math.min(440, width - 32);
+    const panelW = Math.min(460, width - 32);
 
     // Body lines first, so the panel can size (and on short screens trim the lists) before anything is placed.
-    interface Line {
-      text: string;
-      size: number;
-      color: string;
-      bold?: boolean;
-      heading?: boolean;
-      /** Extra space above the line. */
-      gap?: number;
-    }
     const lines: Line[] = [];
     // Lines wrap at the panel width (long item names, longer translations): measure the wrapped height once per line.
     const probe = label(this, 0, 0, '', UI.size.body).setVisible(false).setWordWrapWidth(panelW - 32);
@@ -455,65 +542,39 @@ export class IsoArenaScene extends Phaser.Scene {
       let h = measured.get(l);
       if (h === undefined) {
         probe.setFontSize(l.size).setFontStyle(l.bold ? 'bold' : 'normal').setText(l.text);
-        h = l.heading ? 28 : Math.max(l.size + 8, probe.height + 6);
+        h = l.heading ? l.size + 8 : Math.max(l.size + 6, probe.height + 4);
         measured.set(l, h);
       }
       return h + (l.gap ?? 0);
     };
-    const pending = this.world.supportDrops.length;
+    const headerH = compact ? 56 : 78;
+    // Key hints (R / Esc) only where there is a keyboard: touch screens get the room for the reward list instead.
+    const keyHints = this.sys.game.device.os.desktop;
+    const footerH = compact ? (keyHints ? 92 : 66) : keyHints ? 116 : 86;
     if (kind === 'pause') {
+      const pending = this.world.supportDrops.length;
       if (pending > 0) {
         lines.push({ text: t('arena.found', { supports: supportsWord(pending) }), size: UI.size.body, color: UI.goldBrightText, bold: true });
         lines.push({ text: t('arena.foundWarning'), size: UI.size.small, color: UI.muted });
       }
     } else {
-      const seconds = Math.floor(this.world.time);
-      const kills = this.world.kills;
-      const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-      lines.push({ text: t('arena.summary', { time, kills: t('unit.kills', { count: kills }), wave: this.world.spawn.wave }), size: UI.size.body, color: UI.muted });
-      lines.push({ text: t('arena.xp', { xp: Math.floor(this.world.xpGained), level: this.world.player.level }), size: UI.size.body, color: UI.goldBrightText, bold: true });
-      lines.push({ text: t('arena.loot'), size: 20, color: UI.goldBrightText, heading: true, gap: 8 });
-      const list: Line[] = [];
-      for (const item of this.rewards?.items ?? []) {
-        const name = item.rarity === 'rare' ? t('arena.lootRare', { name: itemName(item), base: baseName(item.baseId) }) : itemName(item);
-        list.push({ text: t('arena.lootItem', { name, level: item.level }), size: UI.size.body, color: UI.rarity[item.rarity], bold: true });
-      }
-      const kept = this.supportRewards?.kept ?? [];
-      const supports = this.content.supports?.supports ?? {};
-      for (const s of kept) {
-        const def = supports[s.defId];
-        if (def) list.push({ text: `◆ ${supportTitle(def, s.tier)}`, size: UI.size.body, color: tierColor(s.tier), bold: true });
-      }
-      const notes: Line[] = [];
-      if (list.length === 0) {
-        const per = itemsData.rules.arenaRewards.killsPerItem;
-        notes.push({ text: t('arena.noLoot', { count: per }), size: UI.size.small, color: UI.muted });
-      }
-      if (this.rewards && this.rewards.salvaged > 0) notes.push({ text: t('arena.stashFull', { shards: shardsWord(this.rewards.salvaged) }), size: UI.size.small, color: UI.muted });
-      const salvaged = this.supportRewards?.salvagedCount ?? 0;
-      if (salvaged > 0) {
-        notes.push({ text: t('arena.tabFull', { supports: supportsWord(salvaged), shards: shardsWord(this.supportRewards?.shards ?? 0) }), size: UI.size.small, color: UI.muted });
-      }
-      if (kind === 'death' && pending > 0) notes.push({ text: t('arena.lost', { supports: supportsWord(pending) }), size: UI.size.small, color: UI.danger, bold: true });
-      // Trim the list on short screens: the fixed parts always fit, the rest becomes "і ще N".
-      const fixedH = (compact ? 64 : 82) + (compact ? 96 : 116) + [...lines, ...notes].reduce((h, l) => h + lineH(l), 0);
-      const room = Math.max(1, Math.floor((height - 16 - fixedH) / (UI.size.body + 8)));
+      const { fixed, list, notes } = this.endLines(compact);
+      // Trim the list on short screens: the fixed parts always fit, the rest becomes "and N more".
+      const fixedH = headerH + footerH + [...fixed, ...notes].reduce((h, l) => h + lineH(l), 0);
+      const room = Math.max(1, Math.floor((height - 12 - fixedH) / (UI.size.body + 6)));
       if (list.length > room) {
         const hidden = list.length - (room - 1);
         list.length = room - 1;
         list.push({ text: t('arena.more', { count: hidden }), size: UI.size.small, color: UI.muted });
       }
-      lines.push(...list, ...notes);
+      lines.push(...fixed, ...list, ...notes);
     }
-    const headerH = compact ? 64 : 82;
-    const footerH = compact ? 96 : 116;
     const bodyH = lines.reduce((h, l) => h + lineH(l), 0);
     probe.destroy();
     const panelH = Math.min(height - 8, headerH + bodyH + footerH);
     objects.push(makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel'));
     const top = height / 2 - panelH / 2;
-    const titleText = kind === 'death' ? t('arena.titleDeath') : kind === 'results' ? t('arena.titleResults') : t('arena.titlePause');
-    objects.push(heading(this, width / 2, top + (compact ? 30 : 40), titleText, compact ? 28 : 36).setOrigin(0.5));
+    objects.push(heading(this, width / 2, top + (compact ? 28 : 40), this.overlayTitle(kind), compact ? 26 : 34).setOrigin(0.5));
     let y = top + headerH;
     for (const l of lines) {
       y += l.gap ?? 0;
@@ -525,35 +586,98 @@ export class IsoArenaScene extends Phaser.Scene {
 
     const buttonW = Math.min(200, (panelW - 48) / 2);
     const buttonH = compact ? 44 : 52;
-    const buttonY = top + panelH - (compact ? 40 : 50);
-    const primary =
-      kind === 'pause'
-        ? makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, t('arena.resume'), () => this.setPaused(false), 'primary')
-        : makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, kind === 'death' ? t('arena.retry') : t('arena.newRun'), () => this.restartRun(), 'primary');
-    const secondary =
-      kind === 'pause'
-        ? makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.endRun'), () => this.finishRun())
-        : makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.toHub'), () => this.leaveToMenu());
-    objects.push(primary, secondary);
-    const hint = kind === 'pause' ? t('arena.hintPause') : t(kind === 'death' ? 'arena.hintRetry' : 'arena.hintNewRun');
-    objects.push(label(this, width / 2, buttonY - (compact ? 38 : 46), hint, UI.size.small, UI.muted).setOrigin(0.5));
+    const buttonY = top + panelH - (compact ? 38 : 50);
+    if (kind === 'pause') {
+      objects.push(makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, t('arena.resume'), () => this.setPaused(false), 'primary'));
+      objects.push(makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.endRun'), () => this.confirmAbandon()));
+    } else {
+      const next = this.nextRun();
+      objects.push(makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, next.caption, () => this.restartRun(next.map), 'primary'));
+      objects.push(makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.toHub'), () => this.leaveToMenu()));
+    }
+    const hint = kind === 'pause' ? t('arena.hintPause') : this.nextRun().hint;
+    if (keyHints) objects.push(label(this, width / 2, buttonY - (compact ? 36 : 46), hint, UI.size.small, UI.muted).setOrigin(0.5));
     for (const o of objects) pinToScreen(o, 20000);
     const fadeTargets = objects.slice(1);
     for (const o of fadeTargets) (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha(0);
-    this.tweens.add({ targets: fadeTargets, alpha: 1, duration: kind === 'death' ? 600 : 150, delay: kind === 'death' ? 500 : 0 });
+    this.tweens.add({ targets: fadeTargets, alpha: 1, duration: died ? 600 : 180, delay: died ? 500 : 0 });
     this.overlay = objects;
   }
 
-  /** Ends a living run from the pause menu: records it (survived: found supports are kept) and shows the results. */
-  private finishRun(): void {
-    if (this.world.player.dead) {
-      this.leaveToMenu();
-      return;
+  private overlayTitle(kind: OverlayKind): string {
+    if (kind === 'pause') return t('arena.titlePause');
+    if (this.run.status === 'won') return t('run.titleWon', { map: this.run.mapLevel });
+    if (this.run.failReason === 'death') return t('arena.titleDeath');
+    if (this.run.failReason === 'timeout') return t('run.titleTimeout');
+    return t('run.titleAbandoned');
+  }
+
+  /** The end screen's primary action: the newly unlocked map, else the same map again. */
+  private nextRun(): { map: number; caption: string; hint: string } {
+    const unlocked = this.summary?.unlockedMap ?? null;
+    if (unlocked !== null) return { map: unlocked, caption: t('run.nextMap', { map: unlocked }), hint: t('run.hintNext') };
+    const won = this.run.status === 'won';
+    return { map: this.run.mapLevel, caption: won ? t('run.again') : t('arena.retry'), hint: won ? t('run.hintAgain') : t('arena.hintRetry') };
+  }
+
+  /**
+   * End screen text: run summary and XP, the unlocked map, then the chest / consolation (list: items and kept
+   * supports, trimmed on short screens), then notes (stash full, supports lost).
+   */
+  private endLines(compact: boolean): { fixed: Line[]; list: Line[]; notes: Line[] } {
+    const run = this.run;
+    const world = this.world;
+    const summary = this.summary ?? undefined;
+    const fixed: Line[] = [];
+    const small = UI.size.small;
+    const body = compact ? UI.size.small : UI.size.body;
+    fixed.push({ text: t('run.summary', { time: formatElapsed(run.elapsed), kills: t('unit.kills', { count: world.kills }) }), size: small, color: UI.muted });
+    fixed.push({ text: t('arena.xp', { xp: Math.floor(world.xpGained + run.bonusXp), level: world.player.level }), size: body, color: UI.goldBrightText, bold: true });
+    // Phones: the XP line already includes the bonus; the room goes to the chest list instead.
+    if (run.bonusXp > 0 && !compact) fixed.push({ text: t('run.bonusXp', { xp: Math.floor(run.bonusXp) }), size: small, color: UI.muted });
+    if (summary?.unlockedMap) fixed.push({ text: t('run.unlocked', { map: summary.unlockedMap }), size: body + 2, color: UI.goldBrightText, bold: true, gap: 4 });
+    fixed.push({ text: run.status === 'won' ? t('run.chest') : t('run.consolation'), size: compact ? 18 : 20, color: UI.goldBrightText, heading: true, gap: compact ? 4 : 8 });
+    const tier = summary?.plan.speedTier;
+    if (tier && tier.extraItems > 0) fixed.push({ text: t('run.fastClear', { count: tier.extraItems }), size: small, color: UI.goldText, bold: true });
+    const rewards = summary?.rewards;
+    const shards = rewards?.shards ?? 0;
+    const essence = rewards?.essence ?? 0;
+    const currency: string[] = [];
+    if (shards > 0) currency.push(currencyWord(SALVAGE_CURRENCY, shards));
+    if (essence > 0) currency.push(currencyWord(ESSENCE_CURRENCY, essence));
+    const items = rewards?.items ?? [];
+    if (currency.length === 2) fixed.push({ text: t('run.currency', { shards: currency[0]!, essence: currency[1]! }), size: body, color: UI.text, bold: true });
+    else if (currency.length === 1) fixed.push({ text: `+${currency[0]!}`, size: body, color: UI.text, bold: true });
+
+    const list: Line[] = [];
+    for (const item of items) {
+      const name = item.rarity === 'rare' ? t('arena.lootRare', { name: itemName(item), base: baseName(item.baseId) }) : itemName(item);
+      list.push({ text: t('arena.lootItem', { name, level: item.level }), size: body, color: UI.rarity[item.rarity], bold: true });
     }
-    this.finished = true;
-    this.paused = true;
-    this.endRun();
-    this.showOverlay('results');
+    const supports = this.content.supports?.supports ?? {};
+    for (const s of summary?.supports?.kept ?? []) {
+      const def = supports[s.defId];
+      if (def) list.push({ text: `◆ ${supportTitle(def, s.tier)}`, size: body, color: tierColor(s.tier), bold: true });
+    }
+    const notes: Line[] = [];
+    if (list.length === 0 && currency.length === 0) notes.push({ text: t('run.nothing'), size: small, color: UI.muted });
+    const salvagedShards = Math.max(0, shards - (summary?.plan.shards ?? 0));
+    if ((rewards?.salvagedIds.length ?? 0) > 0) notes.push({ text: t('arena.stashFull', { shards: shardsWord(salvagedShards) }), size: small, color: UI.muted });
+    const tabSalvaged = summary?.supports?.salvagedCount ?? 0;
+    if (tabSalvaged > 0) notes.push({ text: t('arena.tabFull', { supports: supportsWord(tabSalvaged), shards: shardsWord(summary?.supports?.shards ?? 0) }), size: small, color: UI.muted });
+    const found = world.supportDrops.length;
+    if (found > 0 && !keepsSupportDrops(run)) {
+      const text = run.failReason === 'death' ? t('arena.lost', { supports: supportsWord(found) }) : t('run.lostAbandoned', { supports: supportsWord(found) });
+      notes.push({ text, size: small, color: UI.danger, bold: true });
+    }
+    return { fixed, list, notes };
+  }
+
+  /** "End run" from the pause menu: confirm first (it fails the run and loses found supports), then abandon. */
+  private confirmAbandon(): void {
+    const pending = this.world.supportDrops.length;
+    const message = pending > 0 ? `${t('run.abandonConfirm')}\n${t('run.abandonSupports', { supports: supportsWord(pending) })}` : t('run.abandonConfirm');
+    confirmDialog(this, message, t('arena.endRun'), () => this.handleEvents(abandonRun(this.run)), undefined, 21000);
   }
 
   private hideOverlay(): void {
@@ -561,57 +685,43 @@ export class IsoArenaScene extends Phaser.Scene {
     this.overlay = undefined;
   }
 
-  private restartRun(): void {
-    this.scene.restart({ characterId: this.characterId, mode: this.mode });
+  private restartRun(mapLevel: number): void {
+    const data: RunSceneData = { characterId: this.characterId, mode: this.mode, mapLevel };
+    this.scene.restart(data);
   }
 
   private leaveToMenu(): void {
-    this.endRun();
+    this.recordRun();
     this.cameras.main.fadeOut(200, 10, 9, 12);
     this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('main-menu'));
   }
 
-  /** Records the run once (death or leaving) and tells the portal gameplay stopped. */
-  private endRun(): void {
-    if (this.runRecorded) return;
-    this.runRecorded = true;
+  /** Records the run once (finishRun: rewards, map unlock, supports) and tells the portal gameplay stopped. */
+  private recordRun(): void {
+    if (this.summary !== undefined) return;
     const app = getApp(this);
-    app.platform.gameplayStop();
-    if (!findCharacter(app.profile, this.characterId)) return;
-    applyRunResult(app.profile, this.characterId, {
-      kills: this.world.kills,
-      duration: this.world.time,
-      died: this.world.player.dead,
-      progress: { level: this.world.player.level, xp: this.world.player.xp },
-      skills: this.world.player.skillProgress,
-    });
-    this.rewards = grantArenaRewards(app.profile, createRng((Math.random() * 2 ** 32) >>> 0), { kills: this.world.kills, wave: this.world.spawn.wave, areaLevel: this.world.areaLevel }, itemsData);
-    // Designer decision 2026-10-23: supports found in a run are lost if the hero died.
-    const character = findCharacter(app.profile, this.characterId);
-    const supportsData = this.content.supports;
-    if (character && supportsData && !this.world.player.dead) {
-      this.supportRewards = grantSupportDrops(app.profile, character, this.world.supportDrops, supportsData);
-    }
+    this.setGameplay(false);
+    this.summary = finishRun(app.profile, this.characterId, this.run, { maps: mapsData, items: itemsData, ...(this.content.supports ? { supports: this.content.supports } : {}) });
     app.save();
-    // PROPOSAL (docs/design/account.md): until bosses/loot exist, the first finished run is the "meaningful moment".
+    // PROPOSAL (docs/design/account.md): the first finished run is the "meaningful moment".
     if (!app.user && app.loginHint === 'none') app.loginHint = 'pending';
   }
 
   override update(_time: number, deltaMs: number): void {
-    // A dead hero or a finished run: only the results screen is left (Esc → hub, R → new run).
-    const dead = this.world.player.dead || this.finished;
+    const ended = this.ended();
     // While the tree is open (modes that do not pause), its screen owns the keys.
     if (!this.treeOpen) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-        if (dead) this.leaveToMenu();
-        else this.setPaused(!this.paused);
+        if (ended) {
+          if (this.overlayKind === 'end') this.leaveToMenu();
+        } else this.setPaused(!this.paused);
         return;
       }
-      if (Phaser.Input.Keyboard.JustDown(this.keys.R) && dead) {
-        this.restartRun();
+      if (Phaser.Input.Keyboard.JustDown(this.keys.R) && ended && this.overlayKind === 'end') {
+        this.restartRun(this.nextRun().map);
         return;
       }
-      if (Phaser.Input.Keyboard.JustDown(this.keys.P) && !this.paused && !dead) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.P) && !this.paused && !ended) {
         this.openTree();
         return;
       }
@@ -622,7 +732,7 @@ export class IsoArenaScene extends Phaser.Scene {
     let steps = 0;
     while (this.accumulator >= DT && steps < MAX_STEPS_PER_FRAME) {
       this.snapshotPositions();
-      for (const event of step(this.world, this.readInput(), this.content, DT)) this.onEvent(event);
+      this.handleEvents(stepRun(this.run, this.readInput(), this.content, mapsData, DT));
       this.accumulator -= DT;
       steps++;
     }
@@ -638,10 +748,75 @@ export class IsoArenaScene extends Phaser.Scene {
     const heroScreen = toScreen(this.hero.display);
     this.cameras.main.centerOn(heroScreen.x, heroScreen.y - 30);
     this.light.setPosition(heroScreen.x, heroScreen.y - 30);
+    this.room.update(dt, {
+      hero: heroScreen,
+      doorOpen: openDoor(this.run, mapsData) !== null,
+      altar: this.altarLook(),
+      altarInRange: canActivateAltar(this.run, mapsData),
+      summon: this.run.phase === 'summoning' ? 1 - this.run.waveTimer / Math.max(1e-6, mapsData.rules.boss.spawnDelay) : -1,
+    });
+    this.drawDoorPointer();
     this.hud.update(this.world, dt);
+    this.runHud.update(this.run, dt);
   }
 
-  private readInput(): PlayerInput {
+  private altarLook(): AltarLook {
+    if (this.run.phase === 'summoning') return 'summoning';
+    return this.run.phase === 'altar' && this.run.status === 'active' ? 'ready' : 'spent';
+  }
+
+  /** An arrow at the screen edge towards the open door while it is out of view. */
+  private drawDoorPointer(): void {
+    const g = this.pointer.clear();
+    const door = openDoor(this.run, mapsData) && this.room.doorScreen();
+    if (!door) return;
+    const cam = this.cameras.main;
+    const view = cam.worldView;
+    const margin = 40;
+    if (door.x > view.x + margin && door.x < view.right - margin && door.y - 60 > view.y + margin && door.y < view.bottom - margin) return;
+    const { width, height } = this.scale;
+    const cx = width / 2;
+    const cy = height / 2;
+    const dx = door.x - cam.scrollX - cx;
+    const dy = door.y - 40 - cam.scrollY - cy;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    // Ray from the centre to an inset screen rectangle that keeps clear of the run HUD at the top and the orbs and
+    // skill bar at the bottom.
+    const compact = width < 820 || height < 520;
+    const inset = compact ? 44 : 70;
+    const top = Math.min(cy - 20, this.runHud.bottom() + 30);
+    const bottom = Math.max(cy + 20, height - (compact ? 120 : 160));
+    const kx = ux > 0 ? (width - inset - cx) / ux : ux < 0 ? (inset - cx) / ux : Number.POSITIVE_INFINITY;
+    const ky = uy > 0 ? (bottom - cy) / uy : uy < 0 ? (top - cy) / uy : Number.POSITIVE_INFINITY;
+    const k = Math.min(kx, ky);
+    const x = cx + ux * k;
+    const y = cy + uy * k;
+    const pulse = 0.6 + 0.4 * Math.sin(this.world.time * 6);
+    const size = 18;
+    const px = -uy;
+    const py = ux;
+    // A notched arrowhead (longer than wide), nudged outwards with the pulse, so its direction reads at a glance.
+    const push = 4 * pulse;
+    const tipX = x + ux * (size * 1.1 + push);
+    const tipY = y + uy * (size * 1.1 + push);
+    const backX = x - ux * (size * 0.8 - push);
+    const backY = y - uy * (size * 0.8 - push);
+    const notchX = x - ux * (size * 0.25 - push);
+    const notchY = y - uy * (size * 0.25 - push);
+    const lx = backX + px * size * 0.75;
+    const ly = backY + py * size * 0.75;
+    const rx = backX - px * size * 0.75;
+    const ry = backY - py * size * 0.75;
+    g.fillStyle(0xffb44a, 0.6 + 0.35 * pulse);
+    g.fillTriangle(tipX, tipY, lx, ly, notchX, notchY);
+    g.fillTriangle(tipX, tipY, notchX, notchY, rx, ry);
+    g.lineStyle(2, 0x1a1006, 0.9);
+    g.lineBetween(tipX, tipY, lx, ly).lineBetween(lx, ly, notchX, notchY).lineBetween(notchX, notchY, rx, ry).lineBetween(rx, ry, tipX, tipY);
+  }
+
+  private readInput(): RunInput {
     if (this.treeOpen) return { move: NO_MOVE, aim: this.world.player.pos, basicAttack: false, skills: NO_SKILLS };
     const k = this.keys;
     const pointer = this.input.activePointer;
@@ -655,13 +830,93 @@ export class IsoArenaScene extends Phaser.Scene {
       this.skillBuffer[i] = Math.max(0, (this.skillBuffer[i] ?? 0) - DT);
       return down || (this.skillBuffer[i] ?? 0) > 0;
     });
+    const interact = k.F.isDown || this.interactQueued;
+    this.interactQueued = false;
     return {
       move: screenDirToWorld(screenMove),
       // Aim at ground level under the cursor; sprites stand on their feet.
       aim: toWorld(vec(aim.x, aim.y)),
       basicAttack: pointer.leftButtonDown() && !this.uiPress,
       skills,
+      interact,
     };
+  }
+
+  private handleEvents(events: readonly RunStepEvent[]): void {
+    for (const event of events) {
+      if (isRunEvent(event)) this.onRunEvent(event);
+      else this.onEvent(event);
+    }
+  }
+
+  private onRunEvent(event: RunEvent): void {
+    switch (event.type) {
+      case 'roomEnter':
+        this.enterRoom();
+        if (event.kind === 'boss') this.announce(t('run.bossRoom'), t('run.bossRoomLine'));
+        break;
+      case 'waveStart':
+        break;
+      case 'roomCleared':
+        this.room.openDoor();
+        this.announce(t('run.roomCleared'), t('run.roomClearedLine'));
+        break;
+      case 'altarActivated':
+        this.cameras.main.shake(event.delay * 1000, 0.002);
+        this.announce(t('run.summoning'));
+        break;
+      case 'bossSpawned': {
+        this.room.bossRises();
+        this.cameras.main.shake(320, 0.008);
+        this.cameras.main.flash(220, 120, 20, 10);
+        const boss = this.world.mobs.find((m) => m.id === event.id);
+        if (boss) this.announce(mobName(boss.defId));
+        break;
+      }
+      case 'rankedKill':
+        break;
+      case 'timeWarning':
+        this.runHud.warn();
+        this.announce(t('run.timeLeft', { time: formatCountdown(event.secondsLeft) }));
+        break;
+      case 'runWon': {
+        this.recordRun();
+        this.chestBurst();
+        this.scheduleEndScreen(WIN_SCREEN_DELAY);
+        break;
+      }
+      case 'runFailed':
+        this.recordRun();
+        // Abandoned from the pause menu: straight to the results; death and timeout let the moment land first.
+        if (event.reason === 'abandoned') {
+          this.paused = true;
+          this.showOverlay('end');
+        } else this.scheduleEndScreen(event.reason === 'death' ? 0 : 0.6);
+        break;
+    }
+  }
+
+  private scheduleEndScreen(seconds: number): void {
+    if (seconds <= 0) {
+      this.showOverlay('end');
+      return;
+    }
+    this.time.delayedCall(seconds * 1000, () => {
+      if (this.scene.isActive() && this.overlayKind !== 'end') this.showOverlay('end');
+    });
+  }
+
+  /** The boss fell: golden rays and a chest-coloured burst where it died. */
+  private chestBurst(): void {
+    const at = this.bossFall ?? this.world.player.pos;
+    const s = toScreen(at);
+    this.cameras.main.flash(260, 255, 220, 140);
+    for (let i = 0; i < 3; i++) {
+      const ring = this.add.ellipse(s.x, s.y, 50, 25).setStrokeStyle(4, 0xffd36a, 1).setDepth(5002);
+      this.tweens.add({ targets: ring, scaleX: 7 + i * 2, scaleY: 7 + i * 2, alpha: 0, delay: i * 180, duration: 900, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+    }
+    const pillar = this.add.rectangle(s.x, s.y, 70, 320, 0xffe7a0, 0.6).setOrigin(0.5, 1).setDepth(5002).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({ targets: pillar, scaleX: 0.1, alpha: 0, duration: 1200, ease: 'Quad.easeIn', onComplete: () => pillar.destroy() });
   }
 
   private onEvent(event: WorldEvent): void {
@@ -714,17 +969,21 @@ export class IsoArenaScene extends Phaser.Scene {
         }
         break;
       case 'zoneSpawn':
+        this.liveZones.add(event.zoneId);
         this.skillFx.zoneSpawned(event.zoneId, event.duration);
         break;
       case 'zoneExpire':
+        this.liveZones.delete(event.zoneId);
         this.skillFx.zoneExpired(event.zoneId);
         break;
       case 'decoySpawn': {
+        this.liveDecoys.add(event.decoyId);
         const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
         this.skillFx.decoySpawned(event.decoyId, look?.sprite ?? 'knight', Math.max(0, this.hero.row));
         break;
       }
       case 'decoyExpire':
+        this.liveDecoys.delete(event.decoyId);
         this.skillFx.decoyExpired(event.decoyId);
         break;
       case 'projectileSplit': {
@@ -770,8 +1029,14 @@ export class IsoArenaScene extends Phaser.Scene {
           this.playOneShot(actor, 'death');
           actor.sprite.clearTint();
           actor.sprite.setDepth(toScreen(actor.display).y - 40);
-          this.corpses.push({ actor, ttl: CORPSE_TIME });
+          this.corpses.push({ actor, ttl: actor.rank === 'boss' ? CORPSE_TIME * 3 : CORPSE_TIME });
           this.mobs.delete(event.id);
+          if (actor.rank !== 'normal') {
+            // A ranked mob falls: a ring in its colour.
+            const look = RANK_LOOKS[actor.rank];
+            this.areas.push({ origin: event.pos, facing: vec(1, 0), radius: actor.rank === 'boss' ? 160 : 80, angleDeg: 360, color: look.ring, ttl: AREA_TTL * 3 });
+          }
+          if (actor.rank === 'boss') this.bossFall = event.pos;
         }
         break;
       }
@@ -817,18 +1082,16 @@ export class IsoArenaScene extends Phaser.Scene {
         break;
       case 'playerDeath':
         this.playOneShot(this.hero, 'death');
-        this.endRun();
         this.cameras.main.shake(250, 0.006);
-        this.showOverlay('death');
         break;
       default:
         break;
     }
   }
 
-  private createActor(set: string, pos: Vec2): Actor {
-    const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y);
-    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0 };
+  private createActor(set: string, pos: Vec2, rank: MobRank = 'normal', scale = 1): Actor {
+    const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y).setScale(scale);
+    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0, rank, scale };
   }
 
   /** Remembers where everything was before a sim step, for interpolation. */
@@ -872,8 +1135,9 @@ export class IsoArenaScene extends Phaser.Scene {
 
     for (const mob of this.world.mobs) {
       let actor = this.mobs.get(mob.id);
+      const def = getMob(this.content, mob.defId);
       if (!actor) {
-        actor = this.createActor(MOB_SPRITES[mob.defId] ?? 'skeleton_warrior', mob.pos);
+        actor = this.createActor(MOB_SPRITES[mob.defId] ?? 'skeleton_warrior', mob.pos, mobRank(def, mob), def.radius > 0 ? mob.radius / def.radius : 1);
         this.mobs.set(mob.id, actor);
       }
       actor.facing = mob.facing;
@@ -883,15 +1147,15 @@ export class IsoArenaScene extends Phaser.Scene {
         const k = 1 - Math.exp(-MOB_SMOOTHING * dt);
         actor.display = vec(actor.display.x + (target.x - actor.display.x) * k, actor.display.y + (target.y - actor.display.y) * k);
       }
-      const def = getMob(this.content, mob.defId);
       // A frozen mob holds its pose; a boss under freeze (freezeSlow) only looks frozen and keeps moving.
       actor.frozen = mob.freeze > 0;
       this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), def.moveSpeed, actor.frozen);
       // Likewise a boss under an ordinary stun (stunSlow) looks stunned but keeps moving.
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
       const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, Math.max(mob.slow, mob.auraSlow), this.world.time, mob.id);
-      if (look === undefined) actor.sprite.clearTint();
-      else actor.sprite.setTint(look.color).setTintMode(look.mode);
+      if (look !== undefined) actor.sprite.setTint(look.color).setTintMode(look.mode);
+      else if (actor.rank !== 'normal') actor.sprite.setTint(RANK_LOOKS[actor.rank].tint).setTintMode(Phaser.TintModes.MULTIPLY);
+      else actor.sprite.clearTint();
     }
     this.updateDotNumbers(dt);
   }
@@ -1061,7 +1325,9 @@ export class IsoArenaScene extends Phaser.Scene {
     for (const mob of this.world.mobs) {
       const actor = this.mobs.get(mob.id);
       if (!actor) continue;
-      const radius = getMob(this.content, mob.defId).radius;
+      // Core body radius (rank scaled): rings and status marks match what hits land on.
+      const radius = mob.radius;
+      if (actor.rank !== 'normal') this.drawRankMarks(g, top, actor, mob.life / mob.maxLife, radius);
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
       this.combatFx.drawMobStatus(g, top, actor.sprite.x, actor.sprite.y, radius, frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, this.world.time, dt, mob.id);
       // Stun bar (stunBar mechanic): eases up to the core fill, snaps down on reset; flashes full after a stun.
@@ -1105,19 +1371,25 @@ export class IsoArenaScene extends Phaser.Scene {
     }
   }
 
-  private buildFloor(): void {
-    const { width, height } = this.content.arena;
-    const cols = Math.ceil(width / TILE_WORLD);
-    const rows = Math.ceil(height / TILE_WORLD);
-    for (let j = 0; j < rows; j++) {
-      for (let i = 0; i < cols; i++) {
-        const hash = (i * 73856093) ^ (j * 19349663);
-        const pool = Math.abs(hash) % 5 === 0 ? DETAIL_FLOORS : PLAIN_FLOORS;
-        const frame = pool[Math.abs(hash >> 3) % pool.length] ?? 0;
-        const p = toScreen(vec((i + 0.5) * TILE_WORLD, (j + 0.5) * TILE_WORLD));
-        this.add.image(p.x, p.y, 'floor', frame).setScale(TILE_SCALE).setDepth(-100000);
-      }
-    }
+  /**
+   * Elites and the boss: a coloured double ring under the feet; elites also get a small life bar over the head
+   * (the boss has its bar at the top of the screen).
+   */
+  private drawRankMarks(g: Phaser.GameObjects.Graphics, top: Phaser.GameObjects.Graphics, actor: Actor, life: number, radius: number): void {
+    const look = RANK_LOOKS[actor.rank as Exclude<MobRank, 'normal'>];
+    const { x, y } = actor.sprite;
+    const pulse = 0.5 + 0.5 * Math.sin(this.world.time * 4 + x * 0.01);
+    const rx = radius * 2.6;
+    g.fillStyle(look.ring, 0.14 + 0.08 * pulse).fillEllipse(x, y, rx, rx / 2);
+    g.lineStyle(2, look.ring, 0.75 + 0.2 * pulse).strokeEllipse(x, y, rx, rx / 2);
+    g.lineStyle(1, look.ring, 0.45).strokeEllipse(x, y, rx * 1.25, rx * 0.625);
+    if (actor.rank !== 'elite') return;
+    const w = 44;
+    const h = 5;
+    const by = y - 92 * actor.scale;
+    top.fillStyle(0x000000, 0.75).fillRect(x - w / 2 - 1, by - 1, w + 2, h + 2);
+    top.fillStyle(0x3a0a08, 1).fillRect(x - w / 2, by, w, h);
+    top.fillStyle(look.ring, 1).fillRect(x - w / 2, by, w * Phaser.Math.Clamp(life, 0, 1), h);
   }
 
   /**
@@ -1150,6 +1422,28 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   /**
+   * A centre-screen announcement (heading + optional line) that fades in and out. One at a time: a new one replaces
+   * the one on screen, so room / boss / time messages and the level-up banner never pile up.
+   */
+  private announce(title: string, sub?: string, size = 36): void {
+    for (const o of this.announcement) o.destroy();
+    const { width, height } = this.scale;
+    const compact = width < 820 || height < 520;
+    const y = height * (compact ? 0.4 : 0.3);
+    const big = heading(this, width / 2, y, title, compact ? Math.round(size * 0.75) : size).setOrigin(0.5);
+    const parts = [big];
+    if (sub) parts.push(label(this, width / 2, y + (compact ? 28 : 38), sub, compact ? UI.size.small : UI.size.body, UI.goldBrightText, true).setOrigin(0.5));
+    for (const p of parts) {
+      pinToScreen(p, 15000);
+      p.setAlpha(0);
+      this.tweens.add({ targets: p, alpha: 1, duration: 200, hold: 1300, yoyo: true, onComplete: () => p.destroy() });
+    }
+    big.setScale(1.3);
+    this.tweens.add({ targets: big, scale: 1, duration: 300, ease: 'Back.easeOut' });
+    this.announcement = parts;
+  }
+
+  /**
    * Golden burst around the hero, a banner and a pulse on the XP bar. The core refills life (and the resource only
    * when ResourceDef.refillOnLevelUp: Rage is kept); the banner says what was restored.
    */
@@ -1164,21 +1458,12 @@ export class IsoArenaScene extends Phaser.Scene {
     const pillar = this.add.rectangle(screen.x, screen.y, 46, 220, 0xffe7a0, 0.55).setOrigin(0.5, 1).setDepth(4001).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: pillar, scaleX: 0.1, alpha: 0, duration: 800, ease: 'Quad.easeIn', onComplete: () => pillar.destroy() });
 
-    const { width, height } = this.scale;
-    const banner = heading(this, width / 2, height * 0.28, t('arena.levelUp'), 44).setOrigin(0.5);
     const classDef = getClass(this.content, this.classId);
     // Blood Magic: no resource to restore (max 0).
     const refills = classDef.resource.refillOnLevelUp && maxResource(classDef, this.world.player) > 0;
     const resId = classDef.resource.id;
     const restored = refills ? t('arena.restoredBoth', { resName: resourceText(resId), resAcc: resourceText(resId, 'acc') }) : t('arena.restoredLife');
-    const sub = label(this, width / 2, height * 0.28 + 38, t('arena.levelUpLine', { level, restored }), UI.size.body, UI.goldBrightText, true).setOrigin(0.5);
-    for (const t of [banner, sub]) {
-      pinToScreen(t, 15000);
-      t.setAlpha(0);
-      this.tweens.add({ targets: t, alpha: 1, duration: 200, hold: 1300, yoyo: true, onComplete: () => t.destroy() });
-    }
-    banner.setScale(1.4);
-    this.tweens.add({ targets: banner, scale: 1, duration: 300, ease: 'Back.easeOut' });
+    this.announce(t('arena.levelUp'), t('arena.levelUpLine', { level, restored }), 44);
   }
 
   private spawnDamageNumber(pos: Vec2, amount: number, kind: DamageNumberKind): void {
@@ -1206,4 +1491,21 @@ export class IsoArenaScene extends Phaser.Scene {
       },
     });
   }
+}
+
+/** One line of the pause / end screen. */
+interface Line {
+  text: string;
+  size: number;
+  color: string;
+  bold?: boolean;
+  heading?: boolean;
+  /** Extra space above the line. */
+  gap?: number;
+}
+
+const RUN_EVENT_TYPES: ReadonlySet<string> = new Set<RunEvent['type']>(['roomEnter', 'waveStart', 'roomCleared', 'altarActivated', 'bossSpawned', 'rankedKill', 'timeWarning', 'runWon', 'runFailed']);
+
+function isRunEvent(event: RunStepEvent): event is RunEvent {
+  return RUN_EVENT_TYPES.has(event.type);
 }

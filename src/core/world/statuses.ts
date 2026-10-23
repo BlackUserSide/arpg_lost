@@ -8,7 +8,7 @@ import { computeStat } from '../stats/modifiers';
 import type { Modifier, Tag } from '../stats/types';
 import type { StatusEffect } from './content';
 import { stunBarFill, type ConditionTarget, type StunBarStats } from './passiveEffects';
-import { getMob, type Ctx, type MobState } from './state';
+import { getMob, isBoss, type Ctx, type MobState } from './state';
 
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
 const TIME_EPSILON = 1e-9;
@@ -139,7 +139,7 @@ export function tickBleed(ctx: Ctx, mob: MobState, dt: number): void {
  */
 function setStun(ctx: Ctx, mob: MobState, duration: number): void {
   if (duration <= 0) return;
-  if (getMob(ctx.content, mob.defId).boss) {
+  if (isBoss(ctx.content, mob)) {
     mob.stunSlow = Math.max(mob.stunSlow, duration);
     statusEvent(ctx, mob, 'stun', mob.stunSlow);
     return;
@@ -158,7 +158,7 @@ function setStun(ctx: Ctx, mob: MobState, duration: number): void {
  */
 export function fillStunBar(ctx: Ctx, mob: MobState, stats: StunBarStats, removed: number, extraFillIncreased = 0): void {
   if (mob.life <= 0) return;
-  const boss = getMob(ctx.content, mob.defId).boss === true;
+  const boss = isBoss(ctx.content, mob);
   // The hit's own fill bonus (ActionDef.stunBarFillIncreased, Stun support for the Guardian) adds to stunBonus fill.
   const barStats = extraFillIncreased !== 0 ? { ...stats, fillMultiplier: Math.max(0, stats.fillMultiplier + extraFillIncreased) } : stats;
   const fill = mob.stunBar + stunBarFill(barStats, removed, mob.maxLife, boss);
@@ -206,8 +206,7 @@ export function decayStunBar(mob: MobState, stats: StunBarStats, dt: number): vo
  * an ordinary slow they have keeps running untouched (designer decision 2026-10-22).
  */
 export function applyFreeze(ctx: Ctx, mob: MobState, duration: number, bossDuration: number, mods: readonly Modifier[], tags: readonly Tag[]): void {
-  const def = getMob(ctx.content, mob.defId);
-  if (def.boss) {
+  if (isBoss(ctx.content, mob)) {
     const time = computeStat(bossDuration, mods, 'freezeDuration', tags);
     if (time <= 0) return;
     mob.freezeSlow = Math.max(mob.freezeSlow, time);
@@ -262,11 +261,11 @@ export function tickIgnite(ctx: Ctx, mob: MobState, dt: number): void {
  * by the active-trap cap drops its aura at once (placeTrap calls this). Movement reads it on the next step's mob update.
  */
 export function updateAuraSlows(ctx: Ctx): void {
-  const { world, content } = ctx;
+  const { world } = ctx;
   for (const mob of world.mobs) {
     let slow = 0;
     if (mob.life > 0) {
-      const reach = getMob(content, mob.defId).radius;
+      const reach = mob.radius;
       for (const trap of world.traps) {
         if (!trap.aura || trap.armTimer > 0) continue;
         if (distance(mob.pos, trap.pos) <= trap.aura.radius + reach) slow = Math.max(slow, trap.aura.slow);

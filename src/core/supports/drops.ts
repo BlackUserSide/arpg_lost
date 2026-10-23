@@ -3,9 +3,10 @@
 
 import { weightedPick } from '../items/generate';
 import type { Rng } from '../rng';
+import type { MobRank } from '../world/content';
 import type { SupportData, SupportRef } from './types';
 
-export type MobRank = 'normal' | 'elite' | 'boss';
+export type { MobRank };
 
 /** Tiers (1-based) that can drop at this area level (SupportRules.tierMinLevel). */
 export function availableSupportTiers(data: SupportData, areaLevel: number): number[] {

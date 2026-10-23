@@ -135,7 +135,7 @@ function world(socketed: Record<string, SupportRef[]>, loadout: Loadout = {}, c:
 }
 
 function addMob(w: WorldState, x: number, y: number, defId = 'dummy', life = 1000): MobState {
-  const mob: MobState = { id: w.nextId++, defId, pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0, auraSlow: 0 };
+  const mob: MobState = { id: w.nextId++, defId, pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0, auraSlow: 0, radius: 10 };
   w.mobs.push(mob);
   return mob;
 }
