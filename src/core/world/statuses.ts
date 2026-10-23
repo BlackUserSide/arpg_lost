@@ -29,6 +29,7 @@ export function conditionTarget(mob: MobState): ConditionTarget {
     slow: Math.max(mob.slow, mob.freezeSlow, mob.stunSlow, mob.auraSlow),
     ignite: mob.ignite,
     freeze: Math.max(mob.freeze, mob.freezeSlow),
+    bleed: mob.bleed ?? 0,
   };
 }
 
@@ -52,7 +53,7 @@ export interface HitContext {
 export function applyStatus(ctx: Ctx, mob: MobState, effect: StatusEffect, hit: HitContext): void {
   if (effect.requiresStatus !== undefined && !(hit.before[effect.requiresStatus] > 0)) return;
   if (effect.requiresDamageType !== undefined && !((hit.raw?.[effect.requiresDamageType] ?? 0) > 0)) return;
-  if (effect.status === 'ignite' && hit.raw === undefined) return;
+  if ((effect.status === 'ignite' || effect.status === 'bleed') && hit.raw === undefined) return;
   if (effect.chance !== undefined) {
     const chance = effect.status === 'ignite' ? computeStat(effect.chance, hit.mods, 'igniteChance', hit.tags) : effect.chance;
     if (!ctx.rng.chance(chance)) return;
@@ -71,12 +72,64 @@ export function applyStatus(ctx: Ctx, mob: MobState, effect: StatusEffect, hit: 
     case 'freeze':
       applyFreeze(ctx, mob, effect.duration, effect.bossDuration ?? effect.duration, hit.mods, hit.tags);
       break;
+    case 'bleed':
+      applyBleed(ctx, mob, totalDamage(hit.raw ?? {}) * (effect.magnitude ?? 0), effect.duration, effect.maxStacks ?? 1);
+      break;
   }
 }
 
-function statusEvent(ctx: Ctx, mob: MobState, status: StatusEffect['status'], duration: number, source?: 'stunBar'): void {
+function statusEvent(ctx: Ctx, mob: MobState, status: StatusEffect['status'], duration: number, source?: 'stunBar', stacks?: number): void {
   if (mob.life <= 0) return;
-  ctx.events.push({ type: 'status', targetId: mob.id, pos: mob.pos, status, duration, ...(source ? { source } : {}) });
+  ctx.events.push({
+    type: 'status',
+    targetId: mob.id,
+    pos: mob.pos,
+    status,
+    duration,
+    ...(source ? { source } : {}),
+    ...(stacks !== undefined ? { stacks } : {}),
+  });
+}
+
+/**
+ * Bleed (designer decision 2026-10-23): adds a stack dealing `amount` (pre-mitigation hit damage × magnitude) as
+ * physical damage over `duration`, and restarts the shared timer to `duration`. At most `maxStacks` stacks: past the
+ * cap the oldest stack is replaced. A damage over time: not reduced by armour, no crit, no leech. The 'status'
+ * event carries the stack count.
+ */
+// DESIGN-TBD: bleed ignores armour (PoE convention); confirm, and whether a new stack past the cap should replace the
+// oldest (current) or the weakest.
+export function applyBleed(ctx: Ctx, mob: MobState, amount: number, duration: number, maxStacks: number): void {
+  if (duration <= 0 || amount <= 0) return;
+  const cap = Math.max(1, Math.floor(maxStacks));
+  const stacks = (mob.bleed ?? 0) > 0 ? [...(mob.bleedStacks ?? [])] : [];
+  stacks.push(amount / duration);
+  while (stacks.length > cap) stacks.shift();
+  mob.bleedStacks = stacks;
+  mob.bleed = duration;
+  statusEvent(ctx, mob, 'bleed', duration, undefined, stacks.length);
+}
+
+/** Bleed damage per second of the mob now (sum of its stacks; 0 when not bleeding). */
+export function bleedDps(mob: MobState): number {
+  if (!((mob.bleed ?? 0) > 0)) return 0;
+  return (mob.bleedStacks ?? []).reduce((sum, dps) => sum + dps, 0);
+}
+
+/**
+ * Bleed damage for one fixed step: bleedDps × min(dt, remaining), one 'dot' event. Timing as for ignite (tickIgnite).
+ * When the timer ends the stacks are cleared. A mob killed by its bleed keeps it (dies bleeding).
+ */
+export function tickBleed(ctx: Ctx, mob: MobState, dt: number): void {
+  const remaining = mob.bleed ?? 0;
+  if (remaining <= 0 || mob.life <= 0) return;
+  const time = Math.min(dt, remaining);
+  const amount = bleedDps(mob) * time;
+  mob.life -= amount;
+  ctx.events.push({ type: 'dot', targetId: mob.id, pos: mob.pos, amount, status: 'bleed' });
+  if (mob.life <= 0) return;
+  mob.bleed = remaining - time > TIME_EPSILON ? remaining - time : 0;
+  if (mob.bleed === 0) mob.bleedStacks = [];
 }
 
 /**
@@ -104,10 +157,12 @@ function setStun(ctx: Ctx, mob: MobState, duration: number): void {
  * Every fill restarts the decay delay (stunBarIdle = 0). The bar keeps filling while the mob is stunned and the
  * overflow is lost (designer decision 2026-10-22).
  */
-export function fillStunBar(ctx: Ctx, mob: MobState, stats: StunBarStats, removed: number): void {
+export function fillStunBar(ctx: Ctx, mob: MobState, stats: StunBarStats, removed: number, extraFillIncreased = 0): void {
   if (mob.life <= 0) return;
   const boss = getMob(ctx.content, mob.defId).boss === true;
-  const fill = mob.stunBar + stunBarFill(stats, removed, mob.maxLife, boss);
+  // The hit's own fill bonus (ActionDef.stunBarFillIncreased, Stun support for the Guardian) adds to stunBonus fill.
+  const barStats = extraFillIncreased !== 0 ? { ...stats, fillMultiplier: Math.max(0, stats.fillMultiplier + extraFillIncreased) } : stats;
+  const fill = mob.stunBar + stunBarFill(barStats, removed, mob.maxLife, boss);
   mob.stunBarIdle = 0;
   if (fill < 1) {
     mob.stunBar = fill;

@@ -44,6 +44,8 @@ export interface SupportDef {
   readonly id: string;
   /** Display name (Ukrainian). */
   readonly name: string;
+  /** One-line effect summary for tooltips (Ukrainian); exact numbers come from the tier's bonus. */
+  readonly description: string;
   /** Design group (for UI sorting / filters). */
   readonly group: 'melee' | 'projectile' | 'spell' | 'general';
   readonly compatibility: SupportCompatibility;

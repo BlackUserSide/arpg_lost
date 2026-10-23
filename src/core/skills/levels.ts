@@ -6,7 +6,7 @@
 import type { ClassDef } from '../world/content';
 import type { SkillBonus, SkillChangeSet } from './types';
 
-/** Saved per character per skill (CharacterRecord.skills). Support slots will be added next to these fields. */
+/** Saved per character per skill (CharacterRecord.skills). Socketed supports live in CharacterRecord.supports. */
 export interface SkillProgress {
   level: number;
   /** XP towards the next level (0 at max level). */

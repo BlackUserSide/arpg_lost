@@ -158,7 +158,8 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
  * base value with all matching changes summed (add and increased combine like stats). Returns `action` itself when nothing matches.
  * Added statuses that combat does not implement are skipped. Duration changes also scale a freeze's bossDuration.
  * Stat modifiers of the sets (SkillChangeSet.modifiers) are appended to ActionDef.modifiers (the action's own).
- * Resource cost multipliers of the sets multiply (designer decision 2026-10-23); leech and stun bar fill add up.
+ * Resource cost multipliers of the sets multiply (designer decision 2026-10-23); leech and stun bar fill add up;
+ * damage conversions combine as described at SkillChangeSet.damageConversion (the action's own comes first).
  */
 export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]): ActionDef {
   const matching = sets.filter((s) => skillMatches(action, s));
@@ -173,10 +174,15 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
   let costMultiplier = 1;
   let leech = action.leech ?? 0;
   let stunBarFill = action.stunBarFillIncreased ?? 0;
+  let conversion = action.damageConversion;
   for (const set of matching) {
     costMultiplier *= set.resourceCostMultiplier ?? 1;
     leech += set.leech ?? 0;
     stunBarFill += set.stunBarFillIncreased ?? 0;
+    const c = set.damageConversion;
+    if (c && (!conversion || conversion.to === c.to)) {
+      conversion = { to: c.to, fraction: Math.min(1, (conversion?.fraction ?? 0) + c.fraction) };
+    }
     for (const c of set.changes ?? []) {
       const t = totals.get(c.param) ?? { add: 0, increased: 0 };
       t.add += c.add ?? 0;
@@ -247,6 +253,7 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
     ...(chainHit ? { chainHit } : {}),
     ...(echo ? { echo } : {}),
     ...(knockback ? { knockback } : {}),
+    ...(conversion ? { damageConversion: conversion } : {}),
   };
 }
 

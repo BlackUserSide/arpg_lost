@@ -2,15 +2,15 @@ import { computeDamage, rollBaseDamage, scaleDamage, type DamageByType } from '.
 import { resolveHit } from '../combat/hit';
 import { add, distance, dot, normalize, rotate, scale, sub, type Vec2 } from '../math';
 import { computeStat } from '../stats/modifiers';
-import type { ActionDef } from './content';
+import type { ActionDef, KnockbackDef } from './content';
 import { applyLeech } from './experience';
 import { actionReady, spendCharge } from './charges';
 import { actionCost, canPay, counterAttackStats, critStats } from './passiveEffects';
 import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './statuses';
 import { resourceOnHeroHit, startResourceUse } from './resource';
 import { spawnDecoy, spawnZone } from './zones';
-import type { Modifier } from '../stats/types';
-import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PlayerState, type Trap } from './state';
+import type { DamageType, Modifier } from '../stats/types';
+import { allModifiers, clampToArena, getMob, heroConditionalModifiers, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
 
 /** The hero's effective action (class data + skill changes, see PlayerState.actions). */
 export function findAction(ctx: Ctx, id: string): ActionDef {
@@ -62,7 +62,7 @@ function payCost(player: PlayerState, action: ActionDef): void {
 }
 
 export function performAction(ctx: Ctx, action: ActionDef): void {
-  const { world, content, events, input } = ctx;
+  const { world, events, input, rng } = ctx;
   const player = world.player;
   payCost(player, action);
   startResourceUse(ctx.classDef, player, action);
@@ -71,13 +71,76 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
   events.push({ type: 'action', actionId: action.id, facing: player.facing });
 
   const delivery = action.delivery;
+  const special = delivery.kind === 'arc' && delivery.everyNth !== undefined && countUse(player, action.id) % Math.max(1, Math.floor(delivery.everyNth.every)) === 0;
+  const use: ActionUse = { facing: player.facing, aim: input.aim, special };
+  deliver(ctx, action, use);
+
+  for (const effect of action.selfEffects ?? []) {
+    switch (effect.kind) {
+      case 'invulnerable':
+        player.invulnerable = Math.max(player.invulnerable, effect.duration);
+        break;
+      case 'buff':
+        player.buffs = player.buffs.filter((b) => b.id !== effect.id);
+        player.buffs.push({ id: effect.id, modifiers: effect.modifiers, remaining: effect.duration });
+        break;
+      case 'decoy':
+        // Where the hero stood when the action started: a dash has not moved them yet (updateMotion runs next step).
+        spawnDecoy(ctx, effect, player.pos, player.radius);
+        break;
+    }
+  }
+
+  // Echo: one chance draw per use, after the use's own hits.
+  if (action.echo && rng.chance(action.echo.chance)) {
+    player.echoes.push({ actionId: action.id, action, timer: action.echo.delay, facing: use.facing, aim: use.aim, ...(special ? { special } : {}) });
+  }
+}
+
+/** How one use (or its echo) is aimed. */
+interface ActionUse {
+  readonly facing: Vec2;
+  readonly aim: Vec2;
+  /** Arc: the every-N-th special swing. */
+  readonly special: boolean;
+}
+
+/**
+ * Echo repeats for one step: timers run down (also while dashing or busy); a due echo fires its action's delivery
+ * from the hero's current position with the facing and aim locked at the original use ('echo' event first). Free:
+ * no cost, charge, cooldown, action time or resource-hit count restart, no self effects (Echo never fits buffs or
+ * movement skills), not counted as a use, never echoes again; an every-N-th special swing repeats as special.
+ */
+export function updateEchoes(ctx: Ctx, dt: number): void {
+  const player = ctx.world.player;
+  if (player.echoes.length === 0) return;
+  const due: PendingEcho[] = [];
+  for (const echo of player.echoes) {
+    echo.timer = echo.timer - dt > TIME_EPSILON ? echo.timer - dt : 0;
+    if (echo.timer <= 0) due.push(echo);
+  }
+  if (due.length === 0) return;
+  player.echoes = player.echoes.filter((e) => !due.includes(e));
+  for (const echo of due) {
+    ctx.events.push({ type: 'echo', actionId: echo.actionId, pos: player.pos, facing: echo.facing });
+    deliver(ctx, echo.action, { facing: echo.facing, aim: echo.aim, special: echo.special === true });
+  }
+}
+
+/** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
+const TIME_EPSILON = 1e-9;
+
+/** Resolves the action's delivery for one use: hits, projectiles, motion, teleport or trap. */
+function deliver(ctx: Ctx, action: ActionDef, use: ActionUse): void {
+  const { world, content, events } = ctx;
+  const player = world.player;
+  const delivery = action.delivery;
   switch (delivery.kind) {
     case 'arc': {
-      const special = delivery.everyNth !== undefined && countUse(player, action.id) % Math.max(1, Math.floor(delivery.everyNth.every)) === 0;
-      const angleDeg = special && delivery.everyNth ? delivery.everyNth.angleDeg : delivery.angleDeg;
-      hitArc(ctx, action, player.pos, player.facing, delivery.radius, angleDeg, {
+      const angleDeg = use.special && delivery.everyNth ? delivery.everyNth.angleDeg : delivery.angleDeg;
+      hitArc(ctx, action, player.pos, use.facing, delivery.radius, angleDeg, {
         ...(delivery.maxTargets !== undefined ? { maxTargets: delivery.maxTargets } : {}),
-        ...(special ? { trigger: 'everyNth' as const } : {}),
+        ...(use.special ? { trigger: 'everyNth' as const } : {}),
       });
       if (action.zone) spawnZone(ctx, action, player.pos, delivery.radius, heroConditionalModifiers(ctx.classDef, player));
       break;
@@ -87,7 +150,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
       const spread = (delivery.spreadDeg * Math.PI) / 180;
       for (let i = 0; i < delivery.count; i++) {
         const offset = delivery.count > 1 ? -spread / 2 + (spread * i) / (delivery.count - 1) : 0;
-        const dir = rotate(player.facing, offset);
+        const dir = rotate(use.facing, offset);
         world.projectiles.push({
           id: world.nextId++,
           owner: 'player',
@@ -111,7 +174,7 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
       player.motion = {
         actionId: action.id,
         action,
-        dir: player.facing,
+        dir: use.facing,
         speed: delivery.speed,
         hitRadius: delivery.hitRadius,
         remaining: delivery.distance,
@@ -119,20 +182,20 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
       };
       break;
     case 'teleport': {
-      const offset = sub(input.aim, player.pos);
-      const dist = Math.min(delivery.range, distance(input.aim, player.pos));
+      const offset = sub(use.aim, player.pos);
+      const dist = Math.min(delivery.range, distance(use.aim, player.pos));
       const from = player.pos;
       movePlayer(player, clampToArena(add(player.pos, scale(normalize(offset), dist)), player.radius, content));
       events.push({ type: 'teleport', from, to: player.pos });
       break;
     }
     case 'trap': {
-      const dist = Math.min(delivery.throwRange, distance(input.aim, player.pos));
+      const dist = Math.min(delivery.throwRange, distance(use.aim, player.pos));
       const trap: Trap = {
         id: world.nextId++,
         actionId: action.id,
         action,
-        pos: clampToArena(add(player.pos, scale(player.facing, dist)), 0, content),
+        pos: clampToArena(add(player.pos, scale(use.facing, dist)), 0, content),
         armTimer: delivery.armTime,
         lifetime: delivery.lifetime,
         triggerRadius: delivery.triggerRadius,
@@ -147,22 +210,6 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
     }
     case 'self':
       break;
-  }
-
-  for (const effect of action.selfEffects ?? []) {
-    switch (effect.kind) {
-      case 'invulnerable':
-        player.invulnerable = Math.max(player.invulnerable, effect.duration);
-        break;
-      case 'buff':
-        player.buffs = player.buffs.filter((b) => b.id !== effect.id);
-        player.buffs.push({ id: effect.id, modifiers: effect.modifiers, remaining: effect.duration });
-        break;
-      case 'decoy':
-        // Where the hero stood when the action started: a dash has not moved them yet (updateMotion runs next step).
-        spawnDecoy(ctx, effect, player.pos, player.radius);
-        break;
-    }
   }
 }
 
@@ -222,6 +269,7 @@ export function updateMotion(ctx: Ctx, dt: number): boolean {
       if (distance(mob.pos, player.pos) > motion.hitRadius + getMob(content, mob.defId).radius) continue;
       motion.hitIds.push(mob.id);
       damageMob(ctx, action, mob);
+      releaseChain(ctx, action, mob, motion.hitIds);
     }
   }
   if (motion.remaining <= 0 || blocked) {
@@ -275,7 +323,85 @@ export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, 
     .sort((a, b) => a.dist - b.dist || a.mob.id - b.mob.id)
     .slice(0, maxTargets ?? Infinity);
   for (const { mob } of targets) damageMob(ctx, action, mob, castModifiers, effectiveness);
-  return targets.map(({ mob }) => mob.id);
+  const hitIds = targets.map(({ mob }) => mob.id);
+  const first = targets[0];
+  if (first) releaseChain(ctx, action, first.mob, hitIds, castModifiers);
+  return hitIds;
+}
+
+/**
+ * Chain Lightning (ActionDef.chainHit, designer decision 2026-10-23): one impact of the action (an area that hit
+ * someone, a projectile contact hit, a dash path hit) releases a bolt from `from` (the first target of the impact,
+ * even if the impact killed it). The path is picked first, from mobs alive now: up to `hops` times the nearest living
+ * mob within chain.range (+ its radius) of the previous point that is not in `excludeIds` (the impact's targets) and
+ * not hit by the bolt yet (ties: lower id). One 'chain' event, then each bolt target is hit by the action at
+ * chain.effectiveness × its rolled base damage, all converted to chain.damageType (it scales with skill level,
+ * passives and damage modifiers like any hit of the action, and can crit, leech, gain resource and fill the stun
+ * bar), without on-hit statuses, knockback, zones or further chains.
+ */
+// DESIGN-TBD: every impact chains, so each projectile of a fan and each Fireball split child releases its own bolt.
+export function releaseChain(ctx: Ctx, action: ActionDef, from: MobState, excludeIds: readonly number[], castModifiers?: readonly Modifier[]): void {
+  const chain = action.chainHit;
+  if (!chain || !action.damage || chain.hops < 1) return;
+  const { world, content } = ctx;
+  const hit = new Set(excludeIds);
+  hit.add(from.id);
+  const path: MobState[] = [];
+  let current = from.pos;
+  for (let hop = 0; hop < Math.floor(chain.hops); hop++) {
+    let best: { mob: MobState; dist: number } | undefined;
+    for (const mob of world.mobs) {
+      if (mob.life <= 0 || hit.has(mob.id)) continue;
+      const dist = distance(current, mob.pos);
+      if (dist > chain.range + getMob(content, mob.defId).radius) continue;
+      if (!best || dist < best.dist || (dist === best.dist && mob.id < best.mob.id)) best = { mob, dist };
+    }
+    if (!best) break;
+    hit.add(best.mob.id);
+    path.push(best.mob);
+    current = best.mob.pos;
+  }
+  if (path.length === 0) return;
+  ctx.events.push({
+    type: 'chain',
+    actionId: action.id,
+    fromId: from.id,
+    targetIds: path.map((m) => m.id),
+    points: [from.pos, ...path.map((m) => m.pos)],
+    damageType: chain.damageType,
+  });
+  const bolt = chainBoltAction(action, chain.damageType);
+  for (const mob of path) damageMob(ctx, bolt, mob, castModifiers, chain.effectiveness);
+}
+
+/** The action a chain bolt hits with: same damage, tags and own modifiers, fully converted, without extras. */
+function chainBoltAction(action: ActionDef, damageType: DamageType): ActionDef {
+  const { onHit, knockback, chainHit, echo, zone, ...rest } = action;
+  void onHit;
+  void knockback;
+  void chainHit;
+  void echo;
+  void zone;
+  return { ...rest, damageConversion: { to: damageType, fraction: 1 } };
+}
+
+/**
+ * Knockback (ActionDef.knockback, designer decision 2026-10-23): pushes a living mob away from the hero (the hero's
+ * facing if they overlap) by distance (× eliteMultiplier for elites) at speed. Bosses are never pushed (no draw).
+ * With a chance: one draw per hit. A new push replaces a running one. Movement: updateMobs (moveKnockback).
+ */
+function applyKnockback(ctx: Ctx, mob: MobState, knockback: KnockbackDef): void {
+  if (mob.life <= 0) return;
+  const def = getMob(ctx.content, mob.defId);
+  if (def.boss) return;
+  if (knockback.chance !== undefined && !ctx.rng.chance(knockback.chance)) return;
+  const dist = knockback.distance * (def.elite ? knockback.eliteMultiplier : 1);
+  if (dist <= 0 || knockback.speed <= 0) return;
+  const player = ctx.world.player;
+  const away = normalize(sub(mob.pos, player.pos));
+  const dir = away.x !== 0 || away.y !== 0 ? away : player.facing;
+  mob.knockback = { dir, speed: knockback.speed, remaining: dist };
+  ctx.events.push({ type: 'knockback', targetId: mob.id, pos: mob.pos, dir, distance: dist });
 }
 
 export interface ExplodeOptions {
@@ -310,6 +436,8 @@ export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, 
  * Fill uses the life actually removed (designer decision 2026-10-22).
  * Every damage hit also puts the hero back in combat for resource decay and may grant class resource
  * (ResourceDef.onHit, see resourceOnHeroHit).
+ * Support extras of the action: damageConversion before scaling, its own leech (ActionDef.leech) added to the
+ * hero's, its stun bar fill bonus, and knockback last (applyKnockback).
  */
 export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifiers?: readonly Modifier[], effectiveness = 1): void {
   const { world, content, classDef, rng, events } = ctx;
@@ -330,7 +458,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
       if (effectiveness !== 1) rolled = scaleDamage(rolled, effectiveness);
       baseCrit = action.damage.critChance;
     }
-    const damage = computeDamage(rolled, mods, action.tags);
+    const damage = computeDamage(rolled, mods, action.tags, action.damageConversion);
     const { critChance, critMultiplier } = critStats(world.player.mechanics, {
       critChance: computeStat(baseCrit, mods, 'critChance', action.tags),
       critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', action.tags),
@@ -340,7 +468,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
     removed = Math.max(0, Math.min(hit.total, mob.life));
     mob.life -= hit.total;
     events.push({ type: 'hit', targetId: mob.id, pos: mob.pos, amount: hit.total, isCrit: hit.isCrit });
-    applyLeech(classDef, world.player, removed);
+    applyLeech(classDef, world.player, removed, action.leech ?? 0);
     resourceOnHeroHit(classDef, world.player, action);
     raw = hit.raw;
   }
@@ -348,8 +476,9 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
   for (const effect of action.onHit ?? []) applyStatus(ctx, mob, effect, hit);
   if (action.damage) {
     const bar = world.player.stunBarStats;
-    if (bar) fillStunBar(ctx, mob, bar, removed);
+    if (bar) fillStunBar(ctx, mob, bar, removed, action.stunBarFillIncreased ?? 0);
   }
+  if (action.knockback) applyKnockback(ctx, mob, action.knockback);
 }
 
 /**

@@ -2,7 +2,7 @@ import type { BaseDamage } from '../combat/damage';
 import { add, distance, rotate, scale } from '../math';
 import { DAMAGE_TYPES, type Modifier, type Tag } from '../stats/types';
 import type { ActionDef, DamageSpec, ProjectileSplit } from './content';
-import { damageMob, explode } from './actions';
+import { damageMob, explode, releaseChain } from './actions';
 import { hitPlayer } from './mobs';
 import { distanceDamageModifier } from './passiveEffects';
 import { getMob, insideArena, type Ctx, type Projectile } from './state';
@@ -54,7 +54,9 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
         return false;
       }
       p.hitIds.push(mob.id);
-      damageMob(ctx, action, mob, hitModifiers(ctx, p, action.tags));
+      const mods = hitModifiers(ctx, p, action.tags);
+      damageMob(ctx, action, mob, mods);
+      releaseChain(ctx, action, mob, p.hitIds, mods);
       if (--p.pierceLeft < 0) {
         splitProjectile(ctx, p, action, p.hitIds);
         return false;

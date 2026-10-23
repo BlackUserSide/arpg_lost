@@ -165,6 +165,18 @@ export interface ActionDef {
   readonly echo?: EchoDef;
   /** Hits push mobs away (SkillGrants.knockback). */
   readonly knockback?: KnockbackDef;
+  /** Part of the action's damage converted to another type before scaling (Ignite support: part → fire). */
+  readonly damageConversion?: DamageConversion;
+}
+
+/**
+ * Damage conversion of a hit: `fraction` (0..1) of every other damage type (rolled base + flat added damage) becomes
+ * `to`, before increased / more scaling, so modifiers of the new type apply to the converted part (and those of the
+ * old type no longer do). Happens before crit and defences.
+ */
+export interface DamageConversion {
+  readonly to: DamageType;
+  readonly fraction: number;
 }
 
 /**
@@ -176,8 +188,11 @@ export interface ActionDef {
  * can crit, leech, gain resource and fill the stun bar, but applies no on-hit statuses, knockback or new chains.
  */
 export interface ChainHitDef {
+  /** Most mobs the bolt hits after the impact. */
   readonly hops: number;
+  /** Max jump distance between the previous target and the next one (plus the next one's radius). */
   readonly range: number;
+  /** Fraction of the action's rolled base damage each bolt hit deals. */
   readonly effectiveness: number;
   readonly damageType: DamageType;
 }

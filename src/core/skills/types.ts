@@ -5,6 +5,7 @@ import type { DamageType, Modifier, SkillTag } from '../stats/types';
 import type {
   ArcEveryNth,
   ChainHitDef,
+  DamageConversion,
   DashLanding,
   Delivery,
   EchoDef,
@@ -140,6 +141,11 @@ export interface SkillChangeSet {
   readonly leech?: number;
   /** Increased stun bar fill of this skill's hits (adds to stunBonus fill; see ActionDef.stunBarFillIncreased). */
   readonly stunBarFillIncreased?: number;
+  /**
+   * Damage conversion of the skill's hits (see DamageConversion). Several sources: the first source's target type;
+   * fractions of sources with that type add up (capped at 1), other types are ignored.
+   */
+  readonly damageConversion?: DamageConversion;
 }
 
 /** What one source gives a single skill: a SkillChangeSet without the targeting (skill levels, supports). */

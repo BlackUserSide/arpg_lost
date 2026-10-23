@@ -5,6 +5,8 @@ import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
 import type { ActionDef, ClassDef, Content, MobDef, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
 import { resolveActions, type ActionSet } from '../skills/params';
 import { skillLevelChangeSets, type SkillProgress } from '../skills/levels';
+import { supportChangeSets } from '../supports/rules';
+import type { SupportRef } from '../supports/types';
 import {
   activeConditionalModifiers,
   deriveStat,
@@ -21,6 +23,28 @@ export const PLAYER_ID = 0;
 export interface Buff {
   readonly id: string;
   readonly modifiers: readonly Modifier[];
+  remaining: number;
+}
+
+/**
+ * A free repeat of an action waiting to fire (Echo support, ActionDef.echo). Fires when `timer` reaches 0, from the
+ * hero's position at that moment with the locked facing / aim (see updateEchoes in actions.ts).
+ */
+export interface PendingEcho {
+  readonly actionId: string;
+  /** The effective action when it was used (snapshot, like Projectile.action). */
+  readonly action: ActionDef;
+  timer: number;
+  readonly facing: Vec2;
+  readonly aim: Vec2;
+  /** Arc actions: the use it repeats was an every-N-th special swing (the echo swings the same angle). */
+  readonly special?: boolean;
+}
+
+/** A mob being pushed (Knockback support): it moves `remaining` more units along `dir` at `speed`. */
+export interface KnockbackState {
+  readonly dir: Vec2;
+  readonly speed: number;
   remaining: number;
 }
 
@@ -84,6 +108,13 @@ export interface PlayerState {
    * Loadout.skills. Kills add skill XP (gainKillXp); a skill level-up rebuilds `actions`. Saved via RunResult.skills.
    */
   skillProgress: Record<string, SkillProgress>;
+  /**
+   * Supports socketed per class skill id, in slot order (Loadout.supports; docs/design/skill-modifiers.md). Fixed for
+   * the run (supports change only in the hub); their change sets are part of `actions`.
+   */
+  supports: Record<string, SupportRef[]>;
+  /** Echo repeats waiting to fire, in order of use. */
+  echoes: PendingEcho[];
   /** Modifiers brought into the run (items, passives); level stats are added on top. */
   gearModifiers: readonly Modifier[];
   /** Permanent modifiers: gear + level. Rebuilt on level-up. */
@@ -160,6 +191,18 @@ export interface MobState {
    * and while it is > 0 the mob counts as slowed (conditions, freeze-if-slowed). Render may read it directly.
    */
   auraSlow: number;
+  /**
+   * Bleed (Bleed support): remaining seconds of the shared timer; absent or 0 = not bleeding. Every bleeding hit adds
+   * a stack and restarts the timer (designer decision 2026-10-23).
+   */
+  bleed?: number;
+  /**
+   * Physical damage per second of each bleed stack, oldest first (at most the effect's maxStacks; a new stack past
+   * the cap replaces the oldest). Their sum is the bleed damage per second. Render: stack count = length.
+   */
+  bleedStacks?: number[];
+  /** Active push (Knockback support); while set the mob neither moves on its own nor attacks. */
+  knockback?: KnockbackState;
 }
 
 export interface Projectile {
@@ -249,6 +292,13 @@ export interface Decoy {
 export interface WorldState {
   time: number;
   rngState: number;
+  /**
+   * Separate seeded stream for loot rolls (support drops), so loot never shifts combat randomness and vice versa.
+   * Derived from the world seed (see createWorld).
+   */
+  lootRngState: number;
+  /** Supports dropped this run, in drop order; granted to the character's tab at the end (grantSupportDrops). */
+  supportDrops: SupportRef[];
   nextId: number;
   player: PlayerState;
   mobs: MobState[];
@@ -303,7 +353,7 @@ export type WorldEvent =
    * A status was applied to (or refreshed on) a living mob; `duration` is its new remaining time. `source`
    * 'stunBar': the stun of a full stun bar (omitted for statuses from hits).
    */
-  | { type: 'status'; targetId: number; pos: Vec2; status: StatusId; duration: number; source?: 'stunBar' }
+  | { type: 'status'; targetId: number; pos: Vec2; status: StatusId; duration: number; source?: 'stunBar'; stacks?: number }
   /** A hero hit changed a living mob's stun bar; `value` is the new fill (0..1; 0 after a full bar stunned and reset). */
   | { type: 'stunBar'; targetId: number; value: number }
   /** The hero retaliated (counterAttack) with `actionId` (the basic attack) at `targetId`; `facing` points at it. */
@@ -325,6 +375,17 @@ export type WorldEvent =
   | { type: 'spawn'; id: number }
   | { type: 'death'; id: number; pos: Vec2 }
   | { type: 'levelUp'; level: number }
+  /** An Echo repeat of `actionId` fired now (free); its delivery events follow. `pos`: the hero. */
+  | { type: 'echo'; actionId: string; pos: Vec2; facing: Vec2 }
+  /**
+   * A Chain Lightning bolt (ActionDef.chainHit) of `actionId`: it started at the impact target `fromId` and hopped
+   * through `targetIds` in order; `points` are the positions from the start target through every hop (bolt line).
+   */
+  | { type: 'chain'; actionId: string; fromId: number; targetIds: number[]; points: Vec2[]; damageType: DamageType }
+  /** A hero hit pushed mob `targetId` from `pos` along `dir` by `distance` (Knockback support). */
+  | { type: 'knockback'; targetId: number; pos: Vec2; dir: Vec2; distance: number }
+  /** Mob `mobId` dropped a support (skill modifier) `defId` of `tier` at `pos`. */
+  | { type: 'supportDrop'; mobId: number; pos: Vec2; defId: string; tier: number }
   /** A class skill reached `level` (one event per level gained); its effective action has already changed. */
   | { type: 'skillLevelUp'; skillId: string; level: number }
   | { type: 'playerDeath' };
@@ -352,15 +413,19 @@ export function getMob(content: Content, id: string): MobDef {
 }
 
 /**
- * What the hero's passive mechanics and skill levels derive once per loadout (PlayerState.actions,
- * PlayerState.stunBarStats). Change sets: passive tree first, then skill levels (incl. level effects).
+ * What the hero's passive mechanics, skill levels and socketed supports derive once per loadout (PlayerState.actions,
+ * PlayerState.stunBarStats). Change sets: passive tree first, then skill levels (incl. level effects), then supports.
  */
 export function deriveFromMechanics(
   content: Content,
   classDef: ClassDef,
-  player: Pick<PlayerState, 'mechanics' | 'skillProgress'>,
+  player: Pick<PlayerState, 'mechanics' | 'skillProgress' | 'supports'>,
 ): Pick<PlayerState, 'actions' | 'stunBarStats'> {
-  const sets = [...skillChangeSets(player.mechanics), ...skillLevelChangeSets(classDef, player.skillProgress, content.skillLevels)];
+  const sets = [
+    ...skillChangeSets(player.mechanics),
+    ...skillLevelChangeSets(classDef, player.skillProgress, content.skillLevels),
+    ...supportChangeSets(classDef, player.supports, content.supports, player.mechanics),
+  ];
   return { actions: resolveActions(classDef, sets), stunBarStats: stunBarStats(player.mechanics) };
 }
 

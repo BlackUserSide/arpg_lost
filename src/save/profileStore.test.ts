@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createCharacter, createProfile } from '../core/progression/profile';
 import type { KeyValueStorage } from '../platform/platform';
 import { itemsData } from '../data/items';
-import { loadProfile, SAVE_KEY, saveProfile } from './profileStore';
+import { loadProfile, SAVE_KEY, SAVE_VERSION, saveProfile } from './profileStore';
 import { classSkillProgress } from '../core/skills/levels';
 import { content } from '../data/index';
 import { skillLevels } from '../data/skillLevels';
@@ -201,7 +201,7 @@ describe('profile store migrations', () => {
     storage.setItem(SAVE_KEY, JSON.stringify(v4));
     const { profile, backupKey } = loadProfile(storage);
     expect(backupKey).toBeUndefined();
-    expect(profile.characters[0]).toEqual({ ...character, skills: {} });
+    expect(profile.characters[0]).toEqual({ ...character, skills: {}, supports: [] });
     expect(classSkillProgress(content.classes.mage!, profile.characters[0]!.skills, skillLevels.rules)).toEqual({
       fireball: { level: 1, xp: 0 },
       frost_nova: { level: 1, xp: 0 },
@@ -230,6 +230,69 @@ describe('profile store migrations', () => {
       frost_nova: { level: 2, xp: 0, supports: ['pierce'] },
       volley: { level: 1, xp: 30 },
     });
+  });
+
+  it('upgrades v5 saves: characters get an empty supports tab, other fields kept', () => {
+    const storage = memoryStorage();
+    const character = {
+      id: 'c1',
+      name: 'Aria',
+      classId: 'mage',
+      level: 7,
+      xp: 40,
+      stats: { runs: 2, deaths: 1, kills: 9, longestRun: 30 },
+      equipment: {},
+      passives: { nodes: [], spec: null, specNodes: [] },
+      skills: { fireball: { level: 2, xp: 10 } },
+    };
+    const v5 = {
+      version: 5,
+      profile: {
+        characters: [character],
+        stash: { items: [] },
+        currency: { shards: 12 },
+        records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 9 },
+        nextCharacterId: 2,
+        nextItemId: 5,
+      },
+    };
+    storage.setItem(SAVE_KEY, JSON.stringify(v5));
+    const { profile, backupKey } = loadProfile(storage);
+    expect(backupKey).toBeUndefined();
+    expect(profile.characters[0]).toEqual({ ...character, supports: [] });
+    expect(profile.nextItemId).toBe(5);
+    expect(SAVE_VERSION).toBe(6);
+  });
+
+  it('round-trips the supports tab and sanitizes it on load (unknown defs, tiers, invalid sockets back to the tab)', () => {
+    const storage = memoryStorage();
+    const profile = createProfile();
+    createCharacter(profile, { name: 'Aria', classId: 'mage' }, rules, ['mage']);
+    profile.characters[0]!.supports = [
+      { id: 's1', defId: 'chain_lightning', tier: 2, socket: { skillId: 'fireball', slot: 0 } },
+      { id: 's2', defId: 'echo', tier: 1 },
+    ];
+    saveProfile(storage, profile);
+    expect(loadProfile(storage).profile).toEqual(profile);
+
+    const raw = JSON.parse(storage.getItem(SAVE_KEY)!) as { profile: { characters: Array<Record<string, unknown>> } };
+    raw.profile.characters[0]!.supports = [
+      { id: 's1', defId: 'chain_lightning', tier: 7, socket: { skillId: 'fireball', slot: 0 } },
+      { id: 's2', defId: 'echo', tier: 1, socket: { skillId: 'teleport', slot: 0 } },
+      { id: 's3', defId: 'removed_support', tier: 1 },
+      { id: 's1', defId: 'echo', tier: 1 },
+      { id: 's4', defId: 'pierce', tier: 0.5, socket: { skillId: 'fireball', slot: 1 } },
+      { id: 's5', defId: 'pure_power', tier: 3, socket: 'broken' },
+      'garbage',
+    ];
+    storage.setItem(SAVE_KEY, JSON.stringify(raw));
+    expect(loadProfile(storage).profile.characters[0]!.supports).toEqual([
+      { id: 's1', defId: 'chain_lightning', tier: 3, socket: { skillId: 'fireball', slot: 0 } },
+      // Echo does not fit movement skills; Pierce does not fit an exploding projectile: both back to the tab.
+      { id: 's2', defId: 'echo', tier: 1 },
+      { id: 's4', defId: 'pierce', tier: 1 },
+      { id: 's5', defId: 'pure_power', tier: 3 },
+    ]);
   });
 
   it('fills partial passives and resets invalid allocations for free, keeping valid ones', () => {

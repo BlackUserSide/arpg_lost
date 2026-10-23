@@ -89,11 +89,11 @@ const PARAM: Record<SkillParam, { name: string; unit: string }> = {
   statusDuration: { name: 'тривалість ефекту', unit: ' с' },
 };
 
-const STATUS: Record<PassiveStatusId, string> = { stun: 'оглушення', slow: 'сповільнення', ignite: 'підпал', freeze: 'заморозку' };
+const STATUS: Record<PassiveStatusId, string> = { stun: 'оглушення', slow: 'сповільнення', ignite: 'підпал', freeze: 'заморозку', bleed: 'кровотечу' };
 /** "тривалість <status>" (genitive). */
-const STATUS_GENITIVE: Record<PassiveStatusId, string> = { stun: 'оглушення', slow: 'сповільнення', ignite: 'підпалу', freeze: 'заморозки' };
+const STATUS_GENITIVE: Record<PassiveStatusId, string> = { stun: 'оглушення', slow: 'сповільнення', ignite: 'підпалу', freeze: 'заморозки', bleed: 'кровотечі' };
 /** "<adjective> вороги" for target-state conditions. */
-const STATUS_TARGET: Record<PassiveStatusId, string> = { stun: 'оглушених', slow: 'сповільнених', ignite: 'підпалених', freeze: 'заморожених' };
+const STATUS_TARGET: Record<PassiveStatusId, string> = { stun: 'оглушених', slow: 'сповільнених', ignite: 'підпалених', freeze: 'заморожених', bleed: 'скривавлених' };
 const DAMAGE_TYPE: Record<string, string> = { physical: 'фізичний', fire: 'вогняний', cold: 'холодний', lightning: 'блискавичний' };
 
 const MINUS = '−';

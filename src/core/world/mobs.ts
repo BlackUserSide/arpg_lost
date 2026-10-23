@@ -2,12 +2,14 @@ import { applyDamageTaken, rollBaseDamage, totalDamage } from '../combat/damage'
 import { applyDamage, resolveHit } from '../combat/hit';
 import type { Defences } from '../combat/mitigation';
 import { add, distance, normalize, scale, sub, vec, type Vec2 } from '../math';
-import type { Rng } from '../rng';
+import { createRng, type Rng } from '../rng';
+import { rollSupportDrop } from '../supports/drops';
+import type { SupportData } from '../supports/types';
 import type { Content, MobDef } from './content';
 import { counterAttack } from './actions';
 import { heroDeathExplosions } from './deathExplosions';
 import { gainKillXp } from './experience';
-import { decayStunBar, tickIgnite } from './statuses';
+import { decayStunBar, tickBleed, tickIgnite } from './statuses';
 import { resourceOnHeroHitTaken } from './resource';
 import { mobTarget } from './zones';
 import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
@@ -21,6 +23,8 @@ export function updateMobs(ctx: Ctx, dt: number): void {
     if (mob.life <= 0) continue;
     tickIgnite(ctx, mob, dt);
     if (mob.life <= 0) continue;
+    tickBleed(ctx, mob, dt);
+    if (mob.life <= 0) continue;
     const def = getMob(content, mob.defId);
     mob.slow = Math.max(0, mob.slow - dt);
     mob.freezeSlow = Math.max(0, mob.freezeSlow - dt);
@@ -31,7 +35,9 @@ export function updateMobs(ctx: Ctx, dt: number): void {
     const disabled = mob.stun > 0 || mob.freeze > 0;
     mob.stun = Math.max(0, mob.stun - dt);
     mob.freeze = Math.max(0, mob.freeze - dt);
-    if (disabled) continue;
+    // Being pushed (Knockback support): the push moves the mob even while stunned; it neither walks nor attacks.
+    const pushed = moveKnockback(mob, def, content, dt);
+    if (disabled || pushed) continue;
     mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor);
 
     // The hero, or a decoy taunting this mob (mobTarget): the mob chases and attacks it the same way.
@@ -76,6 +82,20 @@ export function updateMobs(ctx: Ctx, dt: number): void {
   }
   separateMobs(world, content);
 }
+
+/** Advances a mob's knockback by one step (clamped to the arena). Returns true if it was being pushed this step. */
+function moveKnockback(mob: MobState, def: MobDef, content: Content, dt: number): boolean {
+  const push = mob.knockback;
+  if (!push) return false;
+  const len = Math.min(push.speed * dt, push.remaining);
+  mob.pos = clampToArena(add(mob.pos, scale(push.dir, len)), def.radius, content);
+  push.remaining -= len;
+  if (push.remaining <= TIME_EPSILON) delete mob.knockback;
+  return true;
+}
+
+/** Distances / seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
+const TIME_EPSILON = 1e-9;
 
 /** Fraction of speed removed now: the strongest of the active slow, the trap aura slow and the boss freeze- / stun-slows (0..1). */
 export function slowFraction(mob: MobState, content: Content): number {
@@ -155,17 +175,34 @@ function separateMobs(world: WorldState, content: Content): void {
  * and processed in the same call (their own explosions included); every mob dies once, so chains terminate.
  */
 export function removeDeadMobs(ctx: Ctx): void {
-  const { world, events } = ctx;
+  const { world, events, content } = ctx;
   const queue = world.mobs.filter((mob) => mob.life <= 0);
   if (queue.length === 0) return;
+  // Loot has its own seeded stream (WorldState.lootRngState): drops never shift combat rolls.
+  const loot = content.supports ? createRng(world.lootRngState) : undefined;
   for (let i = 0; i < queue.length; i++) {
     const mob = queue[i]!;
+    const def = getMob(content, mob.defId);
     world.kills++;
     events.push({ type: 'death', id: mob.id, pos: mob.pos });
-    gainKillXp(ctx, getMob(ctx.content, mob.defId).xp);
+    gainKillXp(ctx, def.xp);
+    if (loot && content.supports) dropSupport(ctx, loot, content.supports, mob, def);
     queue.push(...heroDeathExplosions(ctx, mob));
   }
+  if (loot) world.lootRngState = loot.getState();
   world.mobs = world.mobs.filter((mob) => mob.life > 0);
+}
+
+/**
+ * A kill's support drop (docs/design/skill-modifiers.md «Випадіння»): chance by rank (boss / elite / normal), tier by
+ * area level (rollSupportDrop). Recorded in WorldState.supportDrops with a 'supportDrop' event.
+ */
+function dropSupport(ctx: Ctx, loot: Rng, data: SupportData, mob: MobState, def: MobDef): void {
+  const rank = def.boss ? 'boss' : def.elite ? 'elite' : 'normal';
+  const drop = rollSupportDrop(loot, data, rank, ctx.world.areaLevel);
+  if (!drop) return;
+  ctx.world.supportDrops.push(drop);
+  ctx.events.push({ type: 'supportDrop', mobId: mob.id, pos: mob.pos, defId: drop.defId, tier: drop.tier });
 }
 
 export function updateSpawner(ctx: Ctx, dt: number): void {
