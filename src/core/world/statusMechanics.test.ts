@@ -485,7 +485,7 @@ describe('freeze', () => {
 
     run(w, content, idle, 29); // 40 steps: the 0.45 s freeze-slow is over, the nova slow is not
     expect(boss.freezeSlow).toBe(0);
-    expect(conditionTarget(boss)).toEqual({ stun: 0, slow: boss.slow, ignite: 0, freeze: 0 });
+    expect(conditionTarget(boss)).toEqual({ stun: 0, slow: boss.slow, ignite: 0, freeze: 0, bleed: 0 });
     const x = boss.pos.x;
     expect(hits(step(w, FLAME, content, DT), boss.id)).toEqual([20]); // just slowed now
     expect(x - boss.pos.x).toBeCloseTo(60 * DT, 9); // 100 × (1 − 0.4)

@@ -26,8 +26,14 @@ export function rollBaseDamage(rng: Rng, base: BaseDamage): DamageByType {
  * - Flat `damage` mods add damage of their `damageType` if the skill has all their tags.
  * - Increased/more `damage` mods apply to a damage portion if the skill tags plus that
  *   portion's damage type contain all their tags ("+20% fire damage" hits only the fire part).
+ * - `conversion` moves a fraction of the other types (base + flat) into one type before the scaling step.
  */
-export function computeDamage(base: DamageByType, mods: readonly Modifier[], skillTags: readonly SkillTag[]): DamageByType {
+export function computeDamage(
+  base: DamageByType,
+  mods: readonly Modifier[],
+  skillTags: readonly SkillTag[],
+  conversion?: { readonly to: DamageType; readonly fraction: number },
+): DamageByType {
   const skillContext = new Set<Tag>(skillTags);
   const flatByType: DamageByType = {};
   for (const mod of mods) {
@@ -36,15 +42,30 @@ export function computeDamage(base: DamageByType, mods: readonly Modifier[], ski
     flatByType[mod.damageType] = (flatByType[mod.damageType] ?? 0) + mod.value;
   }
 
+  const unscaled: DamageByType = {};
+  for (const type of DAMAGE_TYPES) unscaled[type] = (base[type] ?? 0) + (flatByType[type] ?? 0);
+  if (conversion && conversion.fraction > 0) convertDamage(unscaled, conversion.to, Math.min(1, conversion.fraction));
+
   const scalingMods = mods.filter((mod) => mod.kind !== 'flat');
   const result: DamageByType = {};
   for (const type of DAMAGE_TYPES) {
-    const amount = (base[type] ?? 0) + (flatByType[type] ?? 0);
+    const amount = unscaled[type] ?? 0;
     if (amount <= 0) continue;
     const totals = collectModifiers(scalingMods, 'damage', new Set<Tag>([...skillTags, type]));
     result[type] = applyTotals(amount, totals);
   }
   return result;
+}
+
+/** Moves `fraction` of every damage type other than `to` into `to` (in place). */
+function convertDamage(damage: DamageByType, to: DamageType, fraction: number): void {
+  for (const type of DAMAGE_TYPES) {
+    if (type === to) continue;
+    const moved = (damage[type] ?? 0) * fraction;
+    if (moved <= 0) continue;
+    damage[type] = (damage[type] ?? 0) - moved;
+    damage[to] = (damage[to] ?? 0) + moved;
+  }
 }
 
 /**

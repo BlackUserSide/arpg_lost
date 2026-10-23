@@ -8,6 +8,7 @@ import { grantArenaRewards, type RunRewards } from '../core/items/inventory';
 import { heroMechanics, heroModifiers } from '../core/progression/hero';
 import { applyRunResult, findCharacter } from '../core/progression/profile';
 import { createRng } from '../core/rng';
+import { grantSupportDrops, socketedSupports, type SupportRewards } from '../core/supports/tab';
 import { itemsData } from '../data/items';
 import { content } from '../data';
 import { passiveTree } from '../data/passives';
@@ -15,6 +16,10 @@ import { getApp } from './app';
 import { CombatFx, STUN_BAR_FLASH, statusLook } from './combatFx';
 import { Hud } from './hud';
 import { SkillFx } from './skillFx';
+import { SupportFx } from './supportFx';
+import { supportIcon, tierColor, tierColorNum } from './supportIcons';
+import { supportsWord, supportTitle } from './supportText';
+import { plural, shardsWord } from './passiveText';
 import { resourceNames } from './resourceText';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
@@ -114,9 +119,16 @@ interface DotTally {
   amount: number;
   timer: number;
   pos: Vec2;
+  /** The last tick came from bleeding (red number) rather than ignite / ground zones. */
+  bleed: boolean;
 }
 
-type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot';
+type OverlayKind = 'pause' | 'death' | 'results';
+
+/** Lift of Chain Lightning bolts above the floor (screen px): roughly mid-body. */
+const CHAIN_HEIGHT = 30;
+
+type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot' | 'bleed';
 
 /** Visual-only damage number looks. */
 const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: number; rise: number; duration: number }> = {
@@ -124,6 +136,7 @@ const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: numb
   crit: { color: '#ffd23f', size: 26, rise: 30, duration: 600 },
   player: { color: '#ff5050', size: 18, rise: 30, duration: 600 },
   dot: { color: '#ff9a3c', size: 14, rise: 20, duration: 700 },
+  bleed: { color: '#ff6a6a', size: 14, rise: 20, duration: 700 },
 };
 
 type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'P' | 'ESC', Phaser.Input.Keyboard.Key>;
@@ -138,6 +151,15 @@ export class IsoArenaScene extends Phaser.Scene {
   private classId = 'warrior';
   private runRecorded = false;
   private rewards: RunRewards | undefined;
+  /** Supports granted at the end of a survived run (undefined: not granted, e.g. the hero died). */
+  private supportRewards: SupportRewards | undefined;
+  /** The run was ended alive from the pause menu: the results screen is up. */
+  private finished = false;
+  private overlayKind: OverlayKind | undefined;
+  /** Support modifier visuals (chain bolts, echo ghost, knockback, bleed, support drops). */
+  private supportFx!: SupportFx;
+  private readonly chainXs: number[] = [];
+  private readonly chainYs: number[] = [];
   private world!: WorldState;
   private accumulator = 0;
   private alpha = 1;
@@ -166,6 +188,7 @@ export class IsoArenaScene extends Phaser.Scene {
   /** The tab lost focus or was hidden while the tree was open. */
   private pauseAfterTree = false;
   private treeButton: Phaser.GameObjects.Container | undefined;
+  private pauseButton: Phaser.GameObjects.Container | undefined;
   private banner!: PointsBanner;
   /** The current mouse/touch press started on a HUD control, so it must not attack. */
   private uiPress = false;
@@ -201,11 +224,16 @@ export class IsoArenaScene extends Phaser.Scene {
           mechanics: heroMechanics(character, passiveTree),
           weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon),
           skills: character.skills,
+          // Socketed skill modifiers change the skills for the whole run (they are swapped only in the hub).
+          supports: socketedSupports(character),
         }
       : {};
     // TEMPORARY (until maps, 0.4): the arena's area level follows the hero, so there is no low-area penalty.
     this.world = createWorld(this.content, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout);
     this.rewards = undefined;
+    this.supportRewards = undefined;
+    this.finished = false;
+    this.overlayKind = undefined;
     // Dev-only handle for debugging and automated checks from the console.
     if (import.meta.env.DEV) (window as unknown as { __world: WorldState }).__world = this.world;
     this.accumulator = 0;
@@ -234,6 +262,7 @@ export class IsoArenaScene extends Phaser.Scene {
     this.fxTop = this.add.graphics().setDepth(4000);
     this.combatFx = new CombatFx(this);
     this.skillFx = new SkillFx(this);
+    this.supportFx = new SupportFx(this);
     const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
     this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
     this.light = this.createLight();
@@ -253,13 +282,14 @@ export class IsoArenaScene extends Phaser.Scene {
     this.pauseAfterTree = false;
     this.uiPress = false;
     this.treeButton = undefined;
+    this.pauseButton = undefined;
     this.banner = new PointsBanner(this, () => this.openTree(), { depth: HUD_UI_DEPTH, pinned: true });
     this.layoutTreeUi();
     this.refreshBanner();
     const relayout = (): void => {
       this.hud.layout(this.scale.width, this.scale.height);
       this.layoutTreeUi();
-      if (this.overlay) this.showOverlay(this.paused ? 'pause' : 'death');
+      if (this.overlay && this.overlayKind) this.showOverlay(this.overlayKind);
     };
     this.scale.on('resize', relayout);
     // Leaving the tab pauses the run (and tells the portal gameplay stopped).
@@ -290,17 +320,27 @@ export class IsoArenaScene extends Phaser.Scene {
     });
   }
 
-  /** Talents button (top right) and the unspent points banner under the run info. */
+  /** Talents and pause buttons (top right) and the unspent points banner under the run info. */
   private layoutTreeUi(): void {
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
     const margin = compact ? 12 : 22;
     this.treeButton?.destroy();
     this.treeButton = undefined;
+    this.pauseButton?.destroy();
+    this.pauseButton = undefined;
     if (!findCharacter(getApp(this).profile, this.characterId)) return;
     const w = compact ? 96 : 150;
     const h = compact ? 34 : 40;
     this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? 'Таланти' : 'Таланти (P)', () => this.openTree()), HUD_UI_DEPTH);
+    // Touch has no Esc: the pause menu (and with it "end the run", which keeps found supports) needs a button.
+    const pw = compact ? 84 : 120;
+    this.pauseButton = pinToScreen(
+      makeButton(this, width - margin - w - 10 - pw / 2, margin + 18, pw, h, compact ? 'Пауза' : 'Пауза (Esc)', () => {
+        if (!this.paused && !this.treeOpen && !this.world.player.dead) this.setPaused(true);
+      }),
+      HUD_UI_DEPTH,
+    );
     const bh = compact ? 34 : 40;
     this.banner.setPosition(width / 2, margin + 36 + 10 + bh / 2, bh);
   }
@@ -381,60 +421,126 @@ export class IsoArenaScene extends Phaser.Scene {
     }
   }
 
-  private showOverlay(kind: 'pause' | 'death'): void {
+  /**
+   * Pause menu, death screen and run results. The results of a run list the loot; supports found during the run
+   * are granted only if the hero survived (designer decision 2026-10-23), so the death screen says they are lost.
+   */
+  private showOverlay(kind: OverlayKind): void {
     this.hideOverlay();
+    this.overlayKind = kind;
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
     const objects: Phaser.GameObjects.GameObject[] = [];
     const shade = this.add.rectangle(width / 2, height / 2, width, height, kind === 'death' ? 0x1a0303 : 0x000000, kind === 'death' ? 0.6 : 0.55).setInteractive();
     objects.push(shade);
-    const panelW = Math.min(420, width - 32);
-    const lootLines = kind === 'death' ? Math.max(1, this.rewards?.items.length ?? 0) : 0;
-    const panelH = (kind === 'death' ? (compact ? 254 : 294) : compact ? 190 : 220) + lootLines * 24 + (kind === 'death' ? 24 : 0);
+    const panelW = Math.min(440, width - 32);
+
+    // Body lines first, so the panel can size (and on short screens trim the lists) before anything is placed.
+    interface Line {
+      text: string;
+      size: number;
+      color: string;
+      bold?: boolean;
+      heading?: boolean;
+      /** Extra space above the line. */
+      gap?: number;
+    }
+    const lines: Line[] = [];
+    const lineH = (l: Line): number => (l.heading ? 28 : l.size + 8) + (l.gap ?? 0);
+    const pending = this.world.supportDrops.length;
+    if (kind === 'pause') {
+      if (pending > 0) {
+        lines.push({ text: `Знайдено: ${supportsWord(pending)}`, size: UI.size.body, color: UI.goldBrightText, bold: true });
+        lines.push({ text: 'Їх буде втрачено, якщо герой загине', size: UI.size.small, color: UI.muted });
+      }
+    } else {
+      const seconds = Math.floor(this.world.time);
+      const kills = this.world.kills;
+      const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+      lines.push({ text: `${time}  ·  ${kills} ${plural(kills, 'вбивство', 'вбивства', 'вбивств')}  ·  хвиля ${this.world.spawn.wave}`, size: UI.size.body, color: UI.muted });
+      lines.push({ text: `+${Math.floor(this.world.xpGained)} досвіду  ·  рівень ${this.world.player.level}`, size: UI.size.body, color: UI.goldBrightText, bold: true });
+      lines.push({ text: 'Здобич', size: 20, color: UI.goldBrightText, heading: true, gap: 8 });
+      const list: Line[] = [];
+      for (const item of this.rewards?.items ?? []) {
+        const base = itemsData.bases[item.baseId];
+        const name = item.rarity === 'rare' ? `${item.name} (${base?.name ?? ''})` : item.name;
+        list.push({ text: `${name}  ·  рівень ${item.level}`, size: UI.size.body, color: UI.rarity[item.rarity], bold: true });
+      }
+      const kept = this.supportRewards?.kept ?? [];
+      const supports = this.content.supports?.supports ?? {};
+      for (const s of kept) {
+        const def = supports[s.defId];
+        if (def) list.push({ text: `◆ ${supportTitle(def, s.tier)}`, size: UI.size.body, color: tierColor(s.tier), bold: true });
+      }
+      const notes: Line[] = [];
+      if (list.length === 0) {
+        const per = itemsData.rules.arenaRewards.killsPerItem;
+        notes.push({ text: `Цього разу нічого: предмет за кожні ${per} вбивств`, size: UI.size.small, color: UI.muted });
+      }
+      if (this.rewards && this.rewards.salvaged > 0) notes.push({ text: `Сховище повне: розібрано на ${shardsWord(this.rewards.salvaged)}`, size: UI.size.small, color: UI.muted });
+      const salvaged = this.supportRewards?.salvagedCount ?? 0;
+      if (salvaged > 0) {
+        notes.push({ text: `Вкладка модифікаторів повна: ${supportsWord(salvaged)} → ${shardsWord(this.supportRewards?.shards ?? 0)}`, size: UI.size.small, color: UI.muted });
+      }
+      if (kind === 'death' && pending > 0) notes.push({ text: `Втрачено: ${supportsWord(pending)} (герой загинув)`, size: UI.size.small, color: UI.danger, bold: true });
+      // Trim the list on short screens: the fixed parts always fit, the rest becomes "і ще N".
+      const fixedH = (compact ? 64 : 82) + (compact ? 96 : 116) + [...lines, ...notes].reduce((h, l) => h + lineH(l), 0);
+      const room = Math.max(1, Math.floor((height - 16 - fixedH) / (UI.size.body + 8)));
+      if (list.length > room) {
+        const hidden = list.length - (room - 1);
+        list.length = room - 1;
+        list.push({ text: `і ще ${hidden}…`, size: UI.size.small, color: UI.muted });
+      }
+      lines.push(...list, ...notes);
+    }
+    const headerH = compact ? 64 : 82;
+    const footerH = compact ? 96 : 116;
+    const bodyH = lines.reduce((h, l) => h + lineH(l), 0);
+    const panelH = Math.min(height - 8, headerH + bodyH + footerH);
     objects.push(makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel'));
     const top = height / 2 - panelH / 2;
-    const title = heading(this, width / 2, top + (compact ? 30 : 40), kind === 'death' ? 'You have fallen' : 'Paused', compact ? 28 : 36).setOrigin(0.5);
-    objects.push(title);
-    let y = top + (compact ? 64 : 82);
-    if (kind === 'death') {
-      const seconds = Math.floor(this.world.time);
-      const summary = `Survived ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}  ·  ${this.world.kills} kills  ·  wave ${this.world.spawn.wave}`;
-      objects.push(label(this, width / 2, y, summary, UI.size.body, UI.muted).setOrigin(0.5, 0));
-      y += 24;
-      const xpLine = `+${Math.floor(this.world.xpGained)} XP  ·  level ${this.world.player.level}`;
-      objects.push(label(this, width / 2, y, xpLine, UI.size.body, UI.goldBrightText, true).setOrigin(0.5, 0));
-      y += 34;
-      objects.push(heading(this, width / 2, y, 'Loot', 20).setOrigin(0.5, 0));
-      y += 28;
-      const items = this.rewards?.items ?? [];
-      if (items.length === 0) {
-        const per = itemsData.rules.arenaRewards.killsPerItem;
-        objects.push(label(this, width / 2, y, `Nothing this time — every ${per} kills earn an item`, UI.size.small, UI.muted).setOrigin(0.5, 0));
-      }
-      for (const item of items) {
-        const base = itemsData.bases[item.baseId];
-        const line = item.rarity === 'rare' ? `${item.name} (${base?.name ?? ''})` : item.name;
-        objects.push(label(this, width / 2, y, `${line}  ·  ilvl ${item.level}`, UI.size.body, UI.rarity[item.rarity], true).setOrigin(0.5, 0));
-        y += 24;
-      }
-      if (this.rewards && this.rewards.salvaged > 0) {
-        objects.push(label(this, width / 2, y, `Stash full: salvaged for ${this.rewards.salvaged} shards`, UI.size.small, UI.muted).setOrigin(0.5, 0));
-      }
+    const titleText = kind === 'death' ? 'Ви загинули' : kind === 'results' ? 'Забіг завершено' : 'Пауза';
+    objects.push(heading(this, width / 2, top + (compact ? 30 : 40), titleText, compact ? 28 : 36).setOrigin(0.5));
+    let y = top + headerH;
+    for (const l of lines) {
+      y += l.gap ?? 0;
+      const text = l.heading ? heading(this, width / 2, y, l.text, l.size) : label(this, width / 2, y, l.text, l.size, l.color, l.bold);
+      objects.push(text.setOrigin(0.5, 0));
+      if (!l.heading) text.setWordWrapWidth(panelW - 32).setAlign('center');
+      y += lineH(l) - (l.gap ?? 0);
     }
+
     const buttonW = Math.min(200, (panelW - 48) / 2);
+    const buttonH = compact ? 44 : 52;
     const buttonY = top + panelH - (compact ? 40 : 50);
     const primary =
-      kind === 'death'
-        ? makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, compact ? 44 : 52, 'Try again', () => this.restartRun(), 'primary')
-        : makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, compact ? 44 : 52, 'Resume', () => this.setPaused(false), 'primary');
-    const menu = makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, compact ? 44 : 52, 'Main menu', () => this.leaveToMenu());
-    objects.push(primary, menu);
-    objects.push(label(this, width / 2, buttonY - (compact ? 40 : 48), kind === 'death' ? 'R — try again   ·   Esc — menu' : 'Esc — resume', UI.size.small, UI.muted).setOrigin(0.5));
+      kind === 'pause'
+        ? makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, 'Продовжити', () => this.setPaused(false), 'primary')
+        : makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, kind === 'death' ? 'Ще раз' : 'Новий забіг', () => this.restartRun(), 'primary');
+    const secondary =
+      kind === 'pause'
+        ? makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, 'Завершити забіг', () => this.finishRun())
+        : makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, 'До хабу', () => this.leaveToMenu());
+    objects.push(primary, secondary);
+    const hint = kind === 'pause' ? 'Esc — продовжити' : `R — ${kind === 'death' ? 'ще раз' : 'новий забіг'}   ·   Esc — до хабу`;
+    objects.push(label(this, width / 2, buttonY - (compact ? 38 : 46), hint, UI.size.small, UI.muted).setOrigin(0.5));
     for (const o of objects) pinToScreen(o, 20000);
     const fadeTargets = objects.slice(1);
     for (const o of fadeTargets) (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha(0);
     this.tweens.add({ targets: fadeTargets, alpha: 1, duration: kind === 'death' ? 600 : 150, delay: kind === 'death' ? 500 : 0 });
     this.overlay = objects;
+  }
+
+  /** Ends a living run from the pause menu: records it (survived: found supports are kept) and shows the results. */
+  private finishRun(): void {
+    if (this.world.player.dead) {
+      this.leaveToMenu();
+      return;
+    }
+    this.finished = true;
+    this.paused = true;
+    this.endRun();
+    this.showOverlay('results');
   }
 
   private hideOverlay(): void {
@@ -467,13 +573,20 @@ export class IsoArenaScene extends Phaser.Scene {
       skills: this.world.player.skillProgress,
     });
     this.rewards = grantArenaRewards(app.profile, createRng((Math.random() * 2 ** 32) >>> 0), { kills: this.world.kills, wave: this.world.spawn.wave }, itemsData);
+    // Designer decision 2026-10-23: supports found in a run are lost if the hero died.
+    const character = findCharacter(app.profile, this.characterId);
+    const supportsData = this.content.supports;
+    if (character && supportsData && !this.world.player.dead) {
+      this.supportRewards = grantSupportDrops(app.profile, character, this.world.supportDrops, supportsData);
+    }
     app.save();
     // PROPOSAL (docs/design/account.md): until bosses/loot exist, the first finished run is the "meaningful moment".
     if (!app.user && app.loginHint === 'none') app.loginHint = 'pending';
   }
 
   override update(_time: number, deltaMs: number): void {
-    const dead = this.world.player.dead;
+    // A dead hero or a finished run: only the results screen is left (Esc → hub, R → new run).
+    const dead = this.world.player.dead || this.finished;
     // While the tree is open (modes that do not pause), its screen owns the keys.
     if (!this.treeOpen) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
@@ -612,7 +725,7 @@ export class IsoArenaScene extends Phaser.Scene {
         break;
       }
       case 'dot':
-        this.addDotTally(event.targetId, event.pos, event.amount);
+        this.addDotTally(event.targetId, event.pos, event.amount, event.status === 'bleed');
         break;
       case 'teleport':
         this.areas.push({ origin: event.from, facing: vec(1, 0), radius: 40, angleDeg: 360, color: 0xb58cff, ttl: AREA_TTL * 2 });
@@ -652,6 +765,39 @@ export class IsoArenaScene extends Phaser.Scene {
       case 'skillLevelUp':
         this.hud.skillLevelUp(event.skillId);
         break;
+      case 'echo': {
+        // The free repeat: the hero swings again (its own action event follows) with a violet afterimage.
+        const from = toScreen(event.pos);
+        const ahead = toScreen(vec(event.pos.x + event.facing.x, event.pos.y + event.facing.y));
+        this.supportFx.echo(this.hero.sprite, ahead.x - from.x, ahead.y - from.y);
+        break;
+      }
+      case 'chain': {
+        const xs = this.chainXs;
+        const ys = this.chainYs;
+        xs.length = 0;
+        ys.length = 0;
+        for (const p of event.points) {
+          const s = toScreen(p);
+          xs.push(s.x);
+          ys.push(s.y - CHAIN_HEIGHT);
+        }
+        this.supportFx.chain(xs, ys);
+        break;
+      }
+      case 'knockback': {
+        const s = toScreen(event.pos);
+        const end = toScreen(vec(event.pos.x + event.dir.x * event.distance, event.pos.y + event.dir.y * event.distance));
+        this.supportFx.knockback(s.x, s.y, end.x - s.x, end.y - s.y, Math.hypot(end.x - s.x, end.y - s.y));
+        break;
+      }
+      case 'supportDrop': {
+        const def = this.content.supports?.supports[event.defId];
+        if (!def) break;
+        const s = toScreen(event.pos);
+        this.supportFx.supportDrop(s.x, s.y, supportIcon(this, def, event.tier), `◆ ${supportTitle(def, event.tier)}`, tierColor(event.tier), tierColorNum(event.tier));
+        break;
+      }
       case 'levelUp':
         this.showLevelUp(event.level);
         this.refreshBanner();
@@ -738,14 +884,15 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   /** Adds damage-over-time style damage (ignite, ground zone ticks) to the mob's pending small number. */
-  private addDotTally(targetId: number, pos: Vec2, amount: number): void {
+  private addDotTally(targetId: number, pos: Vec2, amount: number, bleed = false): void {
     let tally = this.dotTallies.get(targetId);
     if (!tally) {
-      tally = { amount: 0, timer: DOT_NUMBER_INTERVAL, pos };
+      tally = { amount: 0, timer: DOT_NUMBER_INTERVAL, pos, bleed };
       this.dotTallies.set(targetId, tally);
     }
     tally.amount += amount;
     tally.pos = pos;
+    tally.bleed = bleed;
   }
 
   /**
@@ -758,7 +905,8 @@ export class IsoArenaScene extends Phaser.Scene {
       const tally = this.dotTallies.get(mob.id);
       if (!tally) continue;
       tally.timer -= dt;
-      if (mob.ignite <= 0) this.flushDotTally(mob.id);
+      // Ignite and bleed keep ticking: their damage is summed; zone ticks (neither) show at once.
+      if (mob.ignite <= 0 && (mob.bleed ?? 0) <= 0) this.flushDotTally(mob.id);
       else if (tally.timer <= 0) {
         // Still burning: show the sum and keep counting in the same tally.
         this.showDotTally(tally);
@@ -777,7 +925,7 @@ export class IsoArenaScene extends Phaser.Scene {
   }
 
   private showDotTally(tally: DotTally): void {
-    if (tally.amount >= 0.5) this.spawnDamageNumber(tally.pos, tally.amount, 'dot');
+    if (tally.amount >= 0.5) this.spawnDamageNumber(tally.pos, tally.amount, tally.bleed ? 'bleed' : 'dot');
   }
 
   private updateActor(actor: Actor, dt: number, speed: number, referenceSpeed: number, frozen = false): void {
@@ -909,9 +1057,20 @@ export class IsoArenaScene extends Phaser.Scene {
       else actor.stunBarShown += (mob.stunBar - actor.stunBarShown) * (1 - Math.exp(-STUN_BAR_SMOOTHING * dt));
       if (actor.stunBarShown < 0.002 && mob.stunBar <= 0) actor.stunBarShown = 0;
       this.combatFx.drawStunBar(top, actor.sprite.x, actor.sprite.y, actor.stunBarShown, actor.stunBarFlash);
+      // Bleed (support): one drop per stack under the feet.
+      const bleedStacks = (mob.bleed ?? 0) > 0 ? (mob.bleedStacks?.length ?? 0) : 0;
+      if (bleedStacks > 0) this.supportFx.drawBleed(top, actor.sprite.x, actor.sprite.y, bleedStacks, this.world.time, mob.id);
+      // Knockback (support): speed streaks while the mob is still flying.
+      const knock = mob.knockback;
+      if (knock && knock.remaining > 0) {
+        const ahead = toScreen(vec(mob.pos.x + knock.dir.x, mob.pos.y + knock.dir.y));
+        const here = toScreen(mob.pos);
+        this.supportFx.drawKnockbackTrail(top, actor.sprite.x, actor.sprite.y, ahead.x - here.x, ahead.y - here.y);
+      }
     }
     this.combatFx.drawBursts(g, top, dt);
     this.skillFx.drawBursts(g, top, dt);
+    this.supportFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y);
 
     for (const p of this.world.projectiles) {
       const pos = this.interpolated(p.id, p.pos);
@@ -1012,11 +1171,12 @@ export class IsoArenaScene extends Phaser.Scene {
     const style = DAMAGE_NUMBER_STYLES[kind];
     const screen = toScreen(pos);
     const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
-    // Ignite numbers sit a bit lower and to the side so they do not cover hit numbers.
-    const dx = kind === 'dot' ? 14 + Math.random() * 10 : (Math.random() - 0.5) * 16;
+    // Damage over time numbers (ignite, bleed) sit a bit lower and to the side so they do not cover hit numbers.
+    const small = kind === 'dot' || kind === 'bleed';
+    const dx = small ? 14 + Math.random() * 10 : (Math.random() - 0.5) * 16;
     text
-      .setText(String(kind === 'dot' ? Math.max(1, Math.round(amount)) : Math.round(amount)))
-      .setPosition(screen.x + dx, screen.y - (kind === 'dot' ? 56 : 70))
+      .setText(String(small ? Math.max(1, Math.round(amount)) : Math.round(amount)))
+      .setPosition(screen.x + dx, screen.y - (small ? 56 : 70))
       .setColor(style.color)
       .setFontSize(style.size)
       .setAlpha(1)

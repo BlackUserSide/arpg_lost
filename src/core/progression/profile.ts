@@ -6,6 +6,7 @@ import type { Item } from '../items/types';
 import { createAllocation } from '../passives/allocation';
 import type { PassiveAllocation } from '../passives/types';
 import type { SkillProgress } from '../skills/levels';
+import type { SupportItem } from '../supports/types';
 
 export interface ProfileRules {
   readonly maxCharacters: number;
@@ -32,9 +33,14 @@ export interface CharacterRecord {
   passives: PassiveAllocation;
   /**
    * Per class skill id: level and XP (docs/design/classes.md «Рівні скілів»). A missing skill is level 1, 0 XP
-   * (read through classSkillProgress / skillLevelInfo). Support slots will join level / xp in these records.
+   * (read through classSkillProgress / skillLevelInfo).
    */
   skills: Record<string, SkillProgress>;
+  /**
+   * The supports tab (docs/design/skill-modifiers.md): every support the character owns, socketed ones included
+   * (SupportItem.socket). At most SupportRules.tabSize; operations in core/supports/tab.ts. Empty for a new hero.
+   */
+  supports: SupportItem[];
 }
 
 export interface ProfileRecords {
@@ -110,6 +116,8 @@ export function createCharacter(
     equipment: {},
     passives: createAllocation(),
     skills: {},
+    // Designer decision 2026-10-23: no starter supports, only loot.
+    supports: [],
   };
   profile.characters.push(character);
   return { ok: true, character };
@@ -137,7 +145,7 @@ export function applyRunResult(profile: Profile, characterId: string, run: RunRe
     character.level = run.progress.level;
     character.xp = run.progress.xp;
   }
-  // Only level / xp are replaced, so other per-skill fields (support slots later) are kept.
+  // Only level / xp are replaced, so other per-skill fields are kept.
   for (const [id, progress] of Object.entries(run.skills ?? {})) {
     character.skills[id] = { ...character.skills[id], level: progress.level, xp: progress.xp };
   }

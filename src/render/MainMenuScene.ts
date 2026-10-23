@@ -7,6 +7,7 @@ import { getApp, type App } from './app';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
+import type { SupportsSceneData } from './SupportsScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { confirmDialog, fadeIn, heading, label, makeAvatar, makeButton, makeCard, makeFrame, UI } from './ui';
 
@@ -83,16 +84,24 @@ export class MainMenuScene extends Phaser.Scene {
 
     const playY = height - (compact ? 40 : 64);
     if (selected) {
-      this.root.add(makeButton(this, sceneW / 2, playY, compact ? 200 : 260, compact ? 48 : 60, 'Enter the dungeon', () => this.play(selected.id), 'primary'));
+      // [Inventory] [Enter] [Talents] [Modifiers]: the build screens side by side, the row centred as a whole.
       const playW = compact ? 200 : 260;
-      const invW = compact ? 110 : 150;
-      this.root.add(makeButton(this, sceneW / 2 - playW / 2 - 12 - invW / 2, playY, invW, compact ? 40 : 48, 'Inventory', () => this.scene.start('inventory', { characterId: selected.id })));
-      this.root.add(makeButton(this, sceneW / 2 + playW / 2 + 12 + invW / 2, playY, invW, compact ? 40 : 48, 'Таланти', () => this.openTree(selected.id)));
-      this.root.add(label(this, sceneW / 2, playY - (compact ? 38 : 50), selected.name, compact ? UI.size.body : UI.size.heading, UI.goldBrightText, true).setOrigin(0.5));
+      const sideW = compact ? 108 : 150;
+      const modW = compact ? 120 : 160;
+      const gap = compact ? 8 : 12;
+      const rowLeft = sceneW / 2 - (sideW * 2 + modW + playW + gap * 3) / 2;
+      const playX = rowLeft + sideW + gap + playW / 2;
+      const sideH = compact ? 40 : 48;
+      this.root.add(makeButton(this, playX, playY, playW, compact ? 48 : 60, 'Enter the dungeon', () => this.play(selected.id), 'primary'));
+      this.root.add(makeButton(this, rowLeft + sideW / 2, playY, sideW, sideH, 'Inventory', () => this.scene.start('inventory', { characterId: selected.id })));
+      const talentsX = playX + playW / 2 + gap + sideW / 2;
+      this.root.add(makeButton(this, talentsX, playY, sideW, sideH, 'Таланти', () => this.openTree(selected.id)));
+      this.root.add(makeButton(this, talentsX + sideW / 2 + gap + modW / 2, playY, modW, sideH, 'Модифікатори', () => this.openSupports(selected.id)));
+      this.root.add(label(this, playX, playY - (compact ? 38 : 50), selected.name, compact ? UI.size.body : UI.size.heading, UI.goldBrightText, true).setOrigin(0.5));
       // Unspent passive points: a call to action above the hero's name.
       const { points, specPoints } = unspentPoints(passiveTree, selected);
       const banner = new PointsBanner(this, () => this.openTree(selected.id), { depth: 5, pinned: false, parent: this.root });
-      banner.setPosition(sceneW / 2, playY - (compact ? 76 : 98), compact ? 34 : 40);
+      banner.setPosition(playX, playY - (compact ? 76 : 98), compact ? 34 : 40);
       banner.setPoints(points, specPoints);
     } else {
       this.root.add(label(this, sceneW / 2, playY, 'Create a character to begin', UI.size.heading, UI.muted).setOrigin(0.5));
@@ -224,6 +233,11 @@ export class MainMenuScene extends Phaser.Scene {
   private openTree(characterId: string): void {
     const data: PassiveTreeSceneData = { characterId, returnTo: 'main-menu' };
     this.scene.start('passive-tree', data);
+  }
+
+  private openSupports(characterId: string): void {
+    const data: SupportsSceneData = { characterId, returnTo: 'main-menu' };
+    this.scene.start('supports', data);
   }
 
   private play(characterId: string): void {

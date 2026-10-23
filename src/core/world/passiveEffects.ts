@@ -101,6 +101,7 @@ export interface ConditionTarget {
   readonly slow: number;
   readonly ignite: number;
   readonly freeze: number;
+  readonly bleed: number;
 }
 
 /** True if the target has the status now. */

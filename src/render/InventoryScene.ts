@@ -17,6 +17,7 @@ import { itemIcon } from './itemIcons';
 import { describeItem } from './itemText';
 import { resourceNames } from './resourceText';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
+import type { SupportsSceneData } from './SupportsScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
@@ -139,6 +140,12 @@ export class InventoryScene extends Phaser.Scene {
       makeButton(this, width - m - 60 - 120, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, 'Таланти', () => {
         const data: PassiveTreeSceneData = { characterId: character.id, returnTo: 'inventory' };
         this.scene.start('passive-tree', data);
+      }),
+    );
+    this.root.add(
+      makeButton(this, width - m - 60 - 250, titleH / 2 + (compact ? 0 : 4), 130, compact ? 34 : 42, 'Модифікатори', () => {
+        const data: SupportsSceneData = { characterId: character.id, returnTo: 'inventory' };
+        this.scene.start('supports', data);
       }),
     );
 

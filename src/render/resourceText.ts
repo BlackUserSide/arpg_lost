@@ -24,3 +24,9 @@ export const GENERIC_RESOURCE: ResourceNames = { en: 'Resource', uk: 'Ресур
 export function resourceNames(id: string | undefined): ResourceNames {
   return (id !== undefined ? RESOURCE_NAMES[id] : undefined) ?? GENERIC_RESOURCE;
 }
+
+/** Displayed resource cost: costs can be fractional (×1.3 × 1.4), shown as a whole number, never 0 for a real cost. */
+export function formatCost(amount: number): string {
+  if (amount <= 0) return '0';
+  return String(Math.max(1, Math.round(amount)));
+}

@@ -13,7 +13,7 @@ import {
   type WorldState,
 } from '../core/world/world';
 import { skillIcon } from './hudIcons';
-import { resourceNames } from './resourceText';
+import { formatCost, resourceNames } from './resourceText';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
 // In-run HUD: Diablo-style life / class-resource orbs, skill bar with cooldown shutters, XP bar, run info, buffs.
@@ -56,6 +56,8 @@ const PIP_ON = 0xf3d58a;
 const PIP_OFF = 0x2e2414;
 const PIP_RIM = 0xc89a3a;
 const SKILL_XP = 0x7fc8e8;
+/** Cost caption colour when skills cost life (Blood Magic). */
+const LIFE_COST_TEXT = '#ff8a7a';
 
 interface Orb {
   ring: Phaser.GameObjects.Image;
@@ -74,7 +76,7 @@ interface Slot {
   icon: Phaser.GameObjects.Image;
   key: Phaser.GameObjects.Text;
   cdText: Phaser.GameObjects.Text;
-  /** Life price shown when skills cost life (Blood Magic); empty otherwise. */
+  /** Price of one use, top-left: in the class resource, or ♥ life under Blood Magic; empty when free. */
   costText: Phaser.GameObjects.Text;
   /** The action is paid with life. */
   lifeCost: boolean;
@@ -203,7 +205,7 @@ export class Hud {
       key.setStroke('#000', 3);
       const cdText = label(scene, 0, 0, '', 18, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 3);
       cdText.setStroke('#000', 4);
-      const costText = label(scene, 0, 0, '', 12, '#ff8a7a', true).setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH + 3);
+      const costText = label(scene, 0, 0, '', 12, LIFE_COST_TEXT, true).setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH + 3);
       costText.setStroke('#000', 3);
       const chargeBadge = scene.add.circle(0, 0, 10, 0x1a1408, 0.92).setStrokeStyle(2, 0xc89a3a, 1).setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
       const chargeText = label(scene, 0, 0, '', 13, UI.goldBrightText, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 4).setVisible(false);
@@ -327,10 +329,13 @@ export class Hud {
     if (this.costsFor !== p.mechanics) {
       // Prices only change with the hero's mechanics, not every frame.
       this.costsFor = p.mechanics;
+      // Costs come from the effective action (supports multiply them, so they can be fractional: shown rounded).
       for (const slot of this.slots) {
         const cost = actionCost(p.mechanics, slot.action.resourceCost);
         slot.lifeCost = cost.pool === 'life';
-        slot.costText.setText(slot.lifeCost && cost.amount > 0 ? `♥${Math.round(cost.amount)}` : '');
+        if (cost.amount <= 0) slot.costText.setText('');
+        else if (slot.lifeCost) slot.costText.setText(`♥${formatCost(cost.amount)}`).setColor(LIFE_COST_TEXT);
+        else slot.costText.setText(formatCost(cost.amount)).setColor(this.resourceLook.text);
       }
     }
     const s = this.shutters.clear();

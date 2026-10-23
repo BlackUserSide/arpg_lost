@@ -1,11 +1,12 @@
 import { add, clamp, normalize, scale, sub, vec } from '../math';
 import { createRng } from '../rng';
 import { computeStat } from '../stats/modifiers';
-import { performAction, pickAction, updateMotion } from './actions';
+import { performAction, pickAction, updateEchoes, updateMotion } from './actions';
 import type { PassiveMechanic } from '../passives/types';
 import type { Modifier } from '../stats/types';
 import { levelModifiers } from '../progression/levels';
 import { classSkillProgress, type SkillProgress } from '../skills/levels';
+import type { SupportRef } from '../supports/types';
 import type { Content, WeaponDef } from './content';
 import { decayLeech, spawnPools } from './experience';
 import { advanceCombatIdle, spawnCombatIdle, tickResource } from './resource';
@@ -19,6 +20,8 @@ export * from './state';
 export { applyLeech, recoverLife, setLoadoutModifiers } from './experience';
 export { inCombat, maxResource, recoverResource } from './resource';
 export { canAfford } from './actions';
+export { supportChangeSets, supportFits, supportTier } from '../supports/rules';
+export type { SupportRef } from '../supports/types';
 export { actionReady, availableCharges, chargeInfo, maxCharges, type ChargeInfo } from './charges';
 export {
   actionCost,
@@ -60,7 +63,15 @@ export interface Loadout {
    * (sanitized by classSkillProgress). Ignored without Content.skillLevels.
    */
   readonly skills?: Readonly<Record<string, Readonly<SkillProgress>>>;
+  /**
+   * Socketed supports per class skill id, in slot order (socketedSupports(character)). Ignored without
+   * Content.supports; invalid entries (unknown, incompatible, duplicates, past the slot count) do nothing.
+   */
+  readonly supports?: Readonly<Record<string, readonly SupportRef[]>>;
 }
+
+/** Mixed into the world seed for the loot stream (WorldState.lootRngState); structural, not balance. */
+const LOOT_STREAM = 0x9e3779b9;
 
 /** `areaLevel` defaults to the hero's level. */
 export function createWorld(content: Content, classId: string, seed: number, loadout: Loadout = {}, areaLevel = loadout.level ?? 1): WorldState {
@@ -70,6 +81,8 @@ export function createWorld(content: Content, classId: string, seed: number, loa
   const levelMods = levelModifiers(level, content.progression);
   const mechanics = [...(loadout.mechanics ?? [])];
   const skillProgress = content.skillLevels ? classSkillProgress(classDef, loadout.skills, content.skillLevels.rules) : {};
+  const supports: Record<string, SupportRef[]> = {};
+  for (const [skillId, refs] of Object.entries(loadout.supports ?? {})) supports[skillId] = refs.map((r) => ({ defId: r.defId, tier: r.tier }));
   const player: PlayerState = {
     id: PLAYER_ID,
     classId,
@@ -92,7 +105,9 @@ export function createWorld(content: Content, classId: string, seed: number, loa
     levelModifiers: levelMods,
     mechanics,
     skillProgress,
-    ...deriveFromMechanics(content, classDef, { mechanics, skillProgress }),
+    supports,
+    echoes: [],
+    ...deriveFromMechanics(content, classDef, { mechanics, skillProgress, supports }),
     stillTime: 0,
     leechRecent: 0,
     counterCooldown: 0,
@@ -107,6 +122,8 @@ export function createWorld(content: Content, classId: string, seed: number, loa
   return {
     time: 0,
     rngState: seed >>> 0,
+    lootRngState: (seed ^ LOOT_STREAM) >>> 0,
+    supportDrops: [],
     nextId: 1,
     player,
     mobs: [],
@@ -167,6 +184,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   const recovery = computeStat(1, allModifiers(classDef, player), 'cooldownRecovery');
   tickCooldowns(player, dt, recovery);
 
+  updateEchoes(ctx, dt);
   if (updateMotion(ctx, dt)) return;
 
   const move = normalize(input.move);

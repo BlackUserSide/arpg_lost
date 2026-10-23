@@ -306,7 +306,7 @@ describe('bosses are not stunned by ordinary stuns', () => {
     expect(boss.stun).toBe(0);
     expect(boss.stunSlow).toBe(1.2);
     expect(ctx.events).toEqual([{ type: 'status', targetId: boss.id, pos: vec(600, 500), status: 'stun', duration: 1.2 }]);
-    expect(conditionTarget(boss)).toEqual({ stun: 1.2, slow: 1.2, ignite: 0, freeze: 0 });
+    expect(conditionTarget(boss)).toEqual({ stun: 1.2, slow: 1.2, ignite: 0, freeze: 0, bleed: 0 });
     expect(slowFraction(boss, content)).toBe(0.5);
     // It keeps walking at half speed (100 → 50 px/s).
     step(world, idle, content, DT);

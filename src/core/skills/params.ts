@@ -1,11 +1,11 @@
 // Effective skill definitions: base action data + skill changes (passive tree, then skill levels with their
-// level-3 effects; support modifiers later feed the same SkillChangeSet list). Pure; the result is plain ActionDef data,
+// level-3 effects, then support modifiers: one SkillChangeSet list). Pure; the result is plain ActionDef data,
 // computed once per loadout (see PlayerState.actions), never per hit.
 
 import type { ActionDef, ClassDef, Delivery, SelfEffect, StatusEffect, StatusId } from '../world/content';
 import { STATUS_IDS } from '../world/content';
 import type { Modifier } from '../stats/types';
-import type { SkillChangeSet, SkillGrants, SkillParam } from './types';
+import type { AnySkillParam, SkillChangeSet, SkillGrants } from './types';
 
 /** The hero's actions after changes; same shape as the class data. */
 export interface ActionSet {
@@ -49,18 +49,22 @@ function applyTotal(base: number, total: ParamTotal | undefined): number {
  * - projectileSpeed: projectile speed.
  * - armTime / triggerRadius: trap.
  * - statusDuration: every on-hit status of the action (including statuses added by change sets).
+ * - angle: arc angle (capped at 360; an every-N-th angle is its own data). spread: projectile fan (capped at 360).
+ * - projectileCount: projectiles per use (rounded down, at least 1). hitRadius: a dash's path hit width.
  */
-function applyDelivery(d: Delivery, p: (param: SkillParam, base: number) => number, grants: SkillGrants): Delivery {
+function applyDelivery(d: Delivery, p: (param: AnySkillParam, base: number) => number, grants: SkillGrants): Delivery {
   switch (d.kind) {
     case 'arc': {
       const everyNth = d.everyNth ?? grants.everyNth;
-      return { ...d, radius: p('radius', d.radius), ...(everyNth ? { everyNth } : {}) };
+      return { ...d, radius: p('radius', d.radius), angleDeg: Math.min(FULL_CIRCLE_DEG, p('angle', d.angleDeg)), ...(everyNth ? { everyNth } : {}) };
     }
     case 'projectile': {
       const explode = d.explodeRadius !== undefined ? { explodeRadius: p('explodeRadius', d.explodeRadius) } : {};
       const split = d.split ?? grants.projectileSplit;
       return {
         ...d,
+        count: Math.max(1, Math.floor(p('projectileCount', d.count))),
+        spreadDeg: Math.min(FULL_CIRCLE_DEG, p('spread', d.spreadDeg)),
         range: p('range', d.range),
         speed: p('projectileSpeed', d.speed),
         pierce: Math.floor(p('pierce', d.pierce)),
@@ -87,12 +91,16 @@ function applyDelivery(d: Delivery, p: (param: SkillParam, base: number) => numb
       return { ...d, range: p('range', d.range) };
     case 'dash': {
       const landing = d.landing ?? grants.dashLanding;
-      return landing ? { ...d, landing: { ...landing, radius: p('radius', landing.radius) } } : d;
+      const hitRadius = p('hitRadius', d.hitRadius);
+      return { ...d, hitRadius, ...(landing ? { landing: { ...landing, radius: p('radius', landing.radius) } } : {}) };
     }
     case 'self':
       return d;
   }
 }
+
+/** Degrees in a full circle: the cap of angle params (structural). */
+const FULL_CIRCLE_DEG = 360;
 
 const COMBAT_STATUSES: ReadonlySet<string> = new Set(STATUS_IDS);
 
@@ -112,6 +120,9 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
   let dashLanding: SkillGrants['dashLanding'];
   let projectileSplit: SkillGrants['projectileSplit'];
   let groundZone: SkillGrants['groundZone'];
+  let chainHit: SkillGrants['chainHit'];
+  let echo: SkillGrants['echo'];
+  let knockback: SkillGrants['knockback'];
   for (const { grants } of sets) {
     if (!grants) continue;
     if (grants.charges !== undefined) charges = Math.max(charges ?? 0, grants.charges);
@@ -122,6 +133,9 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
     dashLanding ??= grants.dashLanding;
     projectileSplit ??= grants.projectileSplit;
     groundZone ??= grants.groundZone;
+    chainHit ??= grants.chainHit;
+    echo ??= grants.echo;
+    knockback ??= grants.knockback;
   }
   return {
     ...(charges !== undefined ? { charges } : {}),
@@ -132,6 +146,9 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
     ...(dashLanding ? { dashLanding } : {}),
     ...(projectileSplit ? { projectileSplit } : {}),
     ...(groundZone ? { groundZone } : {}),
+    ...(chainHit ? { chainHit } : {}),
+    ...(echo ? { echo } : {}),
+    ...(knockback ? { knockback } : {}),
   };
 }
 
@@ -141,18 +158,31 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
  * base value with all matching changes summed (add and increased combine like stats). Returns `action` itself when nothing matches.
  * Added statuses that combat does not implement are skipped. Duration changes also scale a freeze's bossDuration.
  * Stat modifiers of the sets (SkillChangeSet.modifiers) are appended to ActionDef.modifiers (the action's own).
+ * Resource cost multipliers of the sets multiply (designer decision 2026-10-23); leech and stun bar fill add up;
+ * damage conversions combine as described at SkillChangeSet.damageConversion (the action's own comes first).
  */
 export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]): ActionDef {
   const matching = sets.filter((s) => skillMatches(action, s));
   if (matching.length === 0) return action;
 
-  const totals = new Map<SkillParam, ParamTotal>();
+  const totals = new Map<AnySkillParam, ParamTotal>();
   const buffModifiers: Modifier[] = [];
   const ownModifiers: Modifier[] = [...(action.modifiers ?? [])];
   const addedSelfEffects: SelfEffect[] = [];
   const addedOnHit: StatusEffect[] = [];
   const perStatus = new Map<string, ParamTotal>();
+  let costMultiplier = 1;
+  let leech = action.leech ?? 0;
+  let stunBarFill = action.stunBarFillIncreased ?? 0;
+  let conversion = action.damageConversion;
   for (const set of matching) {
+    costMultiplier *= set.resourceCostMultiplier ?? 1;
+    leech += set.leech ?? 0;
+    stunBarFill += set.stunBarFillIncreased ?? 0;
+    const c = set.damageConversion;
+    if (c && (!conversion || conversion.to === c.to)) {
+      conversion = { to: c.to, fraction: Math.min(1, (conversion?.fraction ?? 0) + c.fraction) };
+    }
     for (const c of set.changes ?? []) {
       const t = totals.get(c.param) ?? { add: 0, increased: 0 };
       t.add += c.add ?? 0;
@@ -176,13 +206,14 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
         duration: s.duration,
         ...(s.magnitude !== undefined ? { magnitude: s.magnitude } : {}),
         ...(s.chance !== undefined ? { chance: s.chance } : {}),
+        ...(s.maxStacks !== undefined ? { maxStacks: s.maxStacks } : {}),
         ...(s.requiresStatus !== undefined ? { requiresStatus: s.requiresStatus } : {}),
         ...(s.requiresDamageType !== undefined ? { requiresDamageType: s.requiresDamageType } : {}),
         ...(s.bossDuration !== undefined ? { bossDuration: s.bossDuration } : {}),
       });
     }
   }
-  const p = (param: SkillParam, base: number): number => applyTotal(base, totals.get(param));
+  const p = (param: AnySkillParam, base: number): number => applyTotal(base, totals.get(param));
   const grants = combineGrants(matching);
   // A granted charge count replaces the action's own (the higher of the two wins); `charges` changes add on top.
   const baseCharges = Math.max(grants.charges ?? 0, action.charges ?? 1);
@@ -203,9 +234,13 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
   });
   const selfEffects = addedSelfEffects.length > 0 ? [...(scaledSelfEffects ?? []), ...addedSelfEffects] : scaledSelfEffects;
   const zone = action.zone ?? grants.groundZone;
+  const chainHit = action.chainHit ?? grants.chainHit;
+  const echo = action.echo ?? grants.echo;
+  const knockback = action.knockback ?? grants.knockback;
 
   return {
     ...action,
+    resourceCost: Math.max(0, action.resourceCost * costMultiplier),
     cooldown: p('cooldown', action.cooldown),
     ...(charges !== 1 || action.charges !== undefined ? { charges } : {}),
     delivery: applyDelivery(action.delivery, p, grants),
@@ -213,6 +248,12 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
     ...(selfEffects ? { selfEffects } : {}),
     ...(ownModifiers.length > 0 ? { modifiers: ownModifiers } : {}),
     ...(zone ? { zone } : {}),
+    ...(leech !== 0 ? { leech } : {}),
+    ...(stunBarFill !== 0 ? { stunBarFillIncreased: stunBarFill } : {}),
+    ...(chainHit ? { chainHit } : {}),
+    ...(echo ? { echo } : {}),
+    ...(knockback ? { knockback } : {}),
+    ...(conversion ? { damageConversion: conversion } : {}),
   };
 }
 

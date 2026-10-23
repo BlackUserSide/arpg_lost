@@ -4,12 +4,17 @@ import { createProfile, type Profile } from '../core/progression/profile';
 import { passiveTree } from '../data/passives';
 import { skillLevels } from '../data/skillLevels';
 import { readSkillProgress, type SkillLevelRules, type SkillProgress } from '../core/skills/levels';
+import { validateSockets } from '../core/supports/tab';
+import type { SupportData, SupportItem } from '../core/supports/types';
+import type { ClassDef } from '../core/world/content';
+import { classes } from '../data/classes';
+import { supportsData } from '../data/supports';
 import type { KeyValueStorage } from '../platform/platform';
 
 // Versioned profile persistence. Bump SAVE_VERSION and add a migration whenever the Profile shape changes.
 
 export const SAVE_KEY = 'arpg.profile';
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 interface SaveFile {
   version: number;
@@ -50,6 +55,11 @@ const migrations: Record<number, (profile: unknown) => unknown> = {
     const p = data as { characters?: Array<Record<string, unknown>> };
     return { ...p, characters: (p.characters ?? []).map((c) => ({ skills: {}, ...c })) };
   },
+  // v6: skill modifiers (supports). Characters get an empty supports tab (no starter supports, designer decision 2026-10-23).
+  5: (data) => {
+    const p = data as { characters?: Array<Record<string, unknown>> };
+    return { ...p, characters: (p.characters ?? []).map((c) => ({ supports: [], ...c })) };
+  },
 };
 
 const V4_AFFIX_RENAMES: Readonly<Record<string, string>> = { mana_flat: 'resource_flat', mana_regen: 'resource_regen' };
@@ -87,8 +97,23 @@ export interface LoadResult {
   backupKey?: string;
 }
 
-/** `tree` is used to validate passive allocations; a character with an invalid one gets a free full reset. */
-export function loadProfile(storage: KeyValueStorage, tree: PassiveTreeData = passiveTree, skillRules: SkillLevelRules = skillLevels.rules): LoadResult {
+/** Data the supports tab is validated against on load (see normalizeSupports). */
+export interface SupportValidation {
+  readonly classes: Readonly<Record<string, ClassDef>>;
+  readonly supports: SupportData;
+}
+
+/**
+ * `tree` is used to validate passive allocations; a character with an invalid one gets a free full reset.
+ * `supportCheck`: supports of unknown defs are dropped, tiers clamped, and socketed supports that are no longer valid
+ * (unknown skill, bad slot, duplicate, lost compatibility) return to the tab.
+ */
+export function loadProfile(
+  storage: KeyValueStorage,
+  tree: PassiveTreeData = passiveTree,
+  skillRules: SkillLevelRules = skillLevels.rules,
+  supportCheck: SupportValidation = { classes, supports: supportsData },
+): LoadResult {
   const raw = storage.getItem(SAVE_KEY);
   if (!raw) return { profile: createProfile() };
   try {
@@ -100,7 +125,7 @@ export function loadProfile(storage: KeyValueStorage, tree: PassiveTreeData = pa
       if (!migrate) throw new Error(`No migration from version ${v}`);
       data = migrate(data);
     }
-    const profile = normalize(data, skillRules);
+    const profile = normalize(data, skillRules, supportCheck);
     resetInvalidPassives(profile, tree);
     return { profile };
   } catch {
@@ -116,13 +141,19 @@ export function saveProfile(storage: KeyValueStorage, profile: Profile): void {
 }
 
 /** Fills fields missing from older or partial saves with defaults. */
-function normalize(data: unknown, skillRules: SkillLevelRules): Profile {
+function normalize(data: unknown, skillRules: SkillLevelRules, supportCheck: SupportValidation): Profile {
   if (typeof data !== 'object' || data === null) throw new Error('Profile is not an object');
   const base = createProfile();
   const p = data as Partial<Profile>;
   if (!Array.isArray(p.characters)) throw new Error('Profile has no characters array');
   return {
-    characters: p.characters.map((c) => ({ ...c, equipment: c.equipment ?? {}, passives: normalizePassives(c.passives), skills: normalizeSkills(c.skills, skillRules) })),
+    characters: p.characters.map((c) => ({
+      ...c,
+      equipment: c.equipment ?? {},
+      passives: normalizePassives(c.passives),
+      skills: normalizeSkills(c.skills, skillRules),
+      supports: normalizeSupports(c.supports, supportCheck.classes[c.classId], supportCheck.supports),
+    })),
     stash: p.stash ?? base.stash,
     currency: p.currency ?? base.currency,
     records: { ...base.records, ...p.records },
@@ -142,6 +173,35 @@ function normalizeSkills(raw: unknown, rules: SkillLevelRules): Record<string, S
     if (typeof record !== 'object' || record === null || Array.isArray(record)) continue;
     out[id] = { ...(record as object), ...readSkillProgress(record, rules) };
   }
+  return out;
+}
+
+/**
+ * The supports tab, sanitized: entries without a string id, with an unknown def or duplicated ids are dropped; tiers
+ * are clamped to the def's tiers (whole); malformed sockets are removed, then validateSockets returns every socketed
+ * support that is no longer valid to the tab (designer decision 2026-10-23). Without class data nothing stays socketed.
+ */
+// Over-cap tabs (tampering) are kept as is; trimming them is part of the save-validation backlog item (roadmap 0.4).
+function normalizeSupports(raw: unknown, classDef: ClassDef | undefined, data: SupportData): SupportItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SupportItem[] = [];
+  const ids = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const e = entry as Partial<Record<keyof SupportItem, unknown>>;
+    if (typeof e.id !== 'string' || ids.has(e.id) || typeof e.defId !== 'string') continue;
+    const def = data.supports[e.defId];
+    if (!def || def.tiers.length === 0) continue;
+    const rawTier = typeof e.tier === 'number' && Number.isFinite(e.tier) ? Math.floor(e.tier) : 1;
+    const item: SupportItem = { id: e.id, defId: e.defId, tier: Math.min(def.tiers.length, Math.max(1, rawTier)) };
+    const socket = e.socket as { skillId?: unknown; slot?: unknown } | undefined;
+    if (classDef && typeof socket === 'object' && socket !== null && typeof socket.skillId === 'string' && typeof socket.slot === 'number') {
+      item.socket = { skillId: socket.skillId, slot: socket.slot };
+    }
+    ids.add(e.id);
+    out.push(item);
+  }
+  if (classDef) validateSockets({ supports: out }, classDef, data);
   return out;
 }
 

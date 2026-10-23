@@ -194,12 +194,16 @@ function leechCap(classDef: ClassDef, player: PlayerState, maxPerSecond: number)
  * lifeLeech: restores a fraction of `damage` (a hit the hero dealt) to the life recovery pool (ES under
  * lifeToEnergyShield), limited by the per-second cap (see PlayerState.leechRecent). Returns the amount restored.
  * `damage` is the life actually removed from the target (no overkill; designer decision 2026-10-22).
+ * `actionLeech`: the hit's own leech fraction (ActionDef.leech, Vampirism support), added to the mechanics' fraction.
+ * The per-second cap comes from the lifeLeech mechanics only; without one, action leech is uncapped.
  */
-export function applyLeech(classDef: ClassDef, player: PlayerState, damage: number): number {
-  const leech = leechStats(player.mechanics);
-  if (!leech || player.dead || damage <= 0) return 0;
-  const room = Math.max(0, leechCap(classDef, player, leech.maxPerSecond) - player.leechRecent);
-  const restored = recoverLife(classDef, player, Math.min(damage * leech.fraction, room));
+// Designer decision: Vampirism (support) leech is uncapped without the lifeLeech keystone; with it, shares its cap.
+export function applyLeech(classDef: ClassDef, player: PlayerState, damage: number, actionLeech = 0): number {
+  const mechanic = leechStats(player.mechanics);
+  const fraction = (mechanic?.fraction ?? 0) + Math.max(0, actionLeech);
+  if (fraction <= 0 || player.dead || damage <= 0) return 0;
+  const room = Math.max(0, leechCap(classDef, player, mechanic?.maxPerSecond ?? Infinity) - player.leechRecent);
+  const restored = recoverLife(classDef, player, Math.min(damage * fraction, room));
   player.leechRecent += restored;
   return restored;
 }
