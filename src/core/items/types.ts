@@ -77,7 +77,7 @@ export interface LootRules {
   /** Off until character levels exist (M3); requirements still show in tooltips. */
   readonly enforceLevelRequirement: boolean;
   /** Temporary arena rewards until runs end with a chest (docs/design/maps.md). */
-  readonly arenaRewards: { readonly killsPerItem: number; readonly maxItems: number; readonly wavesPerItemLevel: number; readonly maxItemLevel: number };
+  readonly arenaRewards: { readonly killsPerItem: number; readonly maxItems: number; readonly wavesPerItemLevel: number; readonly maxBonusLevels: number };
   readonly rareNameWords: { readonly first: readonly string[]; readonly second: readonly string[] };
 }
 

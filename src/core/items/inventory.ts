@@ -79,11 +79,14 @@ export interface RunRewards {
   readonly salvaged: number;
 }
 
-/** Temporary arena rewards: items by kills, item level by waves survived. Adds them to the stash. */
-export function grantArenaRewards(profile: Profile, rng: Rng, run: { kills: number; wave: number }, data: ItemsData): RunRewards {
+/**
+ * Temporary arena rewards: items by kills. Item level = area level + a bonus for waves survived, capped (designer
+ * decision 2026-10-23: an item is never more than area level + 3, docs/design/maps.md). Adds them to the stash.
+ */
+export function grantArenaRewards(profile: Profile, rng: Rng, run: { kills: number; wave: number; areaLevel: number }, data: ItemsData): RunRewards {
   const r = data.rules.arenaRewards;
   const count = Math.min(r.maxItems, Math.floor(run.kills / r.killsPerItem));
-  const itemLevel = Math.min(r.maxItemLevel, 1 + Math.floor(run.wave / r.wavesPerItemLevel));
+  const itemLevel = Math.max(1, run.areaLevel) + Math.min(r.maxBonusLevels, Math.floor(run.wave / r.wavesPerItemLevel));
   const items: Item[] = [];
   let salvaged = 0;
   for (let i = 0; i < count; i++) {
