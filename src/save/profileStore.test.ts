@@ -337,6 +337,34 @@ describe('profile store migrations', () => {
     expect(profile.currency).toEqual({ shards: 3 });
   });
 
+  it('loads items without a craft counter as is (no migration, reads as 0) and sanitizes present counters', () => {
+    const storage = memoryStorage();
+    const profile = createProfile();
+    createCharacter(profile, { name: 'Aria', classId: 'mage' }, rules, ['mage']);
+    const base = { baseId: 'iron_ring', level: 1, rarity: 'magic' as const, name: '', affixes: [{ affixId: 'life_flat', tier: 5, value: 10 }] };
+    profile.stash.items.push({ id: 'i1', ...base }, { id: 'i2', ...base, crafts: 3 }, { id: 'i3', ...base, crafts: -2 }, { id: 'i4', ...base, crafts: 2.6 });
+    profile.characters[0]!.equipment.ring1 = { id: 'i5', ...base, crafts: Number.NaN };
+    profile.characters[0]!.equipment.ring2 = { id: 'i6', ...base, crafts: 4 };
+    saveProfile(storage, profile);
+    expect(SAVE_VERSION).toBe(6);
+    const loaded = loadProfile(storage).profile;
+    expect(loaded.stash.items.map((i) => i.crafts)).toEqual([undefined, 3, 0, 2]);
+    expect(loaded.stash.items[0]).not.toHaveProperty('crafts');
+    // NaN is stored as null by JSON.
+    expect(loaded.characters[0]!.equipment.ring1!.crafts).toBe(0);
+    expect(loaded.characters[0]!.equipment.ring2!.crafts).toBe(4);
+  });
+
+  it('falls back to an empty stash when the stored stash has no item array', () => {
+    for (const stash of [{}, { items: 'oops' }, { items: null }]) {
+      const storage = memoryStorage();
+      storage.setItem(SAVE_KEY, JSON.stringify({ version: SAVE_VERSION, profile: { ...createProfile(), stash } }));
+      const result = loadProfile(storage);
+      expect(result.backupKey).toBeUndefined();
+      expect(result.profile.stash).toEqual({ items: [] });
+    }
+  });
+
   it('round-trips a passive allocation', () => {
     const storage = memoryStorage();
     const profile = createProfile();

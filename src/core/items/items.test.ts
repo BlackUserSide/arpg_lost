@@ -6,6 +6,7 @@ import { canEquip, equippedWeapon, equipmentModifiers, equipSlotsFor } from './e
 import { generateItem, itemModifiers, rollRarity, rollValue } from './generate';
 import { addToStash, equipFromStash, grantArenaRewards, rollItem, salvageFromStash, SALVAGE_CURRENCY, unequipToStash } from './inventory';
 import type { AffixDef, BaseDef, Item, ItemsData } from './types';
+import { itemsData } from '../../data/items';
 
 const tiers = (values: Array<[number, number]>, levels = [1, 10, 20]): AffixDef['tiers'] =>
   values.map(([min, max], i) => ({ min, max, step: 1, minLevel: levels[i] ?? 1 }));
@@ -50,6 +51,35 @@ const make = (seed: number, opts: Parameters<typeof generateItem>[2]): Item => g
 describe('item generation', () => {
   it('is deterministic for a seed', () => {
     expect(make(5, { itemLevel: 20, rarity: 'rare' })).toEqual(make(5, { itemLevel: 20, rarity: 'rare' }));
+  });
+
+  // Golden drops on the real tables: a refactor that changes seeded drop output must fail here. Update only when
+  // data/items.ts or the generation rules change on purpose.
+  it('pins seeded drops on the real item data', () => {
+    const real = (seed: number, opts: Parameters<typeof generateItem>[2]): Item => generateItem(createRng(seed), 'x', opts, itemsData);
+    expect(real(7, { itemLevel: 20, rarity: 'rare' })).toEqual({
+      id: 'x', baseId: 'rusty_sword', level: 20, rarity: 'rare', name: 'Dusk Crown', implicit: 0.13,
+      affixes: [
+        { affixId: 'added_lightning', tier: 4, value: 4 },
+        { affixId: 'spell_damage_inc', tier: 5, value: 0.11 },
+        { affixId: 'crit_multiplier', tier: 5, value: 0.12 },
+      ],
+    });
+    expect(real(5, { itemLevel: 20 })).toEqual({
+      id: 'x', baseId: 'iron_greaves', level: 20, rarity: 'magic', name: '', implicit: 0.05, armour: 6,
+      affixes: [{ affixId: 'cold_res', tier: 3, value: 0.21 }],
+    });
+    expect(real(11, { itemLevel: 20 })).toEqual({
+      id: 'x', baseId: 'scale_robe', level: 20, rarity: 'normal', name: '', implicit: 22, armour: 36, energyShield: 29, affixes: [],
+    });
+    expect(real(9, { itemLevel: 12, luck: 0.5 })).toEqual({
+      id: 'x', baseId: 'driftwood_wand', level: 12, rarity: 'rare', name: 'Blood Whisper', implicit: 0.07,
+      affixes: [
+        { affixId: 'added_cold', tier: 5, value: 2 },
+        { affixId: 'spell_damage_inc', tier: 5, value: 0.13 },
+        { affixId: 'crit_chance', tier: 5, value: 0.16 },
+      ],
+    });
   });
 
   it('respects rarity affix counts, prefix/suffix caps and unique groups', () => {
