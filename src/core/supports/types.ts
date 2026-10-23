@@ -22,6 +22,11 @@ export interface SupportCompatibility {
   readonly damaging?: boolean;
   /** True: projectile skills that explode on impact do not qualify (Pierce would do nothing for them). */
   readonly nonExploding?: boolean;
+  /**
+   * True: only skills without a cooldown in their data (used back to back). Cast Speed would do nothing for a skill
+   * whose use rate is set by its cooldown (designer decision 2026-10-23).
+   */
+  readonly noCooldown?: boolean;
 }
 
 /**

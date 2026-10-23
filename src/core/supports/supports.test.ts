@@ -101,12 +101,25 @@ describe('support data (src/data/supports.ts)', () => {
     // Any skill that hits (designer decision 2026-10-23).
     expect(fits('ignite_on_hit')).toEqual(['cleave', 'shield_charge', 'volley', 'explosive_trap', 'fireball', 'frost_nova']);
     expect(fits('chain_lightning')).toEqual(['fireball', 'frost_nova']);
-    // Spells and attacks (designer decision 2026-10-23); Battle Cry and Roll are neither.
-    expect(fits('cast_speed')).toEqual(['cleave', 'shield_charge', 'volley', 'fireball', 'frost_nova', 'teleport']);
+    // Spells and attacks (designer decision 2026-10-23); Battle Cry and Roll are neither. Not on cooldown-gated
+    // skills, where it does nothing (Shield Charge, Frost Nova, Teleport; designer decision 2026-10-23).
+    expect(fits('cast_speed')).toEqual(['cleave', 'volley', 'fireball']);
     expect(fits('pure_power')).toEqual(['cleave', 'shield_charge', 'volley', 'explosive_trap', 'fireball', 'frost_nova']);
     expect(fits('vampirism')).toEqual(['cleave', 'shield_charge', 'volley', 'explosive_trap', 'fireball', 'frost_nova']);
     // No movement skills or buffs (designer decision 2026-10-23).
     expect(fits('echo')).toEqual(['cleave', 'volley', 'explosive_trap', 'fireball', 'frost_nova']);
+  });
+
+  it('Extra Projectiles gives Volley +2 and Fireball +1 at every tier (designer decision 2026-10-23)', () => {
+    for (let tier = 1; tier <= 3; tier++) {
+      const count = (cls: ClassDef, id: string): number => {
+        const set = supportChangeSet(id, { defId: 'extra_projectiles', tier }, supportsData, []);
+        const d = resolveAction(skill(cls, id), set ? [set] : []).delivery;
+        return d.kind === 'projectile' ? d.count : NaN;
+      };
+      expect(count(ranger, 'volley')).toBe(7);
+      expect(count(mage, 'fireball')).toBe(2);
+    }
   });
 
   it('every support fits at least one skill and every damaging class skill takes some support', () => {
@@ -117,7 +130,7 @@ describe('support data (src/data/supports.ts)', () => {
 });
 
 describe('support rules', () => {
-  it('compatibility: OR of tag sets, deliveries, excluded deliveries, damaging, non-exploding', () => {
+  it('compatibility: OR of tag sets, deliveries, excluded deliveries, damaging, non-exploding, no cooldown', () => {
     const cleave = skill(warrior, 'cleave');
     const cry = skill(warrior, 'battle_cry');
     const fireball = skill(mage, 'fireball');
@@ -128,6 +141,8 @@ describe('support rules', () => {
     expect(supportFits(def('a', { damaging: true }, 1, []), cry)).toBe(false);
     expect(supportFits(def('a', { nonExploding: true }, 1, []), fireball)).toBe(false);
     expect(supportFits(def('a', { nonExploding: true }, 1, []), cleave)).toBe(true);
+    expect(supportFits(def('a', { noCooldown: true }, 1, []), skill(warrior, 'shield_charge'))).toBe(false);
+    expect(supportFits(def('a', { noCooldown: true }, 1, []), cleave)).toBe(true);
   });
 
   it('tiers clamp to the def; unknown defs resolve to nothing', () => {

@@ -19,6 +19,7 @@ export function supportFits(def: SupportDef, skill: ActionDef): boolean {
   if (c.excludeDeliveries?.includes(skill.delivery.kind)) return false;
   if (c.damaging && !skill.damage) return false;
   if (c.nonExploding && skill.delivery.kind === 'projectile' && skill.delivery.explodeRadius !== undefined) return false;
+  if (c.noCooldown && skill.cooldown > 0) return false;
   return true;
 }
 
