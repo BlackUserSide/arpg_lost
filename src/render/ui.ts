@@ -318,7 +318,9 @@ export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel
   }, 'danger');
   const no = makeButton(scene, width / 2 + buttonW / 2 + 15, buttonY, buttonW, 46, cancelLabel, close);
   parts.push(shade, panel, text, yes, no);
-  for (const p of [shade, panel, text, yes, no]) pinToScreen(p, depth);
+  // The message is created before the panel (its height sizes the panel): lift it and the buttons above the panel.
+  for (const p of [shade, panel]) pinToScreen(p, depth);
+  for (const p of [text, yes, no]) pinToScreen(p, depth + 1);
   for (const p of [panel, text, yes, no]) p.setAlpha(0);
   scene.tweens.add({ targets: [panel, text, yes, no], alpha: 1, duration: 160 });
 }

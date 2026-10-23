@@ -103,12 +103,13 @@ export const mapsData: MapsData = {
       // Designer decision: 1–2 elites per room. Their modifiers (fast / fat / fiery / explosive) are package 4;
       // until then an elite is its mob with more life, damage and XP. BALANCE-TBD.
       count: { min: 1, max: 2 },
-      scaling: { life: 4, damage: 1.5, xp: 5 },
+      // radius: matches the size render drew elites at before the body radius lived in core.
+      scaling: { life: 4, damage: 1.5, xp: 5, radius: 1.3 },
     },
     boss: {
       // PLACEHOLDER until the necromancer (package 2): a big zombie. Then mobId 'necromancer' and scaling 1.
       mobId: 'zombie',
-      scaling: { life: 40, damage: 2.5, xp: 30 },
+      scaling: { life: 40, damage: 2.5, xp: 30, radius: 1.75 },
       spawnDelay: 1.5,
     },
   },

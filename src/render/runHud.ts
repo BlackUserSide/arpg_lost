@@ -4,7 +4,7 @@ import type { MapsData, RunState } from '../core/run/types';
 import type { MobState } from '../core/world/world';
 import { t } from '../i18n';
 import { mobName } from './contentText';
-import { formatCountdown, runInfoLine, timerUrgent } from './runText';
+import { formatCountdown, runInfoLine, urgentFrom } from './runText';
 import { fitText, label, makeButton, pinToScreen, UI } from './ui';
 
 // Map run HUD (docs/design/maps.md): the countdown (always visible, flashes on time warnings), the line under it
@@ -32,7 +32,12 @@ export class RunHud {
   private infoMaxW = 0;
   private bossRect = { x: 0, y: 0, w: 0, h: 0 };
   private shownSecond = -1;
-  private shownInfo = '';
+  /** The info line is rebuilt only when what it says changes: room, phase or waves spawned (-1: rebuild). */
+  private shownRoom = -1;
+  private shownPhase = '';
+  private shownWaves = -1;
+  /** Seconds left from which the timer is urgent (computed once). */
+  private readonly urgentAt: number;
   private shownUrgent = false;
   private shownBossDef = '';
   private flash = 0;
@@ -45,7 +50,7 @@ export class RunHud {
     private readonly onAwaken: () => void,
   ) {
     this.timer = pinToScreen(
-      scene.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '40px', color: TIMER_COLOR, stroke: '#000', strokeThickness: 6 }).setOrigin(0.5, 0),
+      scene.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '40px', color: TIMER_COLOR, stroke: '#000', strokeThickness: 6 }).setOrigin(0.5),
       DEPTH,
     );
     this.info = pinToScreen(label(scene, 0, 0, '', UI.size.small, UI.text, true).setOrigin(0.5, 0), DEPTH);
@@ -53,6 +58,7 @@ export class RunHud {
     this.bossBar = pinToScreen(scene.add.graphics(), DEPTH);
     this.bossName = pinToScreen(label(scene, 0, 0, '', 12, UI.text, true).setOrigin(0.5), DEPTH + 1);
     this.bossName.setStroke('#000', 3);
+    this.urgentAt = urgentFrom(maps);
   }
 
   /** `rightReserved`: screen width taken by the buttons in the top right corner; the centre column stays clear of it. */
@@ -62,11 +68,14 @@ export class RunHud {
     const compact = width < 820 || height < 520;
     this.compact = compact;
     const margin = compact ? 6 : 14;
-    this.timer.setFontSize(compact ? 30 : 42).setPosition(width / 2, margin);
+    // Centred origin: the warning pulse grows the timer both ways instead of into the info line under it.
+    this.timer.setFontSize(compact ? 30 : 42);
+    if (this.timer.text === '') this.timer.setText('0:00');
+    this.timer.setPosition(width / 2, margin + this.timer.height / 2);
     this.infoMaxW = Math.max(160, 2 * (width - rightReserved - width / 2) - 24);
     const infoY = margin + (compact ? 34 : 48);
     this.info.setFontSize(compact ? 13 : UI.size.small).setPosition(width / 2, infoY);
-    this.shownInfo = '';
+    this.shownRoom = -1;
     const barW = Math.min(compact ? 300 : 460, this.infoMaxW);
     const barH = compact ? 14 : 18;
     this.bossRect = { x: width / 2 - barW / 2, y: infoY + (compact ? 22 : 26), w: barW, h: barH };
@@ -88,7 +97,7 @@ export class RunHud {
     this.time += dt;
     const left = timeLeft(run, this.maps);
     const second = Math.ceil(left - 1e-6);
-    const urgent = timerUrgent(left, this.maps);
+    const urgent = left <= this.urgentAt + 1e-6;
     if (second !== this.shownSecond || urgent !== this.shownUrgent) {
       this.shownSecond = second;
       this.shownUrgent = urgent;
@@ -98,13 +107,15 @@ export class RunHud {
     // Flash on a warning; in the last 10 seconds the timer beats every second.
     const beat = left <= 10 && run.status === 'active' ? Math.max(0, 1 - (Math.ceil(left) - left) * 4) : 0;
     const flash = this.flash > 0 ? Math.abs(Math.sin((this.flash / FLASH_TIME) * Math.PI * 4)) : 0;
-    this.timer.setScale(1 + 0.25 * flash + 0.12 * beat);
+    // Phones: a smaller pulse, so the timer never grows into the info line under it.
+    this.timer.setScale(1 + (this.compact ? 0.12 : 0.2) * flash + (this.compact ? 0.06 : 0.1) * beat);
     this.timer.setAlpha(flash > 0 ? 0.6 + 0.4 * (1 - flash) : 1);
 
-    const info = runInfoLine(run);
-    if (info !== this.shownInfo) {
-      this.shownInfo = info;
-      this.info.setText(info).setFontSize(this.compact ? 13 : UI.size.small);
+    if (run.room !== this.shownRoom || run.phase !== this.shownPhase || run.wavesSpawned !== this.shownWaves) {
+      this.shownRoom = run.room;
+      this.shownPhase = run.phase;
+      this.shownWaves = run.wavesSpawned;
+      this.info.setText(runInfoLine(run)).setFontSize(this.compact ? 13 : UI.size.small);
       fitText(this.info, this.infoMaxW);
     }
     this.drawBossBar(run, dt);

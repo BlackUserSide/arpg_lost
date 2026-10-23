@@ -61,7 +61,7 @@ const maps: MapsData = {
   rules: {
     combatRooms: 2,
     timeLimit: 60,
-    timeWarnings: [10, 30],
+    timeWarnings: [30, 10],
     maxLinearMap: 5,
     doorRadius: 20,
     altarRadius: 30,
@@ -76,8 +76,8 @@ const maps: MapsData = {
         { mobId: 'late', weight: 1, minMapLevel: 3 },
       ],
     },
-    elites: { count: { min: 1, max: 1 }, scaling: { life: 3, damage: 2, xp: 5 } },
-    boss: { mobId: 'dummy', scaling: { life: 10, damage: 4, xp: 20 }, spawnDelay: 0.5 },
+    elites: { count: { min: 1, max: 1 }, scaling: { life: 3, damage: 2, xp: 5, radius: 1.5 } },
+    boss: { mobId: 'dummy', scaling: { life: 10, damage: 4, xp: 20, radius: 2 }, spawnDelay: 0.5 },
   },
   rewards: {
     chest: { items: 2, bossItemLevelBonus: 1, maxItemLevelBonus: 3, speedTiers: [] },
@@ -169,7 +169,7 @@ describe('createRun', () => {
       expect(room.waves).toHaveLength(2);
       // 2 mobs per wave + 1 elite in one of them.
       expect(room.waves.flat()).toHaveLength(5);
-      expect(room.waves.flat().filter((s) => s.rank === 'elite')).toEqual([expect.objectContaining({ rank: 'elite', lifeScale: 3, damageScale: 2, xpScale: 5 })]);
+      expect(room.waves.flat().filter((s) => s.rank === 'elite')).toEqual([expect.objectContaining({ rank: 'elite', lifeScale: 3, damageScale: 2, xpScale: 5, radiusScale: 1.5 })]);
     }
     const first = currentTemplate(run, maps);
     expect(run.world.areaLevel).toBe(3);
@@ -270,7 +270,7 @@ describe('waves and room progression', () => {
       if (!elite && run.world.mobs.length > 0) killAll(run);
     }
     if (!elite) throw new Error('no elite');
-    expect(elite).toMatchObject({ rank: 'elite', life: 30, maxLife: 30, damageScale: 2, xpScale: 5 });
+    expect(elite).toMatchObject({ rank: 'elite', life: 30, maxLife: 30, damageScale: 2, xpScale: 5, radius: 15 });
     expect(mobRank(dummy, elite)).toBe('elite');
     expect(run.eliteIds).toContain(elite.id);
     const xpBefore = run.world.xpGained;
@@ -345,7 +345,7 @@ describe('boss room', () => {
     const spawned = steps(run, 1, interact);
     const boss = run.world.mobs.find((m) => m.id === run.bossId)!;
     expect(spawned.filter((e) => e.type === 'bossSpawned')).toEqual([{ type: 'bossSpawned', id: boss.id, pos: t.bossSpawn }]);
-    expect(boss).toMatchObject({ defId: 'dummy', rank: 'boss', life: 100, maxLife: 100, damageScale: 4, xpScale: 20 });
+    expect(boss).toMatchObject({ defId: 'dummy', rank: 'boss', life: 100, maxLife: 100, damageScale: 4, xpScale: 20, radius: 20 });
     expect(isBoss(content, boss)).toBe(true);
     expect(run.phase).toBe('boss');
     expect(steps(run, 60, interact).some((e) => e.type === 'bossSpawned')).toBe(false);
@@ -395,6 +395,34 @@ describe('fails', () => {
     expect(steps(run, 5)).toEqual([]);
   });
 
+  it('hero and boss dying in the same step: the run is lost (death), not won (designer decision 2026-10-23)', () => {
+    const run = newRun();
+    toBossRoom(run);
+    const bossId = summonBoss(run);
+    const hero = run.world.player;
+    run.world.mobs.find((m) => m.id === bossId)!.life = 0;
+    spawnMob(run.world, content, { defId: 'biter' }, vec(hero.pos.x + 25, hero.pos.y), []);
+    const events = steps(run, 1);
+    expect(events).toContainEqual({ type: 'playerDeath' });
+    expect(events).toContainEqual({ type: 'death', id: bossId, pos: expect.anything() });
+    expect(events.filter((e) => e.type === 'runFailed' || e.type === 'runWon')).toEqual([{ type: 'runFailed', reason: 'death' }]);
+    expect(run).toMatchObject({ status: 'failed', failReason: 'death', bossKilled: false, bonusXp: 0 });
+    expect(steps(run, 5)).toEqual([]);
+  });
+
+  it('a boss killed in the step the timer runs out wins the run (no timeout)', () => {
+    const run = newRun();
+    toBossRoom(run);
+    const bossId = summonBoss(run);
+    run.elapsed = maps.rules.timeLimit - DT;
+    run.world.mobs.find((m) => m.id === bossId)!.life = 0;
+    const events = steps(run, 1);
+    expect(timeLeft(run, maps)).toBe(0);
+    expect(events.some((e) => e.type === 'runFailed')).toBe(false);
+    expect(events.filter((e) => e.type === 'runWon')).toEqual([{ type: 'runWon', elapsed: run.elapsed, timeLeft: 0, bonusXp: run.bonusXp }]);
+    expect(run).toMatchObject({ status: 'won', failReason: null, bossKilled: true });
+  });
+
   it('abandoning an active run fails it once', () => {
     const run = newRun();
     expect(abandonRun(run)).toEqual([{ type: 'runFailed', reason: 'abandoned' }]);
@@ -411,6 +439,41 @@ describe('rank scaling in combat', () => {
     spawnMob(run.world, content, { defId: 'dummy', rank: 'elite', damageScale: 2 }, vec(hero.pos.x + 25, hero.pos.y), []);
     steps(run, 1);
     expect(before - hero.life).toBe(2);
+  });
+
+  it('a ranked body is bigger: hero hits reach it, its melee reaches further, walls keep it at its own radius', () => {
+    const run = newRun();
+    const hero = run.world.player;
+    const ahead = vec(hero.pos.x + 65, hero.pos.y);
+    const aim: RunInput = { ...idle, basicAttack: true, aim: vec(hero.pos.x + 200, hero.pos.y) };
+    // Strike arc 50: a normal dummy (radius 10) at 65 is out of reach, one with radius scale 2 (20) is in it.
+    const small = spawnMob(run.world, content, { defId: 'dummy' }, ahead, []);
+    expect(small.radius).toBe(10);
+    expect(steps(run, 1, aim).some((e) => e.type === 'hit' && e.targetId === small.id)).toBe(false);
+    run.world.mobs = [];
+    hero.actionTimer = 0;
+    const big = spawnMob(run.world, content, { defId: 'dummy', rank: 'boss', radiusScale: 2 }, ahead, []);
+    expect(big.radius).toBe(20);
+    expect(steps(run, 1, aim).some((e) => e.type === 'hit' && e.targetId === big.id)).toBe(true);
+  });
+
+  it('mob melee reach and wall clamping use the per-mob radius', () => {
+    const run = newRun();
+    const hero = run.world.player;
+    hero.pos = vec(100, 100);
+    // Gap = 35 - hero 10 - mob radius; the dummy's reach is 5.
+    spawnMob(run.world, content, { defId: 'dummy' }, vec(135, 100), []);
+    const before = hero.life;
+    steps(run, 1);
+    expect(hero.life).toBe(before);
+    run.world.mobs = [];
+    spawnMob(run.world, content, { defId: 'dummy', radiusScale: 2 }, vec(135, 100), []);
+    steps(run, 1);
+    expect(hero.life).toBe(before - 1);
+    run.world.mobs = [];
+    const walled = spawnMob(run.world, content, { defId: 'dummy', radiusScale: 2 }, vec(5, 250), []);
+    steps(run, 1);
+    expect(walled.pos).toEqual(vec(20, 250));
   });
 
   it('supports drop by the spawn rank (elite / boss chances), not only by the def', () => {

@@ -18,7 +18,7 @@ import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, 
 
 export * from './state';
 export { applyLeech, grantBonusXp, recoverLife, setLoadoutModifiers } from './experience';
-export { spawnMob, type MobSpawn } from './mobs';
+export { spawnMob, spawnRadius, type MobSpawn } from './mobs';
 export { inCombat, maxResource, recoverResource } from './resource';
 export { canAfford } from './actions';
 export { supportChangeSets, supportFits, supportTier } from '../supports/rules';

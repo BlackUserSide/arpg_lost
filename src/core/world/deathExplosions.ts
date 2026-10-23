@@ -51,7 +51,7 @@ export function explodeOnDeath(ctx: Ctx, dead: MobState, spec: DeathExplosionDef
   const targets = world.mobs
     .filter((mob) => mob.life > 0 && mob.id !== dead.id)
     .map((mob) => ({ mob, def: getMob(content, mob.defId), dist: distance(dead.pos, mob.pos) }))
-    .filter(({ def, dist }) => dist <= radius + def.radius)
+    .filter(({ mob, dist }) => dist <= radius + mob.radius)
     .sort((a, b) => a.dist - b.dist || a.mob.id - b.mob.id);
 
   // Only ignite can be applied by explosions; its strength comes from the hero's ignite (designer decision 2026-10-22).

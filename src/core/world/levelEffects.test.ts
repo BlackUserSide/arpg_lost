@@ -74,7 +74,7 @@ const idle: PlayerInput = { move: vec(0, 0), aim: vec(1000, 500), basicAttack: f
 const useSkill = (slot: number, aim = idle.aim): PlayerInput => ({ ...idle, aim, skills: Array.from({ length: slot + 1 }, (_, i) => i === slot) });
 
 function addMob(world: WorldState, x: number, y: number, defId = 'dummy', life = 1000): MobState {
-  const mob: MobState = { id: world.nextId++, defId, pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0, auraSlow: 0 };
+  const mob: MobState = { id: world.nextId++, defId, pos: vec(x, y), facing: vec(0, 1), life, maxLife: life, attackTimer: 10, stun: 0, slow: 0, slowMagnitude: 0, ignite: 0, igniteDps: 0, freeze: 0, freezeSlow: 0, stunSlow: 0, stunBar: 0, stunBarIdle: 0, auraSlow: 0, radius: 10 };
   world.mobs.push(mob);
   return mob;
 }

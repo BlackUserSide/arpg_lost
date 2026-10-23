@@ -76,7 +76,10 @@ export interface LootRules {
   readonly stashSize: number;
   /** Off until character levels exist (M3); requirements still show in tooltips. */
   readonly enforceLevelRequirement: boolean;
-  /** Temporary arena rewards until runs end with a chest (docs/design/maps.md). */
+  /**
+   * Leftover of the old arena rewards: no game code reads it any more (map runs use MapsData.rewards); kept only
+   * because tools/sim/crafting.sim.ts models run income with it. Remove together with that sim input.
+   */
   readonly arenaRewards: { readonly killsPerItem: number; readonly maxItems: number; readonly wavesPerItemLevel: number; readonly maxBonusLevels: number };
   /** Rare name words; each word is also its translation key in the locale files (item.rare.first.<word>). */
   readonly rareNameWords: { readonly first: readonly string[]; readonly second: readonly string[] };

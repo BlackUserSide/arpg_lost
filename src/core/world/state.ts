@@ -166,6 +166,11 @@ export interface MobState {
   readonly damageScale?: number;
   /** Multiplier on the XP this mob gives (rank scaling); absent = 1. */
   readonly xpScale?: number;
+  /**
+   * Collision / body radius in world units, set at spawn (MobDef.radius × the spawn's radius scale: elite / boss
+   * rank). Every hit, reach, clamp and separation check uses it, never MobDef.radius. Render draws the body from it.
+   */
+  readonly radius: number;
   attackTimer: number;
   /** Remaining seconds of each status (0 = none); see STATUS_IDS. */
   stun: number;

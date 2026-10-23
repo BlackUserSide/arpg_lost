@@ -12,11 +12,9 @@ import { abandonRun } from './run';
 import type { MapsData, RunState } from './types';
 
 /**
- * Supports found during the run are kept unless the hero died (designer decision 2026-10-23: "lost if the hero
- * died"). A timeout is not a death, so they are kept. An abandoned run loses them like a death, so leaving from the
- * pause menu cannot save them from a lost fight (roadmap 0.4 question).
+ * Supports found during the run are kept on a win and on a timeout; a death or an abandoned run loses them, so
+ * leaving from the pause menu cannot save them from a lost fight (docs/design/maps.md, designer decision 2026-10-23).
  */
-// DESIGN-TBD: timeout keeps the supports and abandoning loses them — confirm both with the designer.
 export function keepsSupportDrops(run: RunState): boolean {
   return run.status === 'won' || (run.status === 'failed' && run.failReason === 'timeout');
 }

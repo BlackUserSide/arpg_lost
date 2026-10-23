@@ -252,6 +252,16 @@ export class SupportFx {
     this.sparks.emitParticleAt(x, y - DROP_LIFT, 10);
   }
 
+  /**
+   * The hero entered another room: gems still in the air (and chain bolts / knockback bursts) belong to the old room's
+   * screen positions, so they vanish at once. The drops themselves are already in core (WorldState.supportDrops).
+   */
+  clearRoom(): void {
+    for (const drop of this.drops) this.hideDrop(drop);
+    for (const bolt of this.bolts) bolt.active = false;
+    for (const burst of this.bursts) burst.active = false;
+  }
+
   /** Advances everything; ground parts into `ground`, raised parts into `top`. (heroX, heroY): the hero's feet. */
   update(ground: Phaser.GameObjects.Graphics, top: Phaser.GameObjects.Graphics, dt: number, heroX: number, heroY: number): void {
     for (const bolt of this.bolts) {
@@ -396,11 +406,15 @@ export class SupportFx {
     drop.beam.setAlpha(Math.max(0, 0.2 * (1 - f * 3)));
     if (f >= 1) {
       this.sparks.emitParticleAt(hx, hy, 12);
-      drop.active = false;
-      drop.gem.setVisible(false);
-      drop.glow.setVisible(false);
-      drop.beam.setVisible(false);
-      drop.text.setVisible(false);
+      this.hideDrop(drop);
     }
+  }
+
+  private hideDrop(drop: Drop): void {
+    drop.active = false;
+    drop.gem.setVisible(false);
+    drop.glow.setVisible(false);
+    drop.beam.setVisible(false);
+    drop.text.setVisible(false);
   }
 }

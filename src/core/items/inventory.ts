@@ -1,4 +1,4 @@
-import { findCharacter, type Profile } from '../progression/profile';
+import { addCurrency, findCharacter, type Profile } from '../progression/profile';
 import type { Rng } from '../rng';
 import { canEquip, equip, equipSlotsFor, slotOf, unequip, type EquipError } from './equipment';
 import { generateItem, salvageValue, type GenerateOptions } from './generate';
@@ -69,34 +69,6 @@ export function salvageFromStash(profile: Profile, itemId: string, data: ItemsDa
   const item = takeFromStash(profile, itemId);
   if (!item) return 0;
   const amount = salvageValue(item, data);
-  profile.currency[SALVAGE_CURRENCY] = (profile.currency[SALVAGE_CURRENCY] ?? 0) + amount;
+  addCurrency(profile, SALVAGE_CURRENCY, amount);
   return amount;
-}
-
-export interface RunRewards {
-  readonly items: Item[];
-  /** Items that did not fit the stash were salvaged automatically. */
-  readonly salvaged: number;
-}
-
-/**
- * Temporary arena rewards: items by kills. Item level = area level + a bonus for waves survived, capped (designer
- * decision 2026-10-23: an item is never more than area level + 3, docs/design/maps.md). Adds them to the stash.
- */
-export function grantArenaRewards(profile: Profile, rng: Rng, run: { kills: number; wave: number; areaLevel: number }, data: ItemsData): RunRewards {
-  const r = data.rules.arenaRewards;
-  const count = Math.min(r.maxItems, Math.floor(run.kills / r.killsPerItem));
-  const itemLevel = Math.max(1, run.areaLevel) + Math.min(r.maxBonusLevels, Math.floor(run.wave / r.wavesPerItemLevel));
-  const items: Item[] = [];
-  let salvaged = 0;
-  for (let i = 0; i < count; i++) {
-    const item = rollItem(profile, rng, { itemLevel }, data);
-    items.push(item);
-    if (addToStash(profile, item, data)) {
-      const amount = data.rules.salvage[item.rarity];
-      profile.currency[SALVAGE_CURRENCY] = (profile.currency[SALVAGE_CURRENCY] ?? 0) + amount;
-      salvaged += amount;
-    }
-  }
-  return { items, salvaged };
 }

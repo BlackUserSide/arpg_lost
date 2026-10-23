@@ -250,7 +250,7 @@ export function placeTrap(ctx: Ctx, trap: Trap, maxActive: number | undefined): 
  * including targets already hit on the way. A dash cut short by the hero's death has no landing.
  */
 export function updateMotion(ctx: Ctx, dt: number): boolean {
-  const { world, content } = ctx;
+  const { world } = ctx;
   const player = world.player;
   const motion = player.motion;
   if (!motion) return false;
@@ -266,7 +266,7 @@ export function updateMotion(ctx: Ctx, dt: number): boolean {
     const action = motion.action;
     for (const mob of world.mobs) {
       if (mob.life <= 0 || motion.hitIds.includes(mob.id)) continue;
-      if (distance(mob.pos, player.pos) > motion.hitRadius + getMob(content, mob.defId).radius) continue;
+      if (distance(mob.pos, player.pos) > motion.hitRadius + mob.radius) continue;
       motion.hitIds.push(mob.id);
       damageMob(ctx, action, mob);
       releaseChain(ctx, action, mob, motion.hitIds);
@@ -299,7 +299,7 @@ export interface HitArcOptions {
 
 /** Hits every living mob in the sector (closest first, up to maxTargets). Returns the ids of the mobs it hit, in order. */
 export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, radius: number, angleDeg: number, opts: HitArcOptions = {}): number[] {
-  const { world, content, events } = ctx;
+  const { world, events } = ctx;
   const { maxTargets, castModifiers, chain = false, trigger, effectiveness = 1 } = opts;
   events.push({
     type: 'area',
@@ -314,7 +314,7 @@ export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, 
   const halfAngleCos = Math.cos(((angleDeg / 2) * Math.PI) / 180);
   const targets = world.mobs
     .filter((mob) => mob.life > 0)
-    .map((mob) => ({ mob, mobRadius: getMob(content, mob.defId).radius, dist: distance(origin, mob.pos) }))
+    .map((mob) => ({ mob, mobRadius: mob.radius, dist: distance(origin, mob.pos) }))
     .filter(({ mob, mobRadius, dist }) => {
       if (dist > radius + mobRadius) return false;
       if (angleDeg >= 360 || dist <= mobRadius) return true;
@@ -343,7 +343,7 @@ export function hitArc(ctx: Ctx, action: ActionDef, origin: Vec2, facing: Vec2, 
 export function releaseChain(ctx: Ctx, action: ActionDef, from: MobState, excludeIds: readonly number[], castModifiers?: readonly Modifier[]): void {
   const chain = action.chainHit;
   if (!chain || !action.damage || chain.hops < 1) return;
-  const { world, content } = ctx;
+  const { world } = ctx;
   const hit = new Set(excludeIds);
   hit.add(from.id);
   const path: MobState[] = [];
@@ -353,7 +353,7 @@ export function releaseChain(ctx: Ctx, action: ActionDef, from: MobState, exclud
     for (const mob of world.mobs) {
       if (mob.life <= 0 || hit.has(mob.id)) continue;
       const dist = distance(current, mob.pos);
-      if (dist > chain.range + getMob(content, mob.defId).radius) continue;
+      if (dist > chain.range + mob.radius) continue;
       if (!best || dist < best.dist || (dist === best.dist && mob.id < best.mob.id)) best = { mob, dist };
     }
     if (!best) break;

@@ -47,11 +47,13 @@ export interface MobPoolEntry {
   readonly minMapLevel?: number;
 }
 
-/** How a rank changes an ordinary mob def (multipliers over MobDef life / attack damage / XP). */
+/** How a rank changes an ordinary mob def (multipliers over MobDef life / attack damage / XP / body radius). */
 export interface RankScaling {
   readonly life: number;
   readonly damage: number;
   readonly xp: number;
+  /** Multiplier on MobDef.radius: the ranked mob's collision radius (MobState.radius) and drawn size. */
+  readonly radius: number;
 }
 
 export interface RunRules {
@@ -59,7 +61,7 @@ export interface RunRules {
   readonly combatRooms: number;
   /** Hard time limit, seconds; running out fails the run. */
   readonly timeLimit: number;
-  /** Seconds left at which a 'timeWarning' event fires (once each). */
+  /** Seconds left at which a 'timeWarning' event fires (once each). Must be in descending order (maps.test.ts). */
   readonly timeWarnings: readonly number[];
   /** Highest map of the linear ladder (keys follow later, docs/design/endgame.md). */
   readonly maxLinearMap: number;

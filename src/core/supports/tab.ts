@@ -3,7 +3,7 @@
 // (CharacterRecord.supports); every number comes from SupportData.
 
 import { SALVAGE_CURRENCY } from '../items/inventory';
-import type { Profile } from '../progression/profile';
+import { addCurrency, type Profile } from '../progression/profile';
 import type { ActionDef, ClassDef } from '../world/content';
 import { supportFits } from './rules';
 import type { SupportData, SupportItem, SupportRef } from './types';
@@ -26,7 +26,7 @@ export function supportSalvageValue(ref: SupportRef, data: SupportData): number 
 
 function addShards(profile: Profile, amount: number): void {
   if (amount <= 0) return;
-  profile.currency[SALVAGE_CURRENCY] = (profile.currency[SALVAGE_CURRENCY] ?? 0) + amount;
+  addCurrency(profile, SALVAGE_CURRENCY, amount);
 }
 
 /**

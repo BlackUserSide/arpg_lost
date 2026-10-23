@@ -32,7 +32,7 @@ import { currencyWord } from './craftText';
 import { ESSENCE_CURRENCY } from '../core/items/craft';
 import { SALVAGE_CURRENCY } from '../core/items/inventory';
 import { t } from '../i18n';
-import { PointsBanner } from './passiveBanner';
+import { PointsBadge } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
@@ -80,10 +80,13 @@ const CHAIN_AREA_COLOR = 0xffd23a;
 /** Far Shot (distanceDamage) glow around bolts. */
 const FAR_SHOT_GLOW = 0xfff0a0;
 
-/** How ranked mobs stand out (visual only; their strength is core rank scaling). */
-const RANK_LOOKS: Readonly<Record<Exclude<MobRank, 'normal'>, { scale: number; ring: number; tint: number }>> = {
-  elite: { scale: 1.3, ring: 0xffc23a, tint: 0xfff0d0 },
-  boss: { scale: 1.75, ring: 0xff3a2a, tint: 0xffd0c8 },
+/**
+ * How ranked mobs stand out (visual only; their strength is core rank scaling). Their size is not here: the sprite
+ * scales with the core body radius (MobState.radius / MobDef.radius), so what is drawn is what gets hit.
+ */
+const RANK_LOOKS: Readonly<Record<Exclude<MobRank, 'normal'>, { ring: number; tint: number }>> = {
+  elite: { ring: 0xffc23a, tint: 0xfff0d0 },
+  boss: { ring: 0xff3a2a, tint: 0xffd0c8 },
 };
 
 type Mechanics = Parameters<typeof distanceDamageMore>[0];
@@ -118,6 +121,8 @@ interface Actor {
   stunBarFlash: number;
   /** Mob rank (core mobRank); 'normal' for the hero. */
   rank: MobRank;
+  /** Drawn size: the mob's body radius over its def radius (core rank radius scale); 1 for the hero. */
+  scale: number;
 }
 
 interface Corpse {
@@ -205,6 +210,8 @@ export class RunScene extends Phaser.Scene {
   private runHud!: RunHud;
   private overlay: Phaser.GameObjects.GameObject[] | undefined;
   private paused = false;
+  /** gameplayStart was sent and not yet matched by gameplayStop. */
+  private gameplayActive = false;
   private textPool: Phaser.GameObjects.Text[] = [];
   private combatFx!: CombatFx;
   /** Level-3 skill effect visuals (ground zones, decoy ghost, split / whirl / slam bursts). */
@@ -224,7 +231,8 @@ export class RunScene extends Phaser.Scene {
   private pauseAfterTree = false;
   private treeButton: Phaser.GameObjects.Container | undefined;
   private pauseButton: Phaser.GameObjects.Container | undefined;
-  private banner!: PointsBanner;
+  /** Unspent talent points: a badge on the Talents button (the full banner is the hub's; in a run it would cover the fight). */
+  private badge!: PointsBadge;
   /** The current mouse/touch press started on a HUD control, so it must not attack. */
   private uiPress = false;
   /** The hero's counter-attack animation and the direction it faces while it plays (core keeps the hero's facing). */
@@ -324,7 +332,7 @@ export class RunScene extends Phaser.Scene {
     this.uiPress = false;
     this.treeButton = undefined;
     this.pauseButton = undefined;
-    this.banner = new PointsBanner(this, () => this.openTree(), { depth: HUD_UI_DEPTH, pinned: true });
+    this.badge = new PointsBadge(this, HUD_UI_DEPTH + 2);
     this.layoutUi();
     this.refreshBanner();
     const relayout = (): void => {
@@ -346,7 +354,8 @@ export class RunScene extends Phaser.Scene {
     this.game.events.on(Phaser.Core.Events.FOCUS, back);
     this.game.events.on(Phaser.Core.Events.VISIBLE, back);
 
-    getApp(this).platform.gameplayStart();
+    this.gameplayActive = false;
+    this.setGameplay(true);
     fadeIn(this);
     this.events.once('shutdown', () => {
       this.scale.off('resize', relayout);
@@ -391,11 +400,12 @@ export class RunScene extends Phaser.Scene {
     this.liveZones.clear();
     this.liveDecoys.clear();
     this.counterShot = undefined;
+    this.supportFx.clearRoom();
     this.buildRoom();
     this.cameras.main.fadeIn(ROOM_FADE, 7, 7, 10);
   }
 
-  /** Top right buttons, the run HUD in the top centre, the unspent points banner under it. */
+  /** Top right buttons (Talents with the unspent points badge), the run HUD in the top centre. */
   private layoutUi(): void {
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
@@ -410,8 +420,6 @@ export class RunScene extends Phaser.Scene {
     const pw = compact ? 84 : 120;
     const reserved = margin + w + 10 + pw;
     this.runHud.layout(width, height, reserved);
-    const bh = compact ? 34 : 40;
-    this.banner.setPosition(width / 2, this.runHud.bottom() + 10 + bh / 2, bh, width - margin * 2);
     if (!findCharacter(getApp(this).profile, this.characterId)) return;
     this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? t('arena.talents') : t('arena.talentsKey'), () => this.openTree()), HUD_UI_DEPTH);
     // Touch has no Esc: the pause menu (and with it "end the run") needs a button.
@@ -421,6 +429,8 @@ export class RunScene extends Phaser.Scene {
       }),
       HUD_UI_DEPTH,
     );
+    // The unspent points badge sits on the Talents button's top right corner.
+    this.badge.setPosition(width - margin - 4, margin + 18 - h / 2 + 4, compact ? 10 : 12);
   }
 
   private refreshBanner(): void {
@@ -428,7 +438,7 @@ export class RunScene extends Phaser.Scene {
     if (!character) return;
     const hero = { classId: character.classId, level: this.world.player.level, passives: character.passives };
     const { points, specPoints } = unspentPoints(passiveTree, hero);
-    this.banner.setPoints(points, specPoints);
+    this.badge.setPoints(points, specPoints);
   }
 
   /** Opens the passive tree over the run; whether the run pauses is the mode's rule. */
@@ -443,7 +453,7 @@ export class RunScene extends Phaser.Scene {
       closed: () => this.closeTree(),
     };
     if (this.mode.pauseOnMenus) {
-      app.platform.gameplayStop();
+      this.setGameplay(false);
       this.scene.pause();
     }
     const data: PassiveTreeSceneData = { characterId: this.characterId, run };
@@ -473,10 +483,10 @@ export class RunScene extends Phaser.Scene {
     if (away && !this.ended()) {
       // Back to the pause menu instead of live play; gameplay stays stopped for the portal.
       this.paused = true;
-      if (!this.mode.pauseOnMenus) getApp(this).platform.gameplayStop();
+      this.setGameplay(false);
       this.showOverlay('pause');
     } else if (this.mode.pauseOnMenus) {
-      getApp(this).platform.gameplayStart();
+      this.setGameplay(true);
     }
     // Keys and buttons held when the tree opened must not fire now.
     this.input.keyboard?.resetKeys();
@@ -487,14 +497,22 @@ export class RunScene extends Phaser.Scene {
     this.accumulator = 0;
   }
 
+  /** Tells the portal gameplay started / stopped, only on a change (pause, tree, run end can overlap). */
+  private setGameplay(active: boolean): void {
+    if (active === this.gameplayActive) return;
+    this.gameplayActive = active;
+    const platform = getApp(this).platform;
+    if (active) platform.gameplayStart();
+    else platform.gameplayStop();
+  }
+
   private setPaused(paused: boolean): void {
     this.paused = paused;
-    const platform = getApp(this).platform;
     if (paused) {
-      platform.gameplayStop();
+      this.setGameplay(false);
       this.showOverlay('pause');
     } else {
-      platform.gameplayStart();
+      this.setGameplay(true);
       this.hideOverlay();
       this.accumulator = 0;
     }
@@ -530,7 +548,9 @@ export class RunScene extends Phaser.Scene {
       return h + (l.gap ?? 0);
     };
     const headerH = compact ? 56 : 78;
-    const footerH = compact ? 92 : 116;
+    // Key hints (R / Esc) only where there is a keyboard: touch screens get the room for the reward list instead.
+    const keyHints = this.sys.game.device.os.desktop;
+    const footerH = compact ? (keyHints ? 92 : 66) : keyHints ? 116 : 86;
     if (kind === 'pause') {
       const pending = this.world.supportDrops.length;
       if (pending > 0) {
@@ -576,7 +596,7 @@ export class RunScene extends Phaser.Scene {
       objects.push(makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.toHub'), () => this.leaveToMenu()));
     }
     const hint = kind === 'pause' ? t('arena.hintPause') : this.nextRun().hint;
-    objects.push(label(this, width / 2, buttonY - (compact ? 36 : 46), hint, UI.size.small, UI.muted).setOrigin(0.5));
+    if (keyHints) objects.push(label(this, width / 2, buttonY - (compact ? 36 : 46), hint, UI.size.small, UI.muted).setOrigin(0.5));
     for (const o of objects) pinToScreen(o, 20000);
     const fadeTargets = objects.slice(1);
     for (const o of fadeTargets) (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha(0);
@@ -613,7 +633,8 @@ export class RunScene extends Phaser.Scene {
     const body = compact ? UI.size.small : UI.size.body;
     fixed.push({ text: t('run.summary', { time: formatElapsed(run.elapsed), kills: t('unit.kills', { count: world.kills }) }), size: small, color: UI.muted });
     fixed.push({ text: t('arena.xp', { xp: Math.floor(world.xpGained + run.bonusXp), level: world.player.level }), size: body, color: UI.goldBrightText, bold: true });
-    if (run.bonusXp > 0) fixed.push({ text: t('run.bonusXp', { xp: Math.floor(run.bonusXp) }), size: small, color: UI.muted });
+    // Phones: the XP line already includes the bonus; the room goes to the chest list instead.
+    if (run.bonusXp > 0 && !compact) fixed.push({ text: t('run.bonusXp', { xp: Math.floor(run.bonusXp) }), size: small, color: UI.muted });
     if (summary?.unlockedMap) fixed.push({ text: t('run.unlocked', { map: summary.unlockedMap }), size: body + 2, color: UI.goldBrightText, bold: true, gap: 4 });
     fixed.push({ text: run.status === 'won' ? t('run.chest') : t('run.consolation'), size: compact ? 18 : 20, color: UI.goldBrightText, heading: true, gap: compact ? 4 : 8 });
     const tier = summary?.plan.speedTier;
@@ -679,7 +700,7 @@ export class RunScene extends Phaser.Scene {
   private recordRun(): void {
     if (this.summary !== undefined) return;
     const app = getApp(this);
-    app.platform.gameplayStop();
+    this.setGameplay(false);
     this.summary = finishRun(app.profile, this.characterId, this.run, { maps: mapsData, items: itemsData, ...(this.content.supports ? { supports: this.content.supports } : {}) });
     app.save();
     // PROPOSAL (docs/design/account.md): the first finished run is the "meaningful moment".
@@ -761,18 +782,38 @@ export class RunScene extends Phaser.Scene {
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len;
     const uy = dy / len;
-    // Ray from the centre to the screen rectangle, inset.
-    const inset = 70;
-    const k = Math.min(Math.abs((cx - inset) / (ux || 1e-6)), Math.abs((cy - inset) / (uy || 1e-6)));
+    // Ray from the centre to an inset screen rectangle that keeps clear of the run HUD at the top and the orbs and
+    // skill bar at the bottom.
+    const compact = width < 820 || height < 520;
+    const inset = compact ? 44 : 70;
+    const top = Math.min(cy - 20, this.runHud.bottom() + 30);
+    const bottom = Math.max(cy + 20, height - (compact ? 120 : 160));
+    const kx = ux > 0 ? (width - inset - cx) / ux : ux < 0 ? (inset - cx) / ux : Number.POSITIVE_INFINITY;
+    const ky = uy > 0 ? (bottom - cy) / uy : uy < 0 ? (top - cy) / uy : Number.POSITIVE_INFINITY;
+    const k = Math.min(kx, ky);
     const x = cx + ux * k;
     const y = cy + uy * k;
     const pulse = 0.6 + 0.4 * Math.sin(this.world.time * 6);
     const size = 18;
     const px = -uy;
     const py = ux;
-    g.fillStyle(0xffb44a, 0.55 + 0.4 * pulse);
-    g.fillTriangle(x + ux * size, y + uy * size, x - ux * size * 0.6 + px * size * 0.8, y - uy * size * 0.6 + py * size * 0.8, x - ux * size * 0.6 - px * size * 0.8, y - uy * size * 0.6 - py * size * 0.8);
-    g.lineStyle(2, 0x1a1006, 0.9).strokeTriangle(x + ux * size, y + uy * size, x - ux * size * 0.6 + px * size * 0.8, y - uy * size * 0.6 + py * size * 0.8, x - ux * size * 0.6 - px * size * 0.8, y - uy * size * 0.6 - py * size * 0.8);
+    // A notched arrowhead (longer than wide), nudged outwards with the pulse, so its direction reads at a glance.
+    const push = 4 * pulse;
+    const tipX = x + ux * (size * 1.1 + push);
+    const tipY = y + uy * (size * 1.1 + push);
+    const backX = x - ux * (size * 0.8 - push);
+    const backY = y - uy * (size * 0.8 - push);
+    const notchX = x - ux * (size * 0.25 - push);
+    const notchY = y - uy * (size * 0.25 - push);
+    const lx = backX + px * size * 0.75;
+    const ly = backY + py * size * 0.75;
+    const rx = backX - px * size * 0.75;
+    const ry = backY - py * size * 0.75;
+    g.fillStyle(0xffb44a, 0.6 + 0.35 * pulse);
+    g.fillTriangle(tipX, tipY, lx, ly, notchX, notchY);
+    g.fillTriangle(tipX, tipY, notchX, notchY, rx, ry);
+    g.lineStyle(2, 0x1a1006, 0.9);
+    g.lineBetween(tipX, tipY, lx, ly).lineBetween(lx, ly, notchX, notchY).lineBetween(notchX, notchY, rx, ry).lineBetween(rx, ry, tipX, tipY);
   }
 
   private readInput(): RunInput {
@@ -1048,10 +1089,9 @@ export class RunScene extends Phaser.Scene {
     }
   }
 
-  private createActor(set: string, pos: Vec2, rank: MobRank = 'normal'): Actor {
-    const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y);
-    if (rank !== 'normal') sprite.setScale(RANK_LOOKS[rank].scale);
-    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0, rank };
+  private createActor(set: string, pos: Vec2, rank: MobRank = 'normal', scale = 1): Actor {
+    const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y).setScale(scale);
+    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0, rank, scale };
   }
 
   /** Remembers where everything was before a sim step, for interpolation. */
@@ -1097,7 +1137,7 @@ export class RunScene extends Phaser.Scene {
       let actor = this.mobs.get(mob.id);
       const def = getMob(this.content, mob.defId);
       if (!actor) {
-        actor = this.createActor(MOB_SPRITES[mob.defId] ?? 'skeleton_warrior', mob.pos, mobRank(def, mob));
+        actor = this.createActor(MOB_SPRITES[mob.defId] ?? 'skeleton_warrior', mob.pos, mobRank(def, mob), def.radius > 0 ? mob.radius / def.radius : 1);
         this.mobs.set(mob.id, actor);
       }
       actor.facing = mob.facing;
@@ -1285,7 +1325,8 @@ export class RunScene extends Phaser.Scene {
     for (const mob of this.world.mobs) {
       const actor = this.mobs.get(mob.id);
       if (!actor) continue;
-      const radius = getMob(this.content, mob.defId).radius;
+      // Core body radius (rank scaled): rings and status marks match what hits land on.
+      const radius = mob.radius;
       if (actor.rank !== 'normal') this.drawRankMarks(g, top, actor, mob.life / mob.maxLife, radius);
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
       this.combatFx.drawMobStatus(g, top, actor.sprite.x, actor.sprite.y, radius, frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, this.world.time, dt, mob.id);
@@ -1338,14 +1379,14 @@ export class RunScene extends Phaser.Scene {
     const look = RANK_LOOKS[actor.rank as Exclude<MobRank, 'normal'>];
     const { x, y } = actor.sprite;
     const pulse = 0.5 + 0.5 * Math.sin(this.world.time * 4 + x * 0.01);
-    const rx = radius * 2.6 * look.scale;
+    const rx = radius * 2.6;
     g.fillStyle(look.ring, 0.14 + 0.08 * pulse).fillEllipse(x, y, rx, rx / 2);
     g.lineStyle(2, look.ring, 0.75 + 0.2 * pulse).strokeEllipse(x, y, rx, rx / 2);
     g.lineStyle(1, look.ring, 0.45).strokeEllipse(x, y, rx * 1.25, rx * 0.625);
     if (actor.rank !== 'elite') return;
     const w = 44;
     const h = 5;
-    const by = y - 92 * look.scale;
+    const by = y - 92 * actor.scale;
     top.fillStyle(0x000000, 0.75).fillRect(x - w / 2 - 1, by - 1, w + 2, h + 2);
     top.fillStyle(0x3a0a08, 1).fillRect(x - w / 2, by, w, h);
     top.fillStyle(look.ring, 1).fillRect(x - w / 2, by, w * Phaser.Math.Clamp(life, 0, 1), h);

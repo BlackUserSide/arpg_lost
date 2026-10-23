@@ -87,6 +87,14 @@ locale falls back to English.
 | Equip / Unequip | Equip / Unequip | Вдягнути / зняти | Anlegen / Ablegen | Załóż / zdejmij |
 | Run (one map / arena session) | Run | Забіг | Lauf | Wyprawa |
 | Wave | Wave | Хвиля | Welle | Fala |
+| Map (one level of the map ladder, 0.4) | Map | Карта | Karte | Mapa |
+| Dungeon ("Enter the dungeon") | Dungeon | Підземелля | Kerker | Loch |
+| Room / Boss room | Room / Boss room | Кімната / кімната боса | Raum / Bossraum | Komnata / komnata bossa |
+| Altar (summons the boss) / awaken | Altar / awaken | Алтар / пробудити | Altar / erwecken | Ołtarz / przebudzić |
+| Chest (won run reward) | Chest | Скриня | Schatzkiste | Skrzynia |
+| Consolation (failed run reward) | Consolation | Втішна нагорода | Trostpreis | Nagroda pocieszenia |
+| Unlock (a map) | Unlock | Відкрити | Freischalten | Odblokować |
+| End run (abandon from pause) | End run | Завершити забіг | Lauf beenden | Zakończ wyprawę |
 | Hub | Hub | Хаб | Lager | Obóz |
 | Loot | Loot | Здобич | Beute | Łupy |
 | Elite / Boss | Elite / Boss | Еліта / бос | Elite / Boss | Elita / boss |

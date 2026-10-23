@@ -261,11 +261,11 @@ export function tickIgnite(ctx: Ctx, mob: MobState, dt: number): void {
  * by the active-trap cap drops its aura at once (placeTrap calls this). Movement reads it on the next step's mob update.
  */
 export function updateAuraSlows(ctx: Ctx): void {
-  const { world, content } = ctx;
+  const { world } = ctx;
   for (const mob of world.mobs) {
     let slow = 0;
     if (mob.life > 0) {
-      const reach = getMob(content, mob.defId).radius;
+      const reach = mob.radius;
       for (const trap of world.traps) {
         if (!trap.aura || trap.armTimer > 0) continue;
         if (distance(mob.pos, trap.pos) <= trap.aura.radius + reach) slow = Math.max(slow, trap.aura.slow);

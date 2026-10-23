@@ -47,7 +47,7 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
     if (!action) throw new Error('Player projectile without an action snapshot: ' + p.sourceId);
     for (const mob of world.mobs) {
       if (mob.life <= 0 || p.hitIds.includes(mob.id)) continue;
-      if (distance(p.pos, mob.pos) > p.radius + getMob(content, mob.defId).radius) continue;
+      if (distance(p.pos, mob.pos) > p.radius + mob.radius) continue;
       if (p.explodeRadius > 0) {
         const hit = explode(ctx, action, p.pos, p.explodeRadius, hitModifiers(ctx, p, action.tags), { zoneModifiers: p.castModifiers });
         splitProjectile(ctx, p, action, hit);
@@ -166,7 +166,7 @@ function hitModifiers(ctx: Ctx, p: Projectile, tags: readonly Tag[]): readonly M
  */
 // Designer decision 2026-10-22 (default): chain detonation also sets off traps that are still arming.
 export function updateTraps(ctx: Ctx, dt: number): void {
-  const { world, content } = ctx;
+  const { world } = ctx;
   for (const trap of world.traps) {
     trap.armTimer = Math.max(0, trap.armTimer - dt);
     trap.lifetime -= dt;
@@ -179,7 +179,7 @@ export function updateTraps(ctx: Ctx, dt: number): void {
     const triggered =
       !chained &&
       trap.armTimer <= 0 &&
-      world.mobs.some((mob) => mob.life > 0 && distance(mob.pos, trap.pos) <= trap.triggerRadius + getMob(content, mob.defId).radius);
+      world.mobs.some((mob) => mob.life > 0 && distance(mob.pos, trap.pos) <= trap.triggerRadius + mob.radius);
     if (!chained && !triggered && trap.lifetime > 0) continue;
     exploded.add(trap.id);
     explode(ctx, trap.action, trap.pos, trap.explodeRadius, trap.castModifiers, { chain: chained });

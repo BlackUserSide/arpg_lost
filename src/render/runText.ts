@@ -50,8 +50,14 @@ export function runInfoLine(run: RunState): string {
   return parts.join('  ·  ');
 }
 
-/** The timer reads as urgent from the first time warning on (RunRules.timeWarnings, highest first). */
+/** Seconds left from which the timer reads as urgent: the first (highest) time warning (RunRules.timeWarnings). */
+export function urgentFrom(maps: MapsData): number {
+  let first = 0;
+  for (const s of maps.rules.timeWarnings) if (s > first) first = s;
+  return first;
+}
+
+/** The timer reads as urgent from the first time warning on. */
 export function timerUrgent(secondsLeft: number, maps: MapsData): boolean {
-  const first = Math.max(0, ...maps.rules.timeWarnings);
-  return secondsLeft <= first + 1e-6;
+  return secondsLeft <= urgentFrom(maps) + 1e-6;
 }

@@ -7,7 +7,7 @@ import { mapClearBonusXp } from '../progression/levels';
 import { createRng, type Rng } from '../rng';
 import { weightedPick } from '../items/generate';
 import type { Content } from '../world/content';
-import { clampToArena, createWorld, getMob, grantBonusXp, spawnMob, step, type Loadout, type MobSpawn } from '../world/world';
+import { clampToArena, createWorld, grantBonusXp, spawnMob, spawnRadius, step, type Loadout, type MobSpawn } from '../world/world';
 import type {
   BossRoomTemplate,
   MapsData,
@@ -92,7 +92,7 @@ export function mobPoolAt(rules: RunRules, mapLevel: number): MobPoolEntry[] {
 }
 
 function ranked(defId: string, rank: 'elite' | 'boss', scaling: RankScaling): MobSpawn {
-  return { defId, rank, lifeScale: scaling.life, damageScale: scaling.damage, xpScale: scaling.xp };
+  return { defId, rank, lifeScale: scaling.life, damageScale: scaling.damage, xpScale: scaling.xp, radiusScale: scaling.radius };
 }
 
 /**
@@ -208,7 +208,7 @@ function spawnWave(run: RunState, content: Content, maps: MapsData, rng: Rng, ev
   const t = getTemplate(maps, plan.templateId);
   events.push({ type: 'waveStart', room: run.room, wave: run.wavesSpawned, count: wave.length });
   for (const spawn of wave) {
-    const pos = spawnPosition(rng, run, t, getMob(content, spawn.defId).radius, maps.rules.waves.spawnJitter);
+    const pos = spawnPosition(rng, run, t, spawnRadius(content, spawn), maps.rules.waves.spawnJitter);
     const mob = spawnMob(run.world, content, spawn, pos, events);
     if (spawn.rank === 'elite') run.eliteIds.push(mob.id);
   }
@@ -247,8 +247,9 @@ function countRankedKills(run: RunState, events: RunStepEvent[]): boolean {
   return bossDied;
 }
 
+/** Fires the warnings the timer just passed; RunRules.timeWarnings is in descending order (checked by maps.test.ts). */
 function fireTimeWarnings(run: RunState, maps: MapsData, events: RunStepEvent[]): void {
-  const warnings = [...maps.rules.timeWarnings].sort((a, b) => b - a);
+  const warnings = maps.rules.timeWarnings;
   const left = timeLeft(run, maps);
   while (run.warningsFired < warnings.length && left <= warnings[run.warningsFired]! + TIME_EPSILON) {
     events.push({ type: 'timeWarning', secondsLeft: warnings[run.warningsFired]! });
@@ -332,8 +333,9 @@ function updateRoom(run: RunState, input: RunInput, content: Content, maps: Maps
       if (run.waveTimer > TIME_EPSILON) return;
       const boss = maps.rules.boss;
       const spawnAt = (t as BossRoomTemplate).bossSpawn;
-      const pos = clampToArena(vec(spawnAt.x, spawnAt.y), getMob(content, boss.mobId).radius, run.world);
-      const mob = spawnMob(run.world, content, ranked(boss.mobId, 'boss', boss.scaling), pos, events);
+      const spawn = ranked(boss.mobId, 'boss', boss.scaling);
+      const pos = clampToArena(vec(spawnAt.x, spawnAt.y), spawnRadius(content, spawn), run.world);
+      const mob = spawnMob(run.world, content, spawn, pos, events);
       run.bossId = mob.id;
       run.phase = 'boss';
       events.push({ type: 'bossSpawned', id: mob.id, pos: mob.pos });

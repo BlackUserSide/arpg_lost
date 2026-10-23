@@ -45,3 +45,28 @@ describe('map data', () => {
     expect(mapsData.rewards.bossRoomConsolationItems).toBe(1);
   });
 });
+
+describe('map data invariants', () => {
+  it('time warnings are in descending order of seconds (fireTimeWarnings walks them in order without sorting)', () => {
+    const w = mapsData.rules.timeWarnings;
+    for (let i = 1; i < w.length; i++) expect(w[i]!, `timeWarnings[${i}]`).toBeLessThan(w[i - 1]!);
+    for (const s of w) expect(s).toBeLessThan(mapsData.rules.timeLimit);
+  });
+
+  it('obstacles leave room for the largest body (ranked radius scaling included) to pass walls and each other', () => {
+    const { elites, boss } = mapsData.rules;
+    const maxScale = Math.max(1, elites.scaling.radius, boss.scaling.radius);
+    const bodies = [...Object.values(content.mobs).map((m) => m.radius * maxScale), ...Object.values(content.classes).map((c) => c.radius)];
+    const body = Math.max(...bodies);
+    // A body passes a gap when the gap is at least its diameter.
+    const passage = 2 * body;
+    for (const t of Object.values(mapsData.templates)) {
+      const obstacles = t.obstacles ?? [];
+      obstacles.forEach((o, i) => {
+        const label = `${t.id} obstacle ${i}`;
+        for (const wall of [o.pos.x, o.pos.y, t.width - o.pos.x, t.height - o.pos.y]) expect(wall - o.radius, label).toBeGreaterThanOrEqual(passage);
+        for (const other of obstacles.slice(i + 1)) expect(distance(o.pos, other.pos) - o.radius - other.radius, label).toBeGreaterThanOrEqual(passage);
+      });
+    }
+  });
+});
