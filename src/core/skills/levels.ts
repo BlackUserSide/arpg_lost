@@ -127,7 +127,8 @@ export function skillLevelChangeSet(skillId: string, level: number, data: SkillL
 
 /**
  * Several bonuses of one skill as one: lists are concatenated, grants of later bonuses override earlier ones
- * field by field, resource cost multipliers multiply, leech and stun bar fill add up.
+ * field by field, resource cost multipliers multiply, leech and stun bar fill add up, damage conversions combine
+ * as in resolveAction (see SkillChangeSet.damageConversion).
  */
 export function mergeBonuses(bonuses: readonly SkillBonus[]): SkillBonus {
   const changes = bonuses.flatMap((b) => b.changes ?? []);
@@ -140,11 +141,15 @@ export function mergeBonuses(bonuses: readonly SkillBonus[]): SkillBonus {
   let costMultiplier: number | undefined;
   let leech: number | undefined;
   let stunBarFill: number | undefined;
+  let conversion: SkillBonus['damageConversion'];
   for (const b of bonuses) {
     if (b.grants) grants = { ...grants, ...b.grants };
     if (b.resourceCostMultiplier !== undefined) costMultiplier = (costMultiplier ?? 1) * b.resourceCostMultiplier;
     if (b.leech !== undefined) leech = (leech ?? 0) + b.leech;
     if (b.stunBarFillIncreased !== undefined) stunBarFill = (stunBarFill ?? 0) + b.stunBarFillIncreased;
+    // Same rule as resolveAction: the first source's target type; same-type fractions add up, capped at 1.
+    const c = b.damageConversion;
+    if (c && (!conversion || conversion.to === c.to)) conversion = { to: c.to, fraction: Math.min(1, (conversion?.fraction ?? 0) + c.fraction) };
   }
   return {
     ...(grants ? { grants } : {}),
@@ -157,6 +162,7 @@ export function mergeBonuses(bonuses: readonly SkillBonus[]): SkillBonus {
     ...(costMultiplier !== undefined ? { resourceCostMultiplier: costMultiplier } : {}),
     ...(leech !== undefined ? { leech } : {}),
     ...(stunBarFill !== undefined ? { stunBarFillIncreased: stunBarFill } : {}),
+    ...(conversion ? { damageConversion: conversion } : {}),
   };
 }
 

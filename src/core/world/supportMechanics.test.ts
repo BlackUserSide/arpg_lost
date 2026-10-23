@@ -7,7 +7,9 @@ import { computeDamage } from '../combat/damage';
 import { vec } from '../math';
 import type { PassiveMechanic } from '../passives/types';
 import { createRng } from '../rng';
-import type { SkillBonus } from '../skills/types';
+import { mergeBonuses } from '../skills/levels';
+import { resolveAction } from '../skills/params';
+import type { SkillBonus, SkillChangeSet } from '../skills/types';
 import type { SupportData, SupportDef, SupportRef } from '../supports/types';
 import type { ActionDef, ClassDef, Content, MobDef } from './content';
 import { useTime } from './actions';
@@ -464,5 +466,169 @@ describe('supports across loadout rebuilds', () => {
     const w = world({ slash: refs('power') });
     setLoadoutModifiers(w, content, [], []);
     expect(w.player.actions.skills[0]!.modifiers).toEqual([{ stat: 'damage', kind: 'more', value: 0.5 }]);
+  });
+});
+
+describe('vampirism with the lifeLeech keystone', () => {
+  /** Keystone fixture: 5% leech, capped at 20% of max life per second (20 life for the 100-life hero). */
+  const keystone: PassiveMechanic = { kind: 'lifeLeech', fraction: 0.05, maxPerSecond: 0.2 };
+  /** ×30 damage: one slash removes 300 life from a 1000-life dummy. */
+  const huge: Loadout = { modifiers: [{ stat: 'damage', kind: 'more', value: 29 }] };
+
+  it('a small hit leeches the keystone and Vampirism fractions summed: 10 × (0.05 + 0.1) = 1.5', () => {
+    const w = world({ slash: refs('vampirism') }, { mechanics: [keystone] });
+    w.player.life = 50;
+    addMob(w, 540, 500);
+    run(w, 1, use(0));
+    expect(w.player.life).toBeCloseTo(51.5, 9);
+  });
+
+  it('a big hit is clamped by the keystone per-second cap: min(300 × 0.15, 20) = 20', () => {
+    const w = world({ slash: refs('vampirism') }, { ...huge, mechanics: [keystone] });
+    w.player.life = 50;
+    const mob = addMob(w, 540, 500);
+    expect(hits(run(w, 1, use(0)), mob.id)).toEqual([300]);
+    expect(w.player.life).toBeCloseTo(70, 9);
+  });
+
+  it('the same big hit without the keystone is uncapped (30), and the keystone alone gives 15', () => {
+    const vampOnly = world({ slash: refs('vampirism') }, huge);
+    vampOnly.player.life = 50;
+    addMob(vampOnly, 540, 500);
+    run(vampOnly, 1, use(0));
+    expect(vampOnly.player.life).toBeCloseTo(80, 9);
+
+    const keystoneOnly = world({}, { ...huge, mechanics: [keystone] });
+    keystoneOnly.player.life = 50;
+    addMob(keystoneOnly, 540, 500);
+    run(keystoneOnly, 1, use(0));
+    expect(keystoneOnly.player.life).toBeCloseTo(65, 9);
+  });
+});
+
+describe('dash and every-N-th supports', () => {
+  /** Dash attack along the facing: 100 at 1000/s, 10 physical to mobs within 10 (+ their radius) of the path. */
+  const charge: ActionDef = {
+    id: 'charge',
+    tags: ['attack', 'melee'],
+    resourceCost: 0,
+    cooldown: 0,
+    damage: { source: 'weapon', effectiveness: 1 },
+    delivery: { kind: 'dash', distance: 100, speed: 1000, hitRadius: 10 },
+  };
+  /** Dash without path hits; its landing hits within 60 at 50% (5 physical). */
+  const leap: ActionDef = { ...charge, id: 'leap', delivery: { kind: 'dash', distance: 100, speed: 1000, hitRadius: 0, landing: { radius: 60, effectiveness: 0.5 } } };
+  /** Arc of 90°; every 2nd use is a 360° special swing. */
+  const sweep: ActionDef = { ...slash, id: 'sweep', resourceCost: 0, delivery: { kind: 'arc', radius: 60, angleDeg: 90, everyNth: { every: 2, angleDeg: 360 } } };
+  const dasher: ClassDef = { ...hero, id: 'dasher', skills: [charge, leap, sweep] };
+  const dashContent: Content = { ...content, classes: { hero, dasher } };
+
+  const dashWorld = (socketed: Record<string, SupportRef[]>): WorldState => createWorld(dashContent, 'dasher', 1, { supports: socketed });
+  const chains = (events: readonly WorldEvent[]): WorldEvent[] => events.filter((e) => e.type === 'chain');
+
+  it('chain lightning from a dash path hit: the bolt hops from the path target to a mob off the path', () => {
+    const w = dashWorld({ charge: refs('chain') });
+    const onPath = addMob(w, 550, 500);
+    const off = addMob(w, 550, 600);
+    const far = addMob(w, 900, 900);
+    const events = run(w, 20, use(0), dashContent);
+    expect(w.player.pos.x).toBeCloseTo(600, 9);
+    // Points are the positions at the hit (the hero later shoulders the path mob aside).
+    expect(chains(events)).toEqual([{ type: 'chain', actionId: 'charge', fromId: onPath.id, targetIds: [off.id], points: [vec(550, 500), vec(550, 600)], damageType: 'lightning' }]);
+    expect(hits(events, onPath.id)).toEqual([10]);
+    // 10 base × 0.5 chain effectiveness, as lightning.
+    expect(hits(events, off.id)).toEqual([5]);
+    expect(hits(events, far.id)).toEqual([]);
+  });
+
+  it('chain lightning from a dash landing: the bolt starts at the closest landing target, at 50% of the base damage', () => {
+    const w = dashWorld({ leap: refs('chain') });
+    const landed = addMob(w, 620, 500);
+    const outside = addMob(w, 620, 620);
+    const events = run(w, 20, use(1), dashContent);
+    const areas = events.filter((e) => e.type === 'area');
+    expect(areas.map((e) => (e.type === 'area' ? e.trigger : undefined))).toEqual(['dashLanding']);
+    expect(areas[0]?.type === 'area' ? areas[0].origin.x : 0).toBeCloseTo(600, 9);
+    expect(chains(events)).toEqual([{ type: 'chain', actionId: 'leap', fromId: landed.id, targetIds: [outside.id], points: [landed.pos, outside.pos], damageType: 'lightning' }]);
+    // Landing: 10 × 0.5. Bolt: chain effectiveness × the rolled base (10 × 0.5), not of the landing hit.
+    expect(hits(events, landed.id)).toEqual([5]);
+    expect(hits(events, outside.id)).toEqual([5]);
+  });
+
+  it('echo of an every-N-th special swing keeps the special angle and does not count as a use', () => {
+    const w = dashWorld({ sweep: refs('echo') });
+    const behind = addMob(w, 460, 500);
+    const swings: (number | string | undefined)[][] = [];
+    const record = (events: readonly WorldEvent[]): void => {
+      for (const e of events) if (e.type === 'area') swings.push([e.angleDeg, e.trigger]);
+    };
+    // Use 1 (normal) and its echo; the next use is ready after the 0.5 s attack time (31 steps with float rounding).
+    record(run(w, 31, use(2), dashContent));
+    expect(w.player.useCounts.sweep).toBe(1);
+    // Use 2 (special) and its echo.
+    record(run(w, 31, use(2), dashContent));
+    expect(w.player.useCounts.sweep).toBe(2);
+    // Use 3: normal again, so the special echo was not counted.
+    record(run(w, 1, use(2), dashContent));
+    expect(w.player.useCounts.sweep).toBe(3);
+    expect(swings).toEqual([
+      [90, undefined],
+      [90, undefined],
+      [360, 'everyNth'],
+      [360, 'everyNth'],
+      [90, undefined],
+    ]);
+    // Only the 360° swings reach the mob behind the hero: the special use and its echo.
+    expect(behind.life).toBe(1000 - 20);
+  });
+});
+
+describe('combining support bonuses', () => {
+  const conv = (to: 'fire' | 'cold', fraction: number): SkillChangeSet => ({ damageConversion: { to, fraction } });
+
+  it('two conversions to the same type add up and cap at 1; another target type is ignored', () => {
+    expect(resolveAction(slash, [conv('fire', 0.5), conv('fire', 0.7)]).damageConversion).toEqual({ to: 'fire', fraction: 1 });
+    expect(resolveAction(slash, [conv('fire', 0.3), conv('cold', 0.5), conv('fire', 0.2)]).damageConversion).toEqual({ to: 'fire', fraction: 0.5 });
+    // The action's own conversion comes first.
+    expect(resolveAction({ ...slash, damageConversion: { to: 'cold', fraction: 0.2 } }, [conv('fire', 0.5)]).damageConversion).toEqual({ to: 'cold', fraction: 0.2 });
+  });
+
+  it('in the world: Ignite on Hit (fire 50%) + another fire conversion = all fire; + a cold conversion = half fire', () => {
+    const extra: SupportData = {
+      ...supports,
+      supports: {
+        ...supports.supports,
+        scorch: support('scorch', { damageConversion: { to: 'fire', fraction: 0.7 } }),
+        frost: support('frost', { damageConversion: { to: 'cold', fraction: 0.5 } }),
+      },
+    };
+    const c = makeContent(extra);
+    const allFire = createWorld(c, 'hero', 1, { supports: { slash: refs('ignite', 'scorch') } });
+    const halfFire = createWorld(c, 'hero', 1, { supports: { slash: refs('ignite', 'frost') } });
+    expect(allFire.player.actions.skills[0]!.damageConversion).toEqual({ to: 'fire', fraction: 1 });
+    expect(halfFire.player.actions.skills[0]!.damageConversion).toEqual({ to: 'fire', fraction: 0.5 });
+    const a = addMob(allFire, 540, 500, 'fireResist');
+    const b = addMob(halfFire, 540, 500, 'fireResist');
+    // 10 fire at 50% resistance; 5 physical + 5 fire at 50%.
+    expect(hits(run(allFire, 1, use(0), c), a.id)).toEqual([5]);
+    expect(hits(run(halfFire, 1, use(0), c), b.id)).toEqual([7.5]);
+  });
+
+  it('mergeBonuses: cost multipliers multiply, leech and stun bar fill add up, conversions combine like sets', () => {
+    const merged = mergeBonuses([
+      { resourceCostMultiplier: 1.2, leech: 0.05, stunBarFillIncreased: 0.3, damageConversion: { to: 'fire', fraction: 0.5 } },
+      { resourceCostMultiplier: 1.5, leech: 0.1, damageConversion: { to: 'cold', fraction: 0.5 } },
+      { stunBarFillIncreased: 0.2, damageConversion: { to: 'fire', fraction: 0.75 } },
+    ]);
+    expect(merged.resourceCostMultiplier).toBeCloseTo(1.8, 10);
+    expect(merged.leech).toBeCloseTo(0.15, 10);
+    expect(merged.stunBarFillIncreased).toBeCloseTo(0.5, 10);
+    expect(merged.damageConversion).toEqual({ to: 'fire', fraction: 1 });
+    expect(mergeBonuses([{ leech: 0.1 }, {}])).toEqual({ leech: 0.1 });
+    // The merged bonus resolves like the separate sets.
+    const resolved = resolveAction(slash, [{ skillIds: ['slash'], ...merged }]);
+    expect(resolved.resourceCost).toBeCloseTo(18, 10);
+    expect(resolved.leech).toBeCloseTo(0.15, 10);
+    expect(resolved.stunBarFillIncreased).toBeCloseTo(0.5, 10);
   });
 });
