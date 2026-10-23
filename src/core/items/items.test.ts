@@ -40,7 +40,7 @@ const data: ItemsData = {
     salvage: { normal: 1, magic: 3, rare: 8, unique: 25, legendary: 100 },
     stashSize: 3,
     enforceLevelRequirement: true,
-    arenaRewards: { killsPerItem: 10, maxItems: 2, wavesPerItemLevel: 2, maxItemLevel: 20 },
+    arenaRewards: { killsPerItem: 10, maxItems: 2, wavesPerItemLevel: 2, maxBonusLevels: 3 },
     rareNameWords: { first: ['Grim'], second: ['Bane'] },
   },
 };
@@ -233,18 +233,26 @@ describe('inventory', () => {
 });
 
 describe('arena rewards', () => {
-  it('grants items by kills, levels by waves, and salvages overflow', () => {
+  it('grants items by kills, levels by area level + waves, and salvages overflow', () => {
     const profile = createProfile();
-    const none = grantArenaRewards(profile, createRng(1), { kills: 9, wave: 1 }, data);
+    const none = grantArenaRewards(profile, createRng(1), { kills: 9, wave: 1, areaLevel: 1 }, data);
     expect(none.items).toHaveLength(0);
-    const some = grantArenaRewards(profile, createRng(1), { kills: 25, wave: 7 }, data);
+    const some = grantArenaRewards(profile, createRng(1), { kills: 25, wave: 5, areaLevel: 1 }, data);
     expect(some.items).toHaveLength(2);
-    expect(some.items.every((i) => i.level === 4)).toBe(true);
+    expect(some.items.every((i) => i.level === 3)).toBe(true);
     expect(profile.stash.items).toHaveLength(2);
-    const overflow = grantArenaRewards(profile, createRng(2), { kills: 100, wave: 99 }, data);
+    // The wave bonus is capped at +3 over the area level.
+    const overflow = grantArenaRewards(profile, createRng(2), { kills: 100, wave: 99, areaLevel: 1 }, data);
     expect(overflow.items).toHaveLength(2);
-    expect(overflow.items.every((i) => i.level === 20)).toBe(true);
+    expect(overflow.items.every((i) => i.level === 4)).toBe(true);
     expect(profile.stash.items).toHaveLength(3);
     expect(overflow.salvaged).toBeGreaterThan(0);
+  });
+
+  it('starts item level at the area level', () => {
+    const early = grantArenaRewards(createProfile(), createRng(3), { kills: 10, wave: 0, areaLevel: 12 }, data);
+    expect(early.items.every((i) => i.level === 12)).toBe(true);
+    const late = grantArenaRewards(createProfile(), createRng(3), { kills: 10, wave: 40, areaLevel: 12 }, data);
+    expect(late.items.every((i) => i.level === 15)).toBe(true);
   });
 });

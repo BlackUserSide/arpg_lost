@@ -572,7 +572,7 @@ export class IsoArenaScene extends Phaser.Scene {
       progress: { level: this.world.player.level, xp: this.world.player.xp },
       skills: this.world.player.skillProgress,
     });
-    this.rewards = grantArenaRewards(app.profile, createRng((Math.random() * 2 ** 32) >>> 0), { kills: this.world.kills, wave: this.world.spawn.wave }, itemsData);
+    this.rewards = grantArenaRewards(app.profile, createRng((Math.random() * 2 ** 32) >>> 0), { kills: this.world.kills, wave: this.world.spawn.wave, areaLevel: this.world.areaLevel }, itemsData);
     // Designer decision 2026-10-23: supports found in a run are lost if the hero died.
     const character = findCharacter(app.profile, this.characterId);
     const supportsData = this.content.supports;
