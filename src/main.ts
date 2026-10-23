@@ -7,6 +7,7 @@ import { InventoryScene } from './render/InventoryScene';
 import { IsoArenaScene } from './render/IsoArenaScene';
 import { MainMenuScene } from './render/MainMenuScene';
 import { PassiveTreeScene } from './render/PassiveTreeScene';
+import { SupportsScene } from './render/SupportsScene';
 
 async function boot(): Promise<void> {
   const platform = new LocalPlatform();
@@ -20,7 +21,7 @@ async function boot(): Promise<void> {
     scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' },
     // Two touch pointers for pinch zoom on the passive tree.
     input: { activePointers: 2 },
-    scene: [MainMenuScene, CreateCharacterScene, InventoryScene, IsoArenaScene, PassiveTreeScene],
+    scene: [MainMenuScene, CreateCharacterScene, InventoryScene, IsoArenaScene, PassiveTreeScene, SupportsScene],
     callbacks: { preBoot: (g) => g.registry.set(APP_KEY, app) },
   });
 
