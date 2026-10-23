@@ -17,7 +17,8 @@ import { skillIcon } from './hudIcons';
 import { formatCost, resourceText } from './resourceText';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
-// In-run HUD: Diablo-style life / class-resource orbs, skill bar with cooldown shutters, XP bar, run info, buffs.
+// In-run HUD: Diablo-style life / class-resource orbs, skill bar with cooldown shutters, XP bar, buffs. The map run's
+// timer, room line and boss bar are render/runHud.ts.
 // Render-only: reads world state every frame.
 
 const DEPTH = 10000;
@@ -169,12 +170,6 @@ export class Hud {
   /** Whether the resource number is drawn in the "empty" colour. */
   private resourceEmptyShown = false;
   private readonly slots: Slot[];
-  private readonly info: Phaser.GameObjects.Text;
-  private infoFrame: Phaser.GameObjects.Image;
-  /** Run info last drawn: the text is rebuilt only when one of these changes (-1 = never drawn). */
-  private shownSeconds = -1;
-  private shownKills = -1;
-  private shownWave = -1;
   private buffIcons: Phaser.GameObjects.GameObject[] = [];
   private time = 0;
   /** Mechanics list the slot costs were computed for (the world replaces the array on change). */
@@ -239,8 +234,6 @@ export class Hud {
         levelGlow: 0,
       };
     });
-    this.infoFrame = makeFrame(scene, 0, 0, 240, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
-    this.info = label(scene, 0, 0, '', 15, UI.text, true).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH + 1);
     this.resourceNote = label(scene, 0, 0, t('hud.skillsCostLife'), 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
     this.resourceNote.setStroke('#000', 3);
   }
@@ -281,15 +274,6 @@ export class Hud {
     const barH = compact ? 6 : 8;
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - levelStrip - size - (compact ? 10 : 14) - barH, w: total, h: barH };
     this.levelText.setPosition(this.xpRect.x - 8, this.xpRect.y + barH / 2).setFontSize(compact ? 13 : 15);
-
-    // Wide enough for a long run in the longest wording (translations differ a lot in length).
-    const sample = this.info.text;
-    this.info.setText(t('hud.runInfo', { time: '00:00', kills: 9999, wave: 99 }));
-    const infoW = Math.max(compact ? 200 : 240, Math.ceil(this.info.width + 28));
-    this.info.setText(sample);
-    this.infoFrame.destroy();
-    this.infoFrame = makeFrame(this.scene, width / 2, margin + 18, infoW, 36, 'secondary').setScrollFactor(0).setDepth(DEPTH);
-    this.info.setPosition(width / 2, margin + 18);
   }
 
   update(world: WorldState, dt: number): void {
@@ -381,14 +365,6 @@ export class Hud {
       }
     }
 
-    const seconds = Math.floor(world.time);
-    if (seconds !== this.shownSeconds || world.kills !== this.shownKills || world.spawn.wave !== this.shownWave) {
-      this.shownSeconds = seconds;
-      this.shownKills = world.kills;
-      this.shownWave = world.spawn.wave;
-      const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-      this.info.setText(t('hud.runInfo', { time, kills: world.kills, wave: world.spawn.wave }));
-    }
     this.drawXp(world, dt);
     this.drawSkillLevels(world, dt);
     this.updateBuffs(world);

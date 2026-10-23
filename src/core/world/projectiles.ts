@@ -39,7 +39,7 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
     if (world.decoys.some((d) => distance(p.pos, d.pos) <= p.radius + d.radius)) return false;
     const player = world.player;
     if (!player.dead && distance(p.pos, player.pos) <= p.radius + player.radius) {
-      hitPlayer(ctx, getMob(content, p.sourceId));
+      hitPlayer(ctx, getMob(content, p.sourceId), p.damageScale ?? 1);
       return false;
     }
   } else {
@@ -64,7 +64,7 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
     }
   }
 
-  if (p.remaining <= 0 || !insideArena(p.pos, content)) {
+  if (p.remaining <= 0 || !insideArena(p.pos, world)) {
     if (p.action && p.explodeRadius > 0) {
       const hit = explode(ctx, p.action, p.pos, p.explodeRadius, hitModifiers(ctx, p, p.action.tags), { zoneModifiers: p.castModifiers });
       splitProjectile(ctx, p, p.action, hit);
@@ -82,10 +82,10 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
  * explosion can still splash them. Nothing happens outside the arena.
  */
 function splitProjectile(ctx: Ctx, parent: Projectile, action: ActionDef, ignoreIds: readonly number[]): void {
-  const { world, content, events } = ctx;
+  const { world, events } = ctx;
   if (action.delivery.kind !== 'projectile') return;
   const split = action.delivery.split;
-  if (!split || split.count < 1 || !insideArena(parent.pos, content)) return;
+  if (!split || split.count < 1 || !insideArena(parent.pos, world)) return;
   const child = childAction(action, split);
   const count = Math.floor(split.count);
   const spread = (split.spreadDeg * Math.PI) / 180;

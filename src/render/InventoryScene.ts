@@ -20,7 +20,7 @@ import { getApp, type App } from './app';
 import { itemIcon } from './itemIcons';
 import { className, itemName } from './contentText';
 import { buildCraftPanel, CURRENCY_LOOK, type CraftFlash } from './craftPanel';
-import { AFFIX_OPS, changedAffixes } from './craftText';
+import { AFFIX_OPS, changedAffixes, currencyAmount } from './craftText';
 import { describeItem, rarityLabel } from './itemText';
 import { shardsWord } from './passiveText';
 import { resourceText } from './resourceText';
@@ -227,7 +227,7 @@ export class InventoryScene extends Phaser.Scene {
     const wallet = this.app.profile.currency;
     const headerText =
       this.tab === 'craft'
-        ? `${CURRENCY_LOOK[SALVAGE_CURRENCY]!.glyph} ${wallet[SALVAGE_CURRENCY] ?? 0}   ${CURRENCY_LOOK[ESSENCE_CURRENCY]!.glyph} ${wallet[ESSENCE_CURRENCY] ?? 0}`
+        ? `${CURRENCY_LOOK[SALVAGE_CURRENCY]!.glyph} ${wallet[SALVAGE_CURRENCY] ?? 0}   ${CURRENCY_LOOK[ESSENCE_CURRENCY]!.glyph} ${currencyAmount(ESSENCE_CURRENCY, wallet[ESSENCE_CURRENCY] ?? 0)}`
         : `${items.length}/${rules.stashSize}   ◆ ${compact ? (wallet[SALVAGE_CURRENCY] ?? 0) : shardsWord(wallet[SALVAGE_CURRENCY] ?? 0)}`;
     const headerRight = stashX + stashW / 2 - 14;
     const headerRoom = headerRight - (tabsLeft + tabW * 2 + 6 + 10);

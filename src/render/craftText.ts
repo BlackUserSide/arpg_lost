@@ -1,7 +1,7 @@
 import { ESSENCE_CURRENCY, type CraftCost, type CraftError, type CraftOp } from '../core/items/craft';
 import { SALVAGE_CURRENCY } from '../core/items/inventory';
 import type { Item, RolledAffix } from '../core/items/types';
-import { t, type MessageKey } from '../i18n';
+import { formatNumber, t, type MessageKey } from '../i18n';
 import { rarityLabel } from './itemText';
 
 // Crafting panel text (docs/design/crafting.md). Pure functions (tested), no Phaser. Core decides what is possible
@@ -21,9 +21,22 @@ export const AFFIX_OPS: ReadonlySet<CraftOp> = new Set<CraftOp>(['rerollAffix', 
 /** Display order of currencies in costs and wallets: shards, then essence, then anything newer. */
 const CURRENCY_ORDER = [SALVAGE_CURRENCY, ESSENCE_CURRENCY];
 
+/**
+ * Essence as shown: one decimal at most (0.1 per elite, docs/design/crafting.md), rounded down so the screen never
+ * promises more than the wallet holds. Integers stay integers ("2", "0.7").
+ */
+export function essenceShown(amount: number): number {
+  return Math.floor(amount * 10 + 1e-6) / 10;
+}
+
+/** A currency amount without its word: essence with one decimal at most ("0,7" in uk / de / pl), others as integers. */
+export function currencyAmount(currency: string, amount: number): string {
+  return currency === ESSENCE_CURRENCY ? formatNumber(essenceShown(amount), 1) : formatNumber(Math.floor(amount + 1e-6), 0);
+}
+
 export function currencyWord(currency: string, count: number): string {
   if (currency === SALVAGE_CURRENCY) return t('unit.shards', { count });
-  if (currency === ESSENCE_CURRENCY) return t('unit.essence', { count });
+  if (currency === ESSENCE_CURRENCY) return t('unit.essence', { count: essenceShown(count) });
   return `${count} ${currency}`;
 }
 

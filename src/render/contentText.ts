@@ -28,6 +28,7 @@ export const supportName = (id: string): string => tx(contentKey.supportName(id)
 export const supportDescription = (id: string): string => tx(contentKey.supportDescription(id), undefined, '');
 export const specName = (id: string): string => tx(contentKey.specName(id), undefined, id);
 export const baseName = (id: string): string => tx(contentKey.baseName(id), undefined, id);
+export const mobName = (id: string): string => tx(contentKey.mobName(id), undefined, id);
 
 /** A passive node's name; a class start node is named after its class. */
 export function passiveName(node: Pick<PassiveNodeDef, 'id' | 'type' | 'classId'>): string {

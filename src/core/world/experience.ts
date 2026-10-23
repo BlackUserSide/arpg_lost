@@ -7,7 +7,7 @@ import type { ClassDef, Content } from './content';
 import { syncCharges } from './charges';
 import { levelUpResource, spawnResource } from './resource';
 import { leechStats, lifeRecoveryPool } from './passiveEffects';
-import { deriveFromMechanics, getClass, playerStat, type Ctx, type PlayerState, type WorldState } from './state';
+import { deriveFromMechanics, getClass, playerStat, type Ctx, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 function refillLifePools(classDef: ClassDef, player: PlayerState): void {
   player.life = playerStat(classDef, player, 'life');
@@ -135,10 +135,26 @@ function gainHeroXp(ctx: Ctx, baseXp: number): void {
   if (player.level >= rules.maxLevel) return;
   const amount = mobXp(baseXp, world.areaLevel, rules) * areaXpMultiplier(player.level, world.areaLevel, rules);
   world.xpGained += amount;
+  addHeroXp(world, classDef, rules, amount, events);
+}
+
+function addHeroXp(world: WorldState, classDef: ClassDef, rules: ProgressionRules, amount: number, events: { push(event: WorldEvent): unknown }): void {
+  const player = world.player;
+  if (player.level >= rules.maxLevel || amount <= 0) return;
   if (grantXp(player, amount, rules) === 0) return;
   rebuildModifiers(player, rules);
   levelUpPools(classDef, player);
   events.push({ type: 'levelUp', level: player.level });
+}
+
+/**
+ * Hero XP outside of kills (map completion bonus): `amount` as is (no area scaling or low-area penalty; the caller
+ * computed it from XP that already had them). Not counted in WorldState.xpGained. A level-up works as for kills
+ * (stats rebuilt, pools refilled, 'levelUp' event pushed to `events`). Skills get nothing.
+ */
+export function grantBonusXp(world: WorldState, content: Content, amount: number, events: { push(event: WorldEvent): unknown }): void {
+  if (world.player.dead) return;
+  addHeroXp(world, getClass(content, world.player.classId), content.progression, amount, events);
 }
 
 /**

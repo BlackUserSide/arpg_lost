@@ -294,8 +294,11 @@ export function makeCard(scene: Phaser.Scene, x: number, y: number, w: number, h
   return card;
 }
 
-/** Modal confirmation above everything. */
-export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel: string, onConfirm: () => void, cancelLabel = t('common.cancel')): void {
+/**
+ * Modal confirmation above everything (`depth`: above overlays that sit higher than menus). Pinned to the screen, so it
+ * also works over a scrolled game camera.
+ */
+export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel: string, onConfirm: () => void, cancelLabel = t('common.cancel'), depth = 1000): void {
   const { width, height } = scene.scale;
   const shade = scene.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.7).setInteractive();
   const w = Math.min(440, width - 32);
@@ -315,7 +318,7 @@ export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel
   }, 'danger');
   const no = makeButton(scene, width / 2 + buttonW / 2 + 15, buttonY, buttonW, 46, cancelLabel, close);
   parts.push(shade, panel, text, yes, no);
-  for (const p of [shade, panel, text, yes, no]) p.setDepth(1000);
+  for (const p of [shade, panel, text, yes, no]) pinToScreen(p, depth);
   for (const p of [panel, text, yes, no]) p.setAlpha(0);
   scene.tweens.add({ targets: [panel, text, yes, no], alpha: 1, duration: 160 });
 }

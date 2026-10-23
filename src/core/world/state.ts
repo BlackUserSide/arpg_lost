@@ -1,8 +1,8 @@
-import { clamp, vec, type Vec2 } from '../math';
+import { clamp, distance, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { PassiveMechanic } from '../passives/types';
 import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
-import type { ActionDef, ClassDef, Content, MobDef, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
+import type { ActionDef, ClassDef, Content, MobDef, MobRank, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
 import { resolveActions, type ActionSet } from '../skills/params';
 import { skillLevelChangeSets, type SkillProgress } from '../skills/levels';
 import { supportChangeSets } from '../supports/rules';
@@ -155,8 +155,17 @@ export interface MobState {
   pos: Vec2;
   facing: Vec2;
   life: number;
-  /** Max life, set at spawn (= MobDef.life today; elite / map scaling later). Death explosions use it. */
+  /** Max life, set at spawn (MobDef.life × the spawn's life scale: elite / boss rank, later map level). Death explosions use it. */
   readonly maxLife: number;
+  /**
+   * Rank of this mob when it differs from its def (a map run spawns elites and the placeholder boss from ordinary mob
+   * data, docs/design/maps.md). Absent: the def's rank (MobDef.boss / MobDef.elite). Read through mobRank().
+   */
+  readonly rank?: MobRank;
+  /** Multiplier on the damage of this mob's attacks (rank scaling); absent = 1. */
+  readonly damageScale?: number;
+  /** Multiplier on the XP this mob gives (rank scaling); absent = 1. */
+  readonly xpScale?: number;
   attackTimer: number;
   /** Remaining seconds of each status (0 = none); see STATUS_IDS. */
   stun: number;
@@ -231,6 +240,8 @@ export interface Projectile {
    * its hits instead of re-evaluating at impact. Empty for mob projectiles. See heroConditionalModifiers.
    */
   readonly castModifiers: readonly Modifier[];
+  /** Mob projectiles: the shooter's MobState.damageScale when fired (absent = 1). */
+  readonly damageScale?: number;
 }
 
 export interface Trap {
@@ -289,8 +300,29 @@ export interface Decoy {
   bossTauntRemaining: number;
 }
 
+/** The walkable rectangle of the world, from (0, 0) to (width, height). */
+export interface Bounds {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A round obstacle (pillar, rock): the hero and mobs cannot stand inside it. Projectiles fly over it. */
+export interface Obstacle {
+  readonly pos: Vec2;
+  readonly radius: number;
+}
+
 export interface WorldState {
   time: number;
+  /**
+   * Current walkable area: the arena (Content.arena) or the current room of a map run (core/run), which swaps it
+   * when the hero walks into the next room.
+   */
+  bounds: Bounds;
+  /** Obstacles of the current room (none in the arena). */
+  obstacles: Obstacle[];
+  /** True: the endless arena spawner (Content.arena.spawn) runs. False: a map run spawns the mobs (room waves). */
+  readonly endless: boolean;
   rngState: number;
   /**
    * Separate seeded stream for loot rolls (support drops), so loot never shifts combat randomness and vice versa.
@@ -499,10 +531,32 @@ export function movePlayer(player: PlayerState, pos: Vec2): void {
   player.pos = pos;
 }
 
-export function clampToArena(pos: Vec2, radius: number, content: Content): Vec2 {
-  return vec(clamp(pos.x, radius, content.arena.width - radius), clamp(pos.y, radius, content.arena.height - radius));
+/** Rank of a mob: its spawn rank (MobState.rank) or its def's (MobDef.boss / MobDef.elite). */
+export function mobRank(def: MobDef, mob: Pick<MobState, 'rank'>): MobRank {
+  return mob.rank ?? (def.boss ? 'boss' : def.elite ? 'elite' : 'normal');
 }
 
-export function insideArena(pos: Vec2, content: Content): boolean {
-  return pos.x >= 0 && pos.y >= 0 && pos.x <= content.arena.width && pos.y <= content.arena.height;
+export function isBoss(content: Content, mob: MobState): boolean {
+  return mobRank(getMob(content, mob.defId), mob) === 'boss';
+}
+
+/**
+ * Keeps a body of `radius` inside the world bounds and out of the obstacles: pushed out of each obstacle it
+ * overlaps (in order; a body exactly at an obstacle's centre goes along +x), then clamped to the bounds.
+ */
+export function clampToArena(pos: Vec2, radius: number, world: Pick<WorldState, 'bounds' | 'obstacles'>): Vec2 {
+  let p = pos;
+  for (const o of world.obstacles) {
+    const d = distance(p, o.pos);
+    const min = o.radius + radius;
+    if (d >= min) continue;
+    const dir = d > 0 ? scale(sub(p, o.pos), 1 / d) : vec(1, 0);
+    p = vec(o.pos.x + dir.x * min, o.pos.y + dir.y * min);
+  }
+  const { width, height } = world.bounds;
+  return vec(clamp(p.x, radius, width - radius), clamp(p.y, radius, height - radius));
+}
+
+export function insideArena(pos: Vec2, world: Pick<WorldState, 'bounds'>): boolean {
+  return pos.x >= 0 && pos.y >= 0 && pos.x <= world.bounds.width && pos.y <= world.bounds.height;
 }

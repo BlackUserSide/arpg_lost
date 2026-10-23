@@ -1,18 +1,18 @@
-import { applyDamageTaken, rollBaseDamage, totalDamage } from '../combat/damage';
+import { applyDamageTaken, rollBaseDamage, scaleDamage, totalDamage } from '../combat/damage';
 import { applyDamage, resolveHit } from '../combat/hit';
 import type { Defences } from '../combat/mitigation';
 import { add, distance, normalize, scale, sub, vec, type Vec2 } from '../math';
 import { createRng, type Rng } from '../rng';
 import { rollSupportDrop } from '../supports/drops';
 import type { SupportData } from '../supports/types';
-import type { Content, MobDef } from './content';
+import type { Content, MobDef, MobRank } from './content';
 import { counterAttack } from './actions';
 import { heroDeathExplosions } from './deathExplosions';
 import { gainKillXp } from './experience';
 import { decayStunBar, tickBleed, tickIgnite } from './statuses';
 import { resourceOnHeroHitTaken } from './resource';
 import { mobTarget } from './zones';
-import { allModifiers, clampToArena, getMob, playerStat, type Ctx, type MobState, type WorldState } from './state';
+import { allModifiers, clampToArena, getMob, mobRank, playerStat, type Ctx, type MobState, type WorldEvent, type WorldState } from './state';
 
 export function updateMobs(ctx: Ctx, dt: number): void {
   const { world, content, events } = ctx;
@@ -36,12 +36,12 @@ export function updateMobs(ctx: Ctx, dt: number): void {
     mob.stun = Math.max(0, mob.stun - dt);
     mob.freeze = Math.max(0, mob.freeze - dt);
     // Being pushed (Knockback support): the push moves the mob even while stunned; it neither walks nor attacks.
-    const pushed = moveKnockback(mob, def, content, dt);
+    const pushed = moveKnockback(mob, def, world, dt);
     if (disabled || pushed) continue;
     mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor);
 
     // The hero, or a decoy taunting this mob (mobTarget): the mob chases and attacks it the same way.
-    const target = mobTarget(world, mob, def.boss === true);
+    const target = mobTarget(world, mob, mobRank(def, mob) === 'boss');
     const toTarget = normalize(sub(target.pos, mob.pos));
     if (toTarget.x !== 0 || toTarget.y !== 0) mob.facing = toTarget;
     const gap = distance(target.pos, mob.pos) - target.radius - def.radius;
@@ -73,10 +73,11 @@ export function updateMobs(ctx: Ctx, dt: number): void {
           explodeRadius: 0,
           hitIds: [],
           castModifiers: [],
+          ...(mob.damageScale !== undefined ? { damageScale: mob.damageScale } : {}),
         });
       } else if (!target.decoy) {
         // A melee swing at a decoy does nothing (it has no life): the mob just wastes its attack.
-        hitPlayer(ctx, def, mob);
+        hitPlayer(ctx, def, mob.damageScale ?? 1, mob);
       }
     }
   }
@@ -84,11 +85,11 @@ export function updateMobs(ctx: Ctx, dt: number): void {
 }
 
 /** Advances a mob's knockback by one step (clamped to the arena). Returns true if it was being pushed this step. */
-function moveKnockback(mob: MobState, def: MobDef, content: Content, dt: number): boolean {
+function moveKnockback(mob: MobState, def: MobDef, world: WorldState, dt: number): boolean {
   const push = mob.knockback;
   if (!push) return false;
   const len = Math.min(push.speed * dt, push.remaining);
-  mob.pos = clampToArena(add(mob.pos, scale(push.dir, len)), def.radius, content);
+  mob.pos = clampToArena(add(mob.pos, scale(push.dir, len)), def.radius, world);
   push.remaining -= len;
   if (push.remaining <= TIME_EPSILON) delete mob.knockback;
   return true;
@@ -106,10 +107,11 @@ export function slowFraction(mob: MobState, content: Content): number {
 }
 
 /**
- * A mob attack lands on the hero. `meleeAttacker`: the attacking mob, for melee hits only (mob projectiles pass
+ * A mob attack lands on the hero. `damageScale`: the attacker's rank scaling (MobState.damageScale), applied to the
+ * rolled base damage before mitigation. `meleeAttacker`: the attacking mob, for melee hits only (mob projectiles pass
  * nothing); a melee hit that the hero survives may trigger counterAttack against it.
  */
-export function hitPlayer(ctx: Ctx, mobDef: MobDef, meleeAttacker?: MobState): void {
+export function hitPlayer(ctx: Ctx, mobDef: MobDef, damageScale = 1, meleeAttacker?: MobState): void {
   const { world, content, classDef, rng, events } = ctx;
   const player = world.player;
   if (player.dead || player.invulnerable > 0) return;
@@ -121,7 +123,8 @@ export function hitPlayer(ctx: Ctx, mobDef: MobDef, meleeAttacker?: MobState): v
       lightning: playerStat(classDef, player, 'lightningResistance'),
     },
   };
-  const damage = rollBaseDamage(rng, mobDef.attack.damage);
+  const rolled = rollBaseDamage(rng, mobDef.attack.damage);
+  const damage = damageScale === 1 ? rolled : scaleDamage(rolled, damageScale);
   const hit = resolveHit(
     rng,
     { damage, critChance: mobDef.attack.critChance, critMultiplier: content.combat.critMultiplierBase },
@@ -166,7 +169,7 @@ function separateMobs(world: WorldState, content: Content): void {
       const dir = d > 0 ? scale(sub(a.pos, player.pos), 1 / d) : vec(1, 0);
       a.pos = add(a.pos, scale(dir, overlap));
     }
-    a.pos = clampToArena(a.pos, ra, content);
+    a.pos = clampToArena(a.pos, ra, world);
   }
 }
 
@@ -185,7 +188,7 @@ export function removeDeadMobs(ctx: Ctx): void {
     const def = getMob(content, mob.defId);
     world.kills++;
     events.push({ type: 'death', id: mob.id, pos: mob.pos });
-    gainKillXp(ctx, def.xp);
+    gainKillXp(ctx, def.xp * (mob.xpScale ?? 1));
     if (loot && content.supports) dropSupport(ctx, loot, content.supports, mob, def);
     queue.push(...heroDeathExplosions(ctx, mob));
   }
@@ -198,15 +201,59 @@ export function removeDeadMobs(ctx: Ctx): void {
  * area level (rollSupportDrop). Recorded in WorldState.supportDrops with a 'supportDrop' event.
  */
 function dropSupport(ctx: Ctx, loot: Rng, data: SupportData, mob: MobState, def: MobDef): void {
-  const rank = def.boss ? 'boss' : def.elite ? 'elite' : 'normal';
+  const rank = mobRank(def, mob);
   const drop = rollSupportDrop(loot, data, rank, ctx.world.areaLevel);
   if (!drop) return;
   ctx.world.supportDrops.push(drop);
   ctx.events.push({ type: 'supportDrop', mobId: mob.id, pos: mob.pos, defId: drop.defId, tier: drop.tier });
 }
 
+/** What to spawn: a mob def, optionally as another rank with scaled life / damage / XP (map runs). */
+export interface MobSpawn {
+  readonly defId: string;
+  readonly rank?: MobRank;
+  /** Multipliers over the def; absent = 1. */
+  readonly lifeScale?: number;
+  readonly damageScale?: number;
+  readonly xpScale?: number;
+}
+
+/** Adds a fresh mob at `pos` (full life, no statuses) with a 'spawn' event. Returns it. */
+export function spawnMob(world: WorldState, content: Content, spawn: MobSpawn, pos: Vec2, events: { push(event: WorldEvent): unknown }): MobState {
+  const def = getMob(content, spawn.defId);
+  const life = def.life * (spawn.lifeScale ?? 1);
+  const mob: MobState = {
+    id: world.nextId++,
+    defId: def.id,
+    pos,
+    facing: vec(0, 1),
+    life,
+    maxLife: life,
+    attackTimer: 0,
+    stun: 0,
+    slow: 0,
+    slowMagnitude: 0,
+    ignite: 0,
+    igniteDps: 0,
+    freeze: 0,
+    freezeSlow: 0,
+    stunSlow: 0,
+    stunBar: 0,
+    stunBarIdle: 0,
+    auraSlow: 0,
+    ...(spawn.rank !== undefined ? { rank: spawn.rank } : {}),
+    ...(spawn.damageScale !== undefined ? { damageScale: spawn.damageScale } : {}),
+    ...(spawn.xpScale !== undefined ? { xpScale: spawn.xpScale } : {}),
+  };
+  world.mobs.push(mob);
+  events.push({ type: 'spawn', id: mob.id });
+  return mob;
+}
+
+/** The endless arena spawner (Content.arena.spawn); does nothing outside the arena (WorldState.endless false). */
 export function updateSpawner(ctx: Ctx, dt: number): void {
   const { world, content, rng, events } = ctx;
+  if (!world.endless) return;
   const spawn = content.arena.spawn;
   world.spawn.timer -= dt;
   if (world.spawn.timer > 0) return;
@@ -216,34 +263,12 @@ export function updateSpawner(ctx: Ctx, dt: number): void {
   for (let i = 0; i < count && world.mobs.length < spawn.maxAlive; i++) {
     const defId = spawn.mobIds[rng.int(0, spawn.mobIds.length - 1)];
     if (defId === undefined) return;
-    const def = getMob(content, defId);
-    const mob: MobState = {
-      id: world.nextId++,
-      defId,
-      pos: randomEdgePoint(rng, def.radius, content),
-      facing: vec(0, 1),
-      life: def.life,
-      maxLife: def.life,
-      attackTimer: 0,
-      stun: 0,
-      slow: 0,
-      slowMagnitude: 0,
-      ignite: 0,
-      igniteDps: 0,
-      freeze: 0,
-      freezeSlow: 0,
-      stunSlow: 0,
-      stunBar: 0,
-      stunBarIdle: 0,
-      auraSlow: 0,
-    };
-    world.mobs.push(mob);
-    events.push({ type: 'spawn', id: mob.id });
+    spawnMob(world, content, { defId }, randomEdgePoint(rng, getMob(content, defId).radius, world), events);
   }
 }
 
-function randomEdgePoint(rng: Rng, radius: number, content: Content): Vec2 {
-  const { width, height } = content.arena;
+function randomEdgePoint(rng: Rng, radius: number, world: WorldState): Vec2 {
+  const { width, height } = world.bounds;
   const side = rng.int(0, 3);
   const t = rng.next();
   switch (side) {

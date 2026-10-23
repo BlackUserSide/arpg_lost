@@ -3,7 +3,7 @@ import { ESSENCE_CURRENCY } from '../core/items/craft';
 import { SALVAGE_CURRENCY } from '../core/items/inventory';
 import type { Item } from '../core/items/types';
 import { setLocale } from '../i18n';
-import { changedAffixes, costParts, craftEffect, craftReason, currencyWord } from './craftText';
+import { changedAffixes, costParts, craftEffect, craftReason, currencyAmount, currencyWord, essenceShown } from './craftText';
 
 describe('craft text', () => {
   afterEach(() => setLocale('en'));
@@ -19,6 +19,19 @@ describe('craft text', () => {
     setLocale('uk');
     expect(currencyWord(SALVAGE_CURRENCY, 5)).toBe('5 осколків');
     expect(currencyWord(ESSENCE_CURRENCY, 2)).toBe('2 есенції');
+  });
+
+  it('shows essence with one decimal at most, never rounding up', () => {
+    expect(essenceShown(0.7)).toBe(0.7);
+    expect(essenceShown(0.3 + 0.4)).toBe(0.7);
+    expect(essenceShown(1.99)).toBe(1.9);
+    expect(currencyAmount(ESSENCE_CURRENCY, 2)).toBe('2');
+    expect(currencyAmount(ESSENCE_CURRENCY, 0.7)).toBe('0.7');
+    expect(currencyAmount(SALVAGE_CURRENCY, 12)).toBe('12');
+    expect(currencyWord(ESSENCE_CURRENCY, 0.75)).toBe('0.7 essence');
+    setLocale('uk');
+    expect(currencyAmount(ESSENCE_CURRENCY, 1.3)).toBe('1,3');
+    expect(currencyWord(ESSENCE_CURRENCY, 0.7)).toBe('0,7 есенції');
   });
 
   it('names the rarity an upgrade leads to', () => {
