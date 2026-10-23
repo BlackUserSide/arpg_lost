@@ -67,6 +67,12 @@ locale falls back to English.
 | Salvage | Salvage | Розібрати | Zerlegen | Rozbierz |
 | Shards (salvage currency) | Shards | Осколки | Splitter | Odłamki |
 | Essence (rare crafting currency, 0.3) | Essence | Есенція | Essenz | Esencja |
+| Craft (inventory tab / to craft) | Craft | Крафт / крафтити | Handwerk / bearbeiten | Rzemiosło / przerabiać |
+| Affix (item modifier line) | Affix | Афікс | Affix (pl. Affixe) | Afiks |
+| Upgrade (rarity, craft operation) | Upgrade | Покращити | Aufwerten | Ulepsz |
+| Reroll (craft operation) | Reroll | Перекинути (перекат) | Neu würfeln | Przelosuj |
+| Remove (affix, craft operation) | Remove | Видалити | Entfernen | Usuń |
+| Affix slot (free prefix / suffix place) | Affix slot | Слот афікса | Affix-Slot | Gniazdo afiksu |
 | Talents (passive tree screen) | Talents | Таланти | Talente | Talenty |
 | Passive point / talent point | Talent point | Очко талантів | Talentpunkt | Punkt talentów |
 | Small node / Notable / Keystone | Small node / Notable / Keystone | Малий / значний / ключовий вузол | Kleiner / Bedeutender Knoten / Schlüsselknoten | Mały / znaczący węzeł / węzeł kluczowy |

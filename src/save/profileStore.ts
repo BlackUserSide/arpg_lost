@@ -1,3 +1,6 @@
+import { craftCount } from '../core/items/craft';
+import type { Equipment } from '../core/items/equipment';
+import type { Item } from '../core/items/types';
 import { createAllocation, validateAllocation } from '../core/passives/allocation';
 import type { PassiveAllocation, PassiveTreeData } from '../core/passives/types';
 import { createProfile, type Profile } from '../core/progression/profile';
@@ -149,17 +152,32 @@ function normalize(data: unknown, skillRules: SkillLevelRules, supportCheck: Sup
   return {
     characters: p.characters.map((c) => ({
       ...c,
-      equipment: c.equipment ?? {},
+      equipment: normalizeEquipment(c.equipment),
       passives: normalizePassives(c.passives),
       skills: normalizeSkills(c.skills, skillRules),
       supports: normalizeSupports(c.supports, supportCheck.classes[c.classId], supportCheck.supports),
     })),
-    stash: p.stash ?? base.stash,
+    // A stash without an item array (malformed / tampered) falls back to an empty one.
+    stash: p.stash && Array.isArray(p.stash.items) ? { ...p.stash, items: p.stash.items.map(normalizeItem) } : base.stash,
     currency: p.currency ?? base.currency,
     records: { ...base.records, ...p.records },
     nextCharacterId: p.nextCharacterId ?? p.characters.length + 1,
     nextItemId: p.nextItemId ?? 1,
   };
+}
+
+/**
+ * The crafting counter (Item.crafts) was added in 0.3 without a version bump: it is optional and a missing counter
+ * reads as 0, so older items need no migration. A present counter is sanitized to a non-negative integer.
+ */
+function normalizeItem(item: Item): Item {
+  if (typeof item !== 'object' || item === null || item.crafts === undefined) return item;
+  return { ...item, crafts: craftCount(item) };
+}
+
+function normalizeEquipment(raw: Equipment | undefined): Equipment {
+  if (typeof raw !== 'object' || raw === null) return {};
+  return Object.fromEntries(Object.entries(raw).map(([slot, item]) => [slot, item ? normalizeItem(item) : item])) as Equipment;
 }
 
 /**

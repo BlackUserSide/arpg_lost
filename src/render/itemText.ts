@@ -28,6 +28,8 @@ export interface TooltipLine {
   readonly kind: 'base' | 'implicit' | 'affix' | 'meta';
   /** e.g. "P · T2 · 10–15%" for affixes. */
   readonly detail?: string;
+  /** Affix lines: position of the affix in Item.affixes (crafting picks affixes by it). */
+  readonly affixIndex?: number;
 }
 
 export interface ItemTooltip {
@@ -54,14 +56,14 @@ export function describeItem(item: Item, data: ItemsData, resourceId?: string): 
   if (item.armour) lines.push({ text: t('item.armour', { value: num(item.armour) }), kind: 'base' });
   if (item.energyShield) lines.push({ text: t('item.energyShield', { value: num(item.energyShield) }), kind: 'base' });
   if (base?.implicit && item.implicit !== undefined) lines.push({ text: formatLine(base.implicit, item.implicit, resourceId), kind: 'implicit' });
-  for (const rolled of item.affixes) {
+  item.affixes.forEach((rolled, affixIndex) => {
     const affix: AffixDef | undefined = data.affixes[rolled.affixId];
-    if (!affix) continue;
+    if (!affix) return;
     const tier = affix.tiers[affix.tiers.length - rolled.tier];
     const parts = [t(affix.kind === 'prefix' ? 'item.prefixShort' : 'item.suffixShort'), t('item.tierShort', { tier: rolled.tier })];
     if (tier) parts.push(formatRange(affix.line, tier));
-    lines.push({ text: formatLine(affix.line, rolled.value, resourceId), kind: 'affix', detail: parts.join(' · ') });
-  }
+    lines.push({ text: formatLine(affix.line, rolled.value, resourceId), kind: 'affix', detail: parts.join(' · '), affixIndex });
+  });
   lines.push({ text: t('item.levelLine', { level: item.level }), kind: 'meta' });
   return {
     title: itemName(item),

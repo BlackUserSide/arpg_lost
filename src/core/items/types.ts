@@ -110,4 +110,9 @@ export interface Item {
   readonly armour?: number;
   readonly energyShield?: number;
   readonly affixes: readonly RolledAffix[];
+  /**
+   * Crafting operations done on this item that count towards its cost growth (docs/design/crafting.md; never
+   * reset). Missing = 0, so dropped items and older saves need no migration. Read through craftCount (core/items/craft).
+   */
+  readonly crafts?: number;
 }

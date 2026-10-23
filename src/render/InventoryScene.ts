@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { applyCraft, ESSENCE_CURRENCY, type CraftData, type CraftOp } from '../core/items/craft';
 import { equippedWeapon } from '../core/items/equipment';
 import { equipFromStash, salvageFromStash, SALVAGE_CURRENCY, unequipToStash, type InventoryError } from '../core/items/inventory';
 import type { EquipSlot, Item } from '../core/items/types';
@@ -6,16 +7,20 @@ import { heroMechanics, heroModifiers } from '../core/progression/hero';
 import { critStats, leechStats } from '../core/world/passiveEffects';
 import { levelModifiers, xpToNextLevel } from '../core/progression/levels';
 import { findCharacter, type CharacterRecord } from '../core/progression/profile';
+import { createRng } from '../core/rng';
 import { computeStat } from '../core/stats/modifiers';
 import type { StatId } from '../core/stats/types';
 import { deriveStat, getClass, type StatSource } from '../core/world/world';
 import { content } from '../data';
+import { craftingRules } from '../data/crafting';
 import { itemsData } from '../data/items';
 import { passiveTree } from '../data/passives';
 import { formatNumber, t, upper, type MessageKey } from '../i18n';
 import { getApp, type App } from './app';
 import { itemIcon } from './itemIcons';
 import { className, itemName } from './contentText';
+import { buildCraftPanel, CURRENCY_LOOK, type CraftFlash } from './craftPanel';
+import { AFFIX_OPS, changedAffixes } from './craftText';
 import { describeItem, rarityLabel } from './itemText';
 import { shardsWord } from './passiveText';
 import { resourceText } from './resourceText';
@@ -26,7 +31,12 @@ import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './s
 import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
 // Paper doll (8 slots) + shared stash + item details. Select-then-act controls so it works by touch;
-// double click / double tap equips or unequips directly.
+// double click / double tap equips or unequips directly. The Craft tab (hub only: this scene is never opened during a
+// run) swaps the details for the crafting panel; the doll and the stash then only pick the item to craft.
+
+const CRAFT_DATA: CraftData = { items: itemsData, crafting: craftingRules };
+
+export type InventoryTab = 'items' | 'craft';
 
 type Selection = { where: 'stash'; id: string } | { where: 'equip'; slot: EquipSlot } | undefined;
 
@@ -85,16 +95,24 @@ export class InventoryScene extends Phaser.Scene {
   private detailsArea = { x: 0, y: 0, w: 0, h: 0, overlay: false };
   private heroSprite: { sprite: Phaser.GameObjects.Sprite; set: string } | undefined;
   private elapsed = 0;
+  private tab: InventoryTab = 'items';
+  /** Craft tab: the affix picked on the selected item (position in Item.affixes). */
+  private craftAffix: number | undefined;
+  /** Craft tab: highlight of the last craft, shown once on the next build. */
+  private craftFlash: CraftFlash | undefined;
 
   constructor() {
     super('inventory');
   }
 
-  init(data: { characterId?: string }): void {
+  init(data: { characterId?: string; tab?: InventoryTab }): void {
     if (data.characterId) this.characterId = data.characterId;
+    this.tab = data.tab ?? 'items';
     this.selection = undefined;
     this.hover = undefined;
     this.message = '';
+    this.craftAffix = undefined;
+    this.craftFlash = undefined;
   }
 
   preload(): void {
@@ -190,17 +208,31 @@ export class InventoryScene extends Phaser.Scene {
     const rules = itemsData.rules;
     const cols = 6;
     const rows = Math.ceil(rules.stashSize / cols);
-    const headerH = compact ? 30 : 44;
+    const headerH = compact ? 38 : 50;
     const sCell = Math.floor(Math.min(compact ? 48 : 66, (avail - headerH - 24) / rows - (compact ? 4 : 6)));
     const sGap = compact ? 4 : 6;
     const stashW = cols * sCell + (cols - 1) * sGap + 28;
     const stashX = dollX + dollW / 2 + (compact ? 8 : 16) + stashW / 2;
     this.root.add(makeFrame(this, stashX, top + avail / 2, stashW, avail, 'panel'));
     const items = this.app.profile.stash.items;
-    this.root.add(heading(this, stashX - stashW / 2 + 14, top + 8, t('inv.stash'), compact ? 18 : 22));
-    this.root.add(
-      label(this, stashX + stashW / 2 - 14, top + (compact ? 10 : 14), `${items.length}/${rules.stashSize}   ◆ ${shardsWord(this.app.profile.currency[SALVAGE_CURRENCY] ?? 0)}`, UI.size.small, UI.muted).setOrigin(1, 0),
-    );
+    // Tabs: Stash (equip / salvage) and Craft; the tab row doubles as the stash header.
+    const tabW = compact ? 100 : 124;
+    const tabH = compact ? 32 : 36;
+    const tabY = top + headerH / 2 + 1;
+    const tabsLeft = stashX - stashW / 2 + 12;
+    (['items', 'craft'] as const).forEach((tab, i) => {
+      const caption = tab === 'items' ? t('inv.stash') : t('inv.tab.craft');
+      this.root.add(makeButton(this, tabsLeft + tabW / 2 + i * (tabW + 6), tabY, tabW, tabH, caption, () => this.setTab(tab), this.tab === tab ? 'primary' : 'secondary'));
+    });
+    const wallet = this.app.profile.currency;
+    const headerText =
+      this.tab === 'craft'
+        ? `${CURRENCY_LOOK[SALVAGE_CURRENCY]!.glyph} ${wallet[SALVAGE_CURRENCY] ?? 0}   ${CURRENCY_LOOK[ESSENCE_CURRENCY]!.glyph} ${wallet[ESSENCE_CURRENCY] ?? 0}`
+        : `${items.length}/${rules.stashSize}   ◆ ${compact ? (wallet[SALVAGE_CURRENCY] ?? 0) : shardsWord(wallet[SALVAGE_CURRENCY] ?? 0)}`;
+    const headerRight = stashX + stashW / 2 - 14;
+    const headerRoom = headerRight - (tabsLeft + tabW * 2 + 6 + 10);
+    const info = fitText(label(this, headerRight, tabY, headerText, UI.size.small, UI.muted).setOrigin(1, 0.5), headerRoom);
+    this.root.add(info.setVisible(info.width <= headerRoom));
     for (let i = 0; i < rules.stashSize; i++) {
       const x = stashX - stashW / 2 + 14 + sCell / 2 + (i % cols) * (sCell + sGap);
       const y = top + headerH + sCell / 2 + Math.floor(i / cols) * (sCell + sGap);
@@ -212,10 +244,13 @@ export class InventoryScene extends Phaser.Scene {
     // Details: own column on wide screens, overlay on narrow ones.
     const detailsLeft = stashX + stashW / 2 + (compact ? 8 : 16);
     const spare = width - m - detailsLeft;
+    // The crafting panel needs more room than an item tooltip: on narrow screens it covers the whole content area.
     this.detailsArea =
       spare >= 280
         ? { x: detailsLeft, y: top, w: spare, h: avail, overlay: false }
-        : { x: stashX - stashW / 2 + 6, y: top + headerH - 6, w: stashW - 12, h: avail - headerH, overlay: true };
+        : this.tab === 'craft'
+          ? { x: m, y: top, w: width - m * 2, h: avail, overlay: true }
+          : { x: stashX - stashW / 2 + 6, y: top + headerH - 6, w: stashW - 12, h: avail - headerH, overlay: true };
     this.buildDetails();
   }
 
@@ -283,8 +318,80 @@ export class InventoryScene extends Phaser.Scene {
 
   private setHover(hover: Selection): void {
     this.hover = hover;
-    // On wide screens hovering previews an item; overlays only follow taps.
-    if (!this.detailsArea.overlay) this.buildDetails();
+    // On wide screens hovering previews an item; overlays only follow taps. The crafting panel stays on the selection.
+    if (!this.detailsArea.overlay && this.tab === 'items') this.buildDetails();
+  }
+
+  private setTab(tab: InventoryTab): void {
+    if (tab === this.tab) return;
+    this.tab = tab;
+    this.message = '';
+    this.craftAffix = undefined;
+    this.craftFlash = undefined;
+    this.build();
+  }
+
+  private buildCraftDetails(): void {
+    const area = this.detailsArea;
+    const item = this.itemFor(this.selection);
+    if (!item) {
+      if (!area.overlay) {
+        this.details.add(makeFrame(this, area.x + area.w / 2, area.y + area.h / 2, area.w, area.h, 'panel'));
+        this.details.add(
+          label(this, area.x + area.w / 2, area.y + area.h / 2, t('craft.pickItem'), UI.size.small, UI.muted)
+            .setOrigin(0.5)
+            .setAlign('center')
+            .setWordWrapWidth(area.w - 32),
+        );
+      }
+      return;
+    }
+    const owner = this.character;
+    const flash = this.craftFlash;
+    this.craftFlash = undefined;
+    buildCraftPanel(this, this.details, {
+      area,
+      item,
+      profile: this.app.profile,
+      data: CRAFT_DATA,
+      resourceId: owner ? getClass(content, owner.classId).resource.id : undefined,
+      affixIndex: this.craftAffix !== undefined && this.craftAffix < item.affixes.length ? this.craftAffix : undefined,
+      flash,
+      closable: area.overlay,
+      onPickAffix: (index) => {
+        this.craftAffix = index;
+        this.buildDetails();
+      },
+      onCraft: (op) => this.craft(item, op),
+    });
+    if (area.overlay) {
+      this.details.add(
+        makeButton(this, area.x + area.w - 20, area.y + 20, 30, 30, '✕', () => {
+          this.selection = undefined;
+          this.craftAffix = undefined;
+          this.build();
+        }),
+      );
+    }
+  }
+
+  private craft(item: Item, op: CraftOp): void {
+    const index = AFFIX_OPS.has(op) ? this.craftAffix : undefined;
+    // Same seeding as other client-side rolls (arena rewards): a fresh seed per craft.
+    const rng = createRng((Math.random() * 2 ** 32) >>> 0);
+    const result = applyCraft(this.app.profile, item.id, op, index === undefined ? {} : { index }, rng, CRAFT_DATA);
+    if (!result.ok) {
+      // The button is disabled when canCraft fails, so this only happens if the profile changed underneath.
+      this.buildDetails();
+      return;
+    }
+    this.app.save();
+    const crafted = result.item;
+    const lines = op === 'rerollAffix' || op === 'rerollValues' ? (index === undefined ? [] : [index]) : changedAffixes(item.affixes, crafted.affixes);
+    this.craftFlash = { lines, title: crafted.rarity !== item.rarity, spent: result.cost };
+    // A rerolled affix stays picked (same kind keeps its place); removing or adding affixes shifts the positions.
+    if (op !== 'rerollAffix' && op !== 'rerollValues') this.craftAffix = undefined;
+    this.build();
   }
 
   private itemFor(sel: Selection): Item | undefined {
@@ -296,6 +403,10 @@ export class InventoryScene extends Phaser.Scene {
   private buildDetails(): void {
     this.details?.destroy();
     this.details = this.add.container(0, 0).setDepth(50);
+    if (this.tab === 'craft') {
+      this.buildCraftDetails();
+      return;
+    }
     const area = this.detailsArea;
     const shown = (!area.overlay && this.hover && this.itemFor(this.hover) ? this.hover : this.selection) as Selection;
     const item = this.itemFor(shown);
@@ -390,8 +501,19 @@ export class InventoryScene extends Phaser.Scene {
     return double;
   }
 
+  /** Craft tab: picking an item never equips; a new item drops the picked affix. */
+  private pickForCraft(selection: Selection): void {
+    if (!sameSelection(selection, this.selection)) this.craftAffix = undefined;
+    this.selection = selection;
+    this.build();
+  }
+
   private clickStash(id: string): void {
     this.message = '';
+    if (this.tab === 'craft') {
+      this.pickForCraft({ where: 'stash', id });
+      return;
+    }
     if (this.isDoubleClick(`s:${id}`)) {
       this.equip(id);
       return;
@@ -405,6 +527,10 @@ export class InventoryScene extends Phaser.Scene {
     if (!this.character?.equipment[slot]) {
       this.selection = undefined;
       this.build();
+      return;
+    }
+    if (this.tab === 'craft') {
+      this.pickForCraft({ where: 'equip', slot });
       return;
     }
     if (this.isDoubleClick(`e:${slot}`)) {
