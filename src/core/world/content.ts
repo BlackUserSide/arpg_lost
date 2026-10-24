@@ -366,7 +366,111 @@ export interface MobDef {
     readonly critChance: number;
     readonly projectile?: { readonly speed: number; readonly radius: number };
   };
+  /**
+   * Special abilities (boss attacks, docs/design/mobs.md «Бос»), cast by the generic mob ability AI (abilities.ts).
+   * Absent: the mob only has its basic attack.
+   */
+  readonly abilities?: MobAbilitiesDef;
 }
+
+/** Ability kinds the mob ability AI implements (MobAbilityDef.kind). */
+export const MOB_ABILITY_KINDS = ['projectileFan', 'nova', 'summon', 'groundZones'] as const;
+export type MobAbilityKind = (typeof MOB_ABILITY_KINDS)[number];
+
+/**
+ * A mob's abilities and phases. Every ability is telegraphed: the mob stands still for its windUp (MobState.casting),
+ * then the ability resolves. Abilities are tried in list order (the list is the priority); the first one that is
+ * ready, unlocked by the current phase, in range and usable starts. Timers (cooldowns, wind-ups, recovery) run at the
+ * mob's speed factor (slows stretch them, like the basic attack timer) and stop while the mob is disabled.
+ */
+export interface MobAbilitiesDef {
+  /** Seconds after an ability resolves before the next one may start (× the phase's cooldownMultiplier). */
+  readonly recovery: number;
+  /**
+   * Phases after the first, in order of decreasing lifeBelow: phase n + 2 starts when life / maxLife ≤ phases[n].lifeBelow.
+   * Empty: the mob stays in phase 1.
+   */
+  readonly phases: readonly MobPhaseDef[];
+  readonly list: readonly MobAbilityDef[];
+}
+
+export interface MobPhaseDef {
+  /** Fraction of max life (0..1) at or below which this phase starts. */
+  readonly lifeBelow: number;
+  /** Multiplier on every ability cooldown and the recovery set from this phase on (< 1 = more often). */
+  readonly cooldownMultiplier: number;
+  /**
+   * Pause when the phase starts (a roar): for `duration` seconds the mob is immune (see isImmune), does not move,
+   * attack or cast, and any wind-up in progress is cancelled (cooldown spent). Absent: no pause.
+   */
+  readonly transition?: { readonly duration: number };
+}
+
+interface MobAbilityBase {
+  /** Unique within the mob; render keys animations / effects by it. */
+  readonly id: string;
+  /** Seconds from the start of a use to the next possible start (× the phase's cooldownMultiplier). */
+  readonly cooldown: number;
+  /** Seconds before the first use, counted from spawn (or from the phase that unlocks it); default 0. */
+  readonly initialCooldown?: number;
+  /** Telegraph: seconds the mob stands still casting before the ability resolves (MobState.casting). */
+  readonly windUp: number;
+  /** Starts only while the target's gap (centre distance − both radii) is ≤ this; absent = any distance. */
+  readonly range?: number;
+  /** First phase (1-based) it can be used in; default 1. */
+  readonly minPhase?: number;
+}
+
+/** A hit of an ability on the hero: rolled base damage × the mob's damageScale, mitigated by the hero's defences. */
+interface MobAbilityDamage {
+  readonly damage: BaseDamage;
+  /** Default 0. */
+  readonly critChance?: number;
+}
+
+/** A fan of `count` projectiles over spreadDeg, aimed at the target as it was when the wind-up started. */
+export interface ProjectileFanAbilityDef extends MobAbilityBase, MobAbilityDamage {
+  readonly kind: 'projectileFan';
+  readonly count: number;
+  readonly spreadDeg: number;
+  readonly speed: number;
+  readonly radius: number;
+  /** Flight distance. */
+  readonly flightRange: number;
+}
+
+/** An explosion of `radius` (+ the hero's radius) around the mob when the wind-up ends. */
+export interface NovaAbilityDef extends MobAbilityBase, MobAbilityDamage {
+  readonly kind: 'nova';
+  readonly radius: number;
+}
+
+/** Raises `count` minions in a ring around the mob (at most maxAlive of its minions alive). Minions give no rewards. */
+export interface SummonAbilityDef extends MobAbilityBase {
+  readonly kind: 'summon';
+  readonly pool: readonly { readonly mobId: string; readonly weight: number }[];
+  readonly count: number;
+  readonly maxAlive: number;
+  /** Distance of the ring from the mob's centre. */
+  readonly ringRadius: number;
+}
+
+/**
+ * `count` hostile ground zones (WorldState.hostileZones) placed when the wind-up ends, around the target's position
+ * at that moment (resolve), not where it stood when the wind-up started (designer decision 2026-10-24: "where the
+ * hero is at the end of the wind-up"): the first right at the target, the others within `scatter` of it; each centre
+ * is then kept `radius` inside the room and off obstacles (clampToArena). Each erupts `delay` seconds later and hits
+ * the hero if they are inside (radius + hero radius).
+ */
+export interface GroundZonesAbilityDef extends MobAbilityBase, MobAbilityDamage {
+  readonly kind: 'groundZones';
+  readonly count: number;
+  readonly radius: number;
+  readonly delay: number;
+  readonly scatter: number;
+}
+
+export type MobAbilityDef = ProjectileFanAbilityDef | NovaAbilityDef | SummonAbilityDef | GroundZonesAbilityDef;
 
 export interface ArenaDef {
   readonly width: number;

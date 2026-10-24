@@ -292,6 +292,71 @@
         "fps": 14,
         "loop": false
       }
+    },
+    "necromancer": {
+      "idle": {
+        "file": "necromancer_idle.png",
+        "atlas": "necromancer_idle.json",
+        "frames": 8,
+        "fps": 7.5,
+        "loop": true
+      },
+      "run": {
+        "file": "necromancer_run.png",
+        "atlas": "necromancer_run.json",
+        "frames": 10,
+        "fps": 9.37,
+        "loop": true
+      },
+      "spawn": {
+        "file": "necromancer_spawn.png",
+        "atlas": "necromancer_spawn.json",
+        "frames": 10,
+        "fps": 8,
+        "loop": false
+      },
+      "cast_spears": {
+        "file": "necromancer_cast_spears.png",
+        "atlas": "necromancer_cast_spears.json",
+        "frames": 8,
+        "fps": 16,
+        "loop": false
+      },
+      "cast_summon": {
+        "file": "necromancer_cast_summon.png",
+        "atlas": "necromancer_cast_summon.json",
+        "frames": 10,
+        "fps": 10,
+        "loop": false
+      },
+      "cast_nova": {
+        "file": "necromancer_cast_nova.png",
+        "atlas": "necromancer_cast_nova.json",
+        "frames": 8,
+        "fps": 14,
+        "loop": false
+      },
+      "hit": {
+        "file": "necromancer_hit.png",
+        "atlas": "necromancer_hit.json",
+        "frames": 4,
+        "fps": 20,
+        "loop": false
+      },
+      "death": {
+        "file": "necromancer_death.png",
+        "atlas": "necromancer_death.json",
+        "frames": 8,
+        "fps": 8,
+        "loop": false
+      }
+    }
+  },
+  "layouts": {
+    "necromancer": {
+      "frameSize": 288,
+      "originY": 180,
+      "nativeScale": 1.75
     }
   }
 }

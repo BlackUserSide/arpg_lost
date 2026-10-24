@@ -1,4 +1,5 @@
-import { applyDamageTaken, rollBaseDamage, scaleDamage, totalDamage } from '../combat/damage';
+import { applyDamageTaken, rollBaseDamage, scaleDamage, totalDamage, type BaseDamage } from '../combat/damage';
+import { initialAbilityState, interruptCast, updateMobAbilities, updateMobPhase, updatePhaseTransition } from './abilities';
 import { applyDamage, resolveHit } from '../combat/hit';
 import type { Defences } from '../combat/mitigation';
 import { add, distance, normalize, scale, sub, vec, type Vec2 } from '../math';
@@ -18,7 +19,9 @@ export function updateMobs(ctx: Ctx, dt: number): void {
   const { world, content, events } = ctx;
   const player = world.player;
   const barStats = player.stunBarStats;
-  for (const mob of world.mobs) {
+  // Index loop over the mobs alive at the start: minions raised during this step first act on the next one.
+  for (let i = 0, n = world.mobs.length; i < n; i++) {
+    const mob = world.mobs[i]!;
     // Mobs killed earlier this step neither act nor tick: their statuses at death stay as they were.
     if (mob.life <= 0) continue;
     tickIgnite(ctx, mob, dt);
@@ -37,11 +40,25 @@ export function updateMobs(ctx: Ctx, dt: number): void {
     mob.freeze = Math.max(0, mob.freeze - dt);
     // Being pushed (Knockback support): the push moves the mob even while stunned; it neither walks nor attacks.
     const pushed = moveKnockback(mob, world, dt);
-    if (disabled || pushed) continue;
-    mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor);
+    if (def.abilities) {
+      const pauseBefore = mob.phaseTransition;
+      updateMobPhase(ctx, mob, def);
+      // Phase change pause (roar): immune, no movement, attacks or casts; its first step is the one it (re)starts in
+      // (a new pause object, also when it replaced a running one).
+      if (updatePhaseTransition(mob, dt, mob.phaseTransition !== pauseBefore)) continue;
+    }
+    if (disabled || pushed) {
+      // A full stun bar (bosses) or any stun / freeze / push (other mobs) cancels a wind-up; its cooldown stays spent.
+      interruptCast(ctx, mob);
+      continue;
+    }
 
     // The hero, or a decoy taunting this mob (mobTarget): the mob chases and attacks it the same way.
     const target = mobTarget(world, mob, mobRank(def, mob) === 'boss');
+    // Busy with an ability (its start, wind-up or resolve step): the mob stands still, does not use its basic attack,
+    // and the basic attack timer waits.
+    if (def.abilities && updateMobAbilities(ctx, mob, def, target, speedFactor, dt)) continue;
+    mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor);
     const toTarget = normalize(sub(target.pos, mob.pos));
     if (toTarget.x !== 0 || toTarget.y !== 0) mob.facing = toTarget;
     const gap = distance(target.pos, mob.pos) - target.radius - mob.radius;
@@ -112,9 +129,17 @@ export function slowFraction(mob: MobState, content: Content): number {
  * nothing); a melee hit that the hero survives may trigger counterAttack against it.
  */
 export function hitPlayer(ctx: Ctx, mobDef: MobDef, damageScale = 1, meleeAttacker?: MobState): void {
+  damagePlayer(ctx, mobDef.attack.damage, mobDef.attack.critChance, damageScale, meleeAttacker);
+}
+
+/**
+ * A hostile hit on the hero: `base` rolled, × damageScale, crit, mitigated by the hero's defences, then damage taken
+ * modifiers. Returns false when nothing landed (hero dead or invulnerable).
+ */
+export function damagePlayer(ctx: Ctx, base: BaseDamage, critChance: number, damageScale = 1, meleeAttacker?: MobState): boolean {
   const { world, content, classDef, rng, events } = ctx;
   const player = world.player;
-  if (player.dead || player.invulnerable > 0) return;
+  if (player.dead || player.invulnerable > 0) return false;
   const defences: Defences = {
     armour: playerStat(classDef, player, 'armour'),
     resistances: {
@@ -123,11 +148,11 @@ export function hitPlayer(ctx: Ctx, mobDef: MobDef, damageScale = 1, meleeAttack
       lightning: playerStat(classDef, player, 'lightningResistance'),
     },
   };
-  const rolled = rollBaseDamage(rng, mobDef.attack.damage);
+  const rolled = rollBaseDamage(rng, base);
   const damage = damageScale === 1 ? rolled : scaleDamage(rolled, damageScale);
   const hit = resolveHit(
     rng,
-    { damage, critChance: mobDef.attack.critChance, critMultiplier: content.combat.critMultiplierBase },
+    { damage, critChance, critMultiplier: content.combat.critMultiplierBase },
     defences,
     content.combat,
   );
@@ -141,10 +166,11 @@ export function hitPlayer(ctx: Ctx, mobDef: MobDef, damageScale = 1, meleeAttack
     player.dead = true;
     player.motion = undefined;
     events.push({ type: 'playerDeath' });
-    return;
+    return true;
   }
   resourceOnHeroHitTaken(classDef, player, result.shieldLost + result.lifeLost);
   if (meleeAttacker) counterAttack(ctx, meleeAttacker);
+  return true;
 }
 
 /** Pushes overlapping mobs apart and out of the player, so crowds surround instead of stacking. */
@@ -175,7 +201,8 @@ function separateMobs(world: WorldState): void {
 
 /**
  * Removes dead mobs: kill count, death event, XP, then death explosions. Mobs killed by an explosion are queued
- * and processed in the same call (their own explosions included); every mob dies once, so chains terminate.
+ * and processed in the same call (their own explosions included); every mob dies once, so chains terminate. A dead
+ * summoner's living minions die with it, in the same call.
  */
 export function removeDeadMobs(ctx: Ctx): void {
   const { world, events, content } = ctx;
@@ -186,11 +213,21 @@ export function removeDeadMobs(ctx: Ctx): void {
   for (let i = 0; i < queue.length; i++) {
     const mob = queue[i]!;
     const def = getMob(content, mob.defId);
-    world.kills++;
     events.push({ type: 'death', id: mob.id, pos: mob.pos });
-    gainKillXp(ctx, def.xp * (mob.xpScale ?? 1));
-    if (loot && content.supports) dropSupport(ctx, loot, content.supports, mob, def);
+    // Minions (summonerId) give nothing: no kill count, XP or supports (designer decision 2026-10-24). Death
+    // explosions are combat, not a reward: they still happen.
+    if (mob.summonerId === undefined) {
+      world.kills++;
+      gainKillXp(ctx, def.xp * (mob.xpScale ?? 1));
+      if (loot && content.supports) dropSupport(ctx, loot, content.supports, mob, def);
+    }
     queue.push(...heroDeathExplosions(ctx, mob));
+    // Its minions die with it (designer decision 2026-10-24): ordinary deaths, still giving nothing.
+    for (const minion of world.mobs) {
+      if (minion.summonerId !== mob.id || minion.life <= 0) continue;
+      minion.life = 0;
+      queue.push(minion);
+    }
   }
   if (loot) world.lootRngState = loot.getState();
   world.mobs = world.mobs.filter((mob) => mob.life > 0);
@@ -218,6 +255,8 @@ export interface MobSpawn {
   readonly xpScale?: number;
   /** Multiplier on the def's body radius (MobState.radius); absent = 1. */
   readonly radiusScale?: number;
+  /** A minion raised by this mob (MobState.summonerId): it gives no rewards. */
+  readonly summonerId?: number;
 }
 
 /** Body radius a spawn will have (MobDef.radius × MobSpawn.radiusScale); use it to place the spawn. */
@@ -252,6 +291,8 @@ export function spawnMob(world: WorldState, content: Content, spawn: MobSpawn, p
     ...(spawn.rank !== undefined ? { rank: spawn.rank } : {}),
     ...(spawn.damageScale !== undefined ? { damageScale: spawn.damageScale } : {}),
     ...(spawn.xpScale !== undefined ? { xpScale: spawn.xpScale } : {}),
+    ...(spawn.summonerId !== undefined ? { summonerId: spawn.summonerId } : {}),
+    ...initialAbilityState(def),
   };
   world.mobs.push(mob);
   events.push({ type: 'spawn', id: mob.id });

@@ -12,6 +12,12 @@ function saveFiles(): Plugin {
   return {
     name: 'sprite-baker-save',
     configureServer(server) {
+      // The current manifest, read without importing it: an import would make Vite reload the page
+      // (and start a new bake) every time the baker rewrites it.
+      server.middlewares.use('/__manifest', (_req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(fs.readFileSync(path.resolve(root, 'src/render/sprites.json')));
+      });
       server.middlewares.use('/__save', (req, res) => {
         let body = '';
         req.on('data', (chunk: Buffer) => (body += chunk.toString()));

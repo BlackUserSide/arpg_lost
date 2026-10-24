@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { ActionDef } from '../core/world/content';
+import { MOB_ABILITY_KINDS, type ActionDef } from '../core/world/content';
 import { generateItem } from '../core/items/generate';
 import { SLOTS } from '../core/items/types';
 import { createRng } from '../core/rng';
 import { content } from './index';
 import { itemsData } from './items';
 import { arena } from './arena';
+import { mapsData } from './maps';
 import { skillLevels } from './skillLevels';
 
 const allActions = (): ActionDef[] => Object.values(content.classes).flatMap((c) => [c.basicAttack, ...c.skills]);
@@ -183,5 +184,96 @@ describe('item generation with real data', () => {
     expect(runsToL2).toBeLessThanOrEqual(5);
     expect(runsToL3).toBeGreaterThanOrEqual(10);
     expect(runsToL3).toBeLessThanOrEqual(15);
+  });
+});
+
+describe('mob abilities (boss)', () => {
+  const casters = Object.values(content.mobs).filter((m) => m.abilities);
+  const heroes = Object.values(content.classes);
+  const widestHero = Math.max(...heroes.map((c) => c.radius));
+  const slowestHero = Math.min(...heroes.map((c) => c.baseStats.movementSpeed ?? 0));
+
+  it('the map boss is the necromancer, a real boss def with abilities and rank scaling 1', () => {
+    const { boss } = mapsData.rules;
+    expect(boss.mobId).toBe('necromancer');
+    const def = content.mobs[boss.mobId]!;
+    expect(def.boss).toBe(true);
+    expect(def.abilities).toBeDefined();
+    expect(boss.scaling).toEqual({ life: 1, damage: 1, xp: 1, radius: 1 });
+    expect(arena.spawn.mobIds).not.toContain('necromancer');
+  });
+
+  it('the necromancer has the designed abilities: spears, raise dead, nova; grave circles from phase 2 at 50% life', () => {
+    const set = content.mobs.necromancer!.abilities!;
+    const byId = Object.fromEntries(set.list.map((a) => [a.id, a]));
+    expect(byId.boneSpears?.kind).toBe('projectileFan');
+    expect(byId.raiseDead?.kind).toBe('summon');
+    expect(byId.darkNova?.kind).toBe('nova');
+    expect(byId.graveCircles).toMatchObject({ kind: 'groundZones', minPhase: 2 });
+    expect(set.phases).toHaveLength(1);
+    expect(set.phases[0]!.lifeBelow).toBe(0.5);
+    expect(set.phases[0]!.cooldownMultiplier).toBeLessThan(1);
+  });
+
+  it('ability data is consistent', () => {
+    for (const mob of casters) {
+      const set = mob.abilities!;
+      const ids = set.list.map((a) => a.id);
+      expect(new Set(ids).size, mob.id).toBe(ids.length);
+      expect(set.recovery).toBeGreaterThanOrEqual(0);
+      for (let i = 0; i < set.phases.length; i++) {
+        const p = set.phases[i]!;
+        expect(p.lifeBelow).toBeGreaterThan(0);
+        expect(p.lifeBelow).toBeLessThan(1);
+        if (i > 0) expect(p.lifeBelow).toBeLessThan(set.phases[i - 1]!.lifeBelow);
+        expect(p.cooldownMultiplier).toBeGreaterThan(0);
+      }
+      for (const a of set.list) {
+        const label = `${mob.id}/${a.id}`;
+        expect(MOB_ABILITY_KINDS, label).toContain(a.kind);
+        expect(a.cooldown, label).toBeGreaterThan(0);
+        expect(a.windUp, label).toBeGreaterThanOrEqual(0);
+        expect(a.minPhase ?? 1, label).toBeLessThanOrEqual(set.phases.length + 1);
+        if (a.kind === 'summon') {
+          expect(a.count, label).toBeGreaterThan(0);
+          expect(a.maxAlive, label).toBeGreaterThanOrEqual(a.count);
+          for (const e of a.pool) {
+            const minion = content.mobs[e.mobId];
+            expect(minion, `${label} ${e.mobId}`).toBeDefined();
+            // Minions are ordinary mobs: no bosses, no casters (no summon chains).
+            expect(minion!.boss, label).toBeFalsy();
+            expect(minion!.abilities, label).toBeUndefined();
+            expect(e.weight).toBeGreaterThan(0);
+          }
+        } else {
+          // Every damaging ability is telegraphed.
+          for (const range of Object.values(a.damage)) expect(range.min, label).toBeLessThanOrEqual(range.max);
+          if (a.kind === 'groundZones') expect(a.delay, label).toBeGreaterThan(0);
+          else expect(a.windUp, label).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it('every telegraphed hit can be dodged by the slowest hero (base speed)', () => {
+    for (const mob of casters) {
+      for (const a of mob.abilities!.list) {
+        const label = `${mob.id}/${a.id}`;
+        if (a.kind === 'nova') {
+          // From touching the body to outside radius + hero radius within the wind-up.
+          const walk = a.radius - mob.radius;
+          expect(walk / slowestHero, label).toBeLessThanOrEqual(a.windUp);
+        }
+        if (a.kind === 'groundZones') expect((a.radius + widestHero) / slowestHero, label).toBeLessThanOrEqual(a.delay);
+        if (a.kind === 'projectileFan' && a.count > 1) {
+          // At the caster's preferred distance the free gap between two neighbouring spears fits the widest hero.
+          const d = (mob.preferredRange ?? 0) + mob.radius + widestHero;
+          const step = ((a.spreadDeg / (a.count - 1)) * Math.PI) / 180;
+          const gap = 2 * d * Math.sin(step / 2) - 2 * a.radius;
+          expect(gap, label).toBeGreaterThan(2 * widestHero);
+          expect(a.speed, label).toBeLessThan(slowestHero * 1.5);
+        }
+      }
+    }
   });
 });

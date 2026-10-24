@@ -1,7 +1,8 @@
 import * as Phaser from 'phaser';
 import { canActivateAltar, timeLeft } from '../core/run/run';
 import type { MapsData, RunState } from '../core/run/types';
-import type { MobState } from '../core/world/world';
+import type { Content } from '../core/world/content';
+import { getMob, type MobState } from '../core/world/world';
 import { t } from '../i18n';
 import { mobName } from './contentText';
 import { formatCountdown, runInfoLine, urgentFrom } from './runText';
@@ -19,6 +20,11 @@ const BOSS_FILL = 0xc0281e;
 const BOSS_LAG = 0xffe0c0;
 /** How fast the trailing "recent damage" part of the boss bar catches up (1/s, exponential). */
 const BOSS_LAG_RATE = 3;
+/** Phase thresholds on the boss bar: gold notch ahead, dim once passed. */
+const PHASE_MARK = 0xffd36a;
+const PHASE_MARK_PASSED = 0x6a5a3a;
+/** Immune roar (phase change pause): the bar pulses between these. */
+const BOSS_IMMUNE = [0x7a4ac8, 0xb08aff] as const;
 
 export class RunHud {
   private readonly timer: Phaser.GameObjects.Text;
@@ -48,6 +54,8 @@ export class RunHud {
     private readonly scene: Phaser.Scene,
     private readonly maps: MapsData,
     private readonly onAwaken: () => void,
+    /** Mob defs: the boss bar marks the boss's phase thresholds (MobDef.abilities.phases). */
+    private readonly content: Content,
   ) {
     this.timer = pinToScreen(
       scene.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '40px', color: TIMER_COLOR, stroke: '#000', strokeThickness: 6 }).setOrigin(0.5),
@@ -158,11 +166,24 @@ export class RunHud {
     g.lineStyle(2, 0xc89a3a, 1).strokeRect(x - 3, y - 3, w + 6, h + 6);
     g.fillStyle(0x2a0a08, 1).fillRect(x, y, w, h);
     g.fillStyle(BOSS_LAG, 0.75).fillRect(x, y, w * this.bossLag, h);
-    g.fillStyle(BOSS_FILL, 1).fillRect(x, y, w * frac, h);
+    // Immune during a phase change roar: the bar pulses violet.
+    const immune = boss.phaseTransition !== undefined;
+    g.fillStyle(immune ? BOSS_IMMUNE[Math.floor(this.time * 10) % 2]! : BOSS_FILL, 1).fillRect(x, y, w * frac, h);
     g.fillStyle(0xff8a6a, 0.45).fillRect(x, y, w * frac, Math.max(2, h / 4));
     // Quarter ticks.
     g.fillStyle(0x000000, 0.45);
     for (let i = 1; i < 4; i++) g.fillRect(x + (w * i) / 4, y, 1, h);
+    // Phase thresholds: a notch through the bar with small pointers above and below.
+    const phases = getMob(this.content, boss.defId).abilities?.phases ?? [];
+    for (let i = 0; i < phases.length; i++) {
+      const passed = (boss.phase ?? 1) > i + 1;
+      const px = Math.round(x + w * phases[i]!.lifeBelow);
+      const color = passed ? PHASE_MARK_PASSED : PHASE_MARK;
+      g.fillStyle(0x000000, 0.8).fillRect(px - 2, y - 2, 4, h + 4);
+      g.fillStyle(color, 1).fillRect(px - 1, y - 2, 2, h + 4);
+      g.fillTriangle(px - 4, y - 7, px + 4, y - 7, px, y - 2);
+      g.fillTriangle(px - 4, y + h + 7, px + 4, y + h + 7, px, y + h + 2);
+    }
   }
 
   /** Bottom right, above the resource orb: under the right thumb on phones, clear of the hero in the centre. */

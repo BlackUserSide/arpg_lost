@@ -182,6 +182,7 @@ function enterRoom(run: RunState, maps: MapsData, index: number, events: RunStep
   world.traps = [];
   world.zones = [];
   world.decoys = [];
+  world.hostileZones = [];
   world.player.echoes = [];
   world.player.motion = undefined;
   world.player.pos = vec(t.entry.x, t.entry.y);

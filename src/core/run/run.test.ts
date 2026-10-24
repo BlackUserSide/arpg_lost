@@ -5,6 +5,7 @@ import type { SupportData } from '../supports/types';
 import type { ActionDef, ClassDef, Content, MobDef } from '../world/content';
 import { clampToArena, isBoss, mobRank, spawnMob, step, type PlayerInput } from '../world/world';
 import { abandonRun, canActivateAltar, createRun, currentTemplate, mobPoolAt, openDoor, stepRun, timeLeft } from './run';
+import { planRunRewards, runOutcome } from './rewards';
 import type { MapsData, RunInput, RunState, RunStepEvent } from './types';
 
 const DT = 1 / 60;
@@ -368,6 +369,24 @@ describe('boss room', () => {
     const frozen = JSON.stringify(run);
     expect(steps(run, 10)).toEqual([]);
     expect(JSON.stringify(run)).toBe(frozen);
+  });
+
+  it("the boss's minions give no XP, kills, ranked kills or essence (designer decision 2026-10-24)", () => {
+    const run = newRun();
+    toBossRoom(run);
+    const bossId = summonBoss(run);
+    const kills = run.world.kills;
+    for (let i = 0; i < 3; i++) spawnMob(run.world, content, { defId: 'dummy', summonerId: bossId }, vec(100 + i * 40, 200), []).life = 0;
+    const events = steps(run, 1);
+    expect(events.filter((e) => e.type === 'death')).toHaveLength(3);
+    expect(events.filter((e) => e.type === 'rankedKill')).toEqual([]);
+    expect(run.world.kills).toBe(kills);
+    run.world.mobs.find((m) => m.id === bossId)!.life = 0;
+    steps(run, 1);
+    // Same XP as the run without minions (see above) and essence for the 2 elites + the boss only.
+    expect(run.world.xpGained).toBe(380);
+    expect(run.elitesKilled).toBe(2);
+    expect(planRunRewards(runOutcome(run, maps), maps.rewards).essence).toBe(0.7);
   });
 });
 

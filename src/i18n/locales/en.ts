@@ -486,6 +486,9 @@ export const en = {
   'run.roomClearedLine': 'The door to the next room is open',
   'run.bossRoomLine': 'Awaken the altar when you are ready',
   'run.timeLeft': '{time} left',
+  'boss.interrupted': 'Interrupted!',
+  'boss.immune': 'Immune',
+  'boss.phase': 'Phase {phase}',
   'run.titleWon': 'Map {map} cleared',
   'run.titleTimeout': "Time's up",
   'run.titleAbandoned': 'Run ended',
@@ -531,6 +534,7 @@ export const en = {
   'mob.zombie.name': 'Zombie',
   'mob.runner.name': 'Runner',
   'mob.archer.name': 'Archer',
+  'mob.necromancer.name': 'Necromancer',
 
   // ---- Content: supports ----
   'support.wider_swing.name': 'Wider Swing',

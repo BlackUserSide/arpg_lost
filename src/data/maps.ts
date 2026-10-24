@@ -107,9 +107,10 @@ export const mapsData: MapsData = {
       scaling: { life: 4, damage: 1.5, xp: 5, radius: 1.3 },
     },
     boss: {
-      // PLACEHOLDER until the necromancer (package 2): a big zombie. Then mobId 'necromancer' and scaling 1.
-      mobId: 'zombie',
-      scaling: { life: 40, damage: 2.5, xp: 30, radius: 1.75 },
+      // The necromancer (mobs.md «Бос»): its def holds its real numbers, so the rank scaling is 1. Growth with map
+      // level (life / damage only, designer decision 2026-10-24) comes with package 3.
+      mobId: 'necromancer',
+      scaling: { life: 1, damage: 1, xp: 1, radius: 1 },
       spawnDelay: 1.5,
     },
   },

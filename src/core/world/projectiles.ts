@@ -3,7 +3,8 @@ import { add, distance, rotate, scale } from '../math';
 import { DAMAGE_TYPES, type Modifier, type Tag } from '../stats/types';
 import type { ActionDef, DamageSpec, ProjectileSplit } from './content';
 import { damageMob, explode, releaseChain } from './actions';
-import { hitPlayer } from './mobs';
+import { damagePlayer, hitPlayer } from './mobs';
+import { abilityHit } from './abilities';
 import { distanceDamageModifier } from './passiveEffects';
 import { getMob, insideArena, type Ctx, type Projectile } from './state';
 
@@ -39,7 +40,12 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
     if (world.decoys.some((d) => distance(p.pos, d.pos) <= p.radius + d.radius)) return false;
     const player = world.player;
     if (!player.dead && distance(p.pos, player.pos) <= p.radius + player.radius) {
-      hitPlayer(ctx, getMob(content, p.sourceId), p.damageScale ?? 1);
+      const def = getMob(content, p.sourceId);
+      if (p.abilityId === undefined) hitPlayer(ctx, def, p.damageScale ?? 1);
+      else {
+        const { damage, critChance } = abilityHit(def, p.abilityId);
+        damagePlayer(ctx, damage, critChance, p.damageScale ?? 1);
+      }
       return false;
     }
   } else {

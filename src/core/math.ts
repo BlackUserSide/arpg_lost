@@ -23,4 +23,15 @@ export function rotate(v: Vec2, radians: number): Vec2 {
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
 
+/**
+ * Angle offsets (radians) of `count` directions spread evenly over `spreadDeg` degrees, centred on 0, in order from
+ * −spread / 2 to +spread / 2 (a fan / volley). `count` is a whole number; 1 gives [0], 0 or less gives [].
+ */
+export function fanOffsets(count: number, spreadDeg: number): number[] {
+  const spread = (spreadDeg * Math.PI) / 180;
+  const offsets: number[] = [];
+  for (let i = 0; i < count; i++) offsets.push(count > 1 ? -spread / 2 + (spread * i) / (count - 1) : 0);
+  return offsets;
+}
+
 export const clamp =(value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));

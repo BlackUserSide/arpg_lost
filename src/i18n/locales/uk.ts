@@ -493,6 +493,9 @@ export const uk: LocaleTable = {
   'run.roomClearedLine': 'Двері до наступної кімнати відчинено',
   'run.bossRoomLine': 'Пробудіть алтар, коли будете готові',
   'run.timeLeft': 'Лишилося {time}',
+  'boss.interrupted': 'Перервано!',
+  'boss.immune': 'Невразливий',
+  'boss.phase': 'Фаза {phase}',
   'run.titleWon': 'Карту {map} пройдено',
   'run.titleTimeout': 'Час вийшов',
   'run.titleAbandoned': 'Забіг завершено',
@@ -543,6 +546,7 @@ export const uk: LocaleTable = {
   'mob.zombie.name': 'Зомбі',
   'mob.runner.name': 'Бігун',
   'mob.archer.name': 'Лучник',
+  'mob.necromancer.name': 'Некромант',
 
   // ---- Content: supports ----
   'support.wider_swing.name': 'Ширший замах',
