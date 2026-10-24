@@ -8,7 +8,7 @@ import { computeStat } from '../stats/modifiers';
 import type { Modifier, Tag } from '../stats/types';
 import type { StatusEffect } from './content';
 import { stunBarFill, type ConditionTarget, type StunBarStats } from './passiveEffects';
-import { getMob, isBoss, type Ctx, type MobState } from './state';
+import { getMob, isBoss, isImmune, type Ctx, type MobState } from './state';
 
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
 const TIME_EPSILON = 1e-9;
@@ -124,8 +124,11 @@ export function tickBleed(ctx: Ctx, mob: MobState, dt: number): void {
   if (remaining <= 0 || mob.life <= 0) return;
   const time = Math.min(dt, remaining);
   const amount = bleedDps(mob) * time;
-  mob.life -= amount;
-  ctx.events.push({ type: 'dot', targetId: mob.id, pos: mob.pos, amount, status: 'bleed' });
+  // Immune (phase change pause): the bleed keeps running out but deals nothing.
+  if (!isImmune(mob)) {
+    mob.life -= amount;
+    ctx.events.push({ type: 'dot', targetId: mob.id, pos: mob.pos, amount, status: 'bleed' });
+  }
   if (mob.life <= 0) return;
   mob.bleed = remaining - time > TIME_EPSILON ? remaining - time : 0;
   if (mob.bleed === 0) mob.bleedStacks = [];
@@ -246,8 +249,11 @@ export function tickIgnite(ctx: Ctx, mob: MobState, dt: number): void {
   if (mob.ignite <= 0 || mob.life <= 0) return;
   const time = Math.min(dt, mob.ignite);
   const amount = mob.igniteDps * time;
-  mob.life -= amount;
-  ctx.events.push({ type: 'dot', targetId: mob.id, pos: mob.pos, amount, status: 'ignite' });
+  // Immune (phase change pause): the ignite keeps running out but deals nothing.
+  if (!isImmune(mob)) {
+    mob.life -= amount;
+    ctx.events.push({ type: 'dot', targetId: mob.id, pos: mob.pos, amount, status: 'ignite' });
+  }
   if (mob.life <= 0) return;
   // Snap float leftovers (e.g. 3 − 180 × 1/60) so an ignite ends on its last full step.
   mob.ignite = mob.ignite - time > TIME_EPSILON ? mob.ignite - time : 0;
@@ -264,7 +270,8 @@ export function updateAuraSlows(ctx: Ctx): void {
   const { world } = ctx;
   for (const mob of world.mobs) {
     let slow = 0;
-    if (mob.life > 0) {
+    // Immune mobs (phase change pause) get no aura slow either.
+    if (mob.life > 0 && !isImmune(mob)) {
       const reach = mob.radius;
       for (const trap of world.traps) {
         if (!trap.aura || trap.armTimer > 0) continue;

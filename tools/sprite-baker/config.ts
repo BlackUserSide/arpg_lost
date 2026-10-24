@@ -16,6 +16,8 @@ export interface BakeAnim {
   readonly rows?: readonly number[];
   /** Extra mesh node names hidden for this anim only (e.g. a weapon that clips through a sitting pose). */
   readonly hide?: readonly string[];
+  /** Cut everything below the floor (rising-from-the-ground spawns start underground). */
+  readonly clipBelowGround?: boolean;
 }
 
 export interface BakeAttachment {
@@ -34,6 +36,22 @@ export interface BakeCharacter {
   readonly attach?: readonly BakeAttachment[];
   /** Height on screen in pixels (world units). */
   readonly height: number;
+  /**
+   * Larger characters (bosses) get their own frame so they are baked at native size instead of being
+   * upscaled in game (render uses nearest filtering, so non-integer upscales look uneven). Defaults: BAKE.
+   */
+  readonly frameSize?: number;
+  readonly originY?: number;
+  /**
+   * Draw scale the sheet is already baked at, relative to a normal-sized mob. Render divides its in-game
+   * scale by this (a boss drawn at radius scale 1.75 with nativeScale 1.75 is shown 1:1). Default 1.
+   */
+  readonly nativeScale?: number;
+  /**
+   * Write trimmed atlases (PNG + Phaser JSON hash) instead of grid sheets: empty frame margins are cut,
+   * which matters for big frames (GPU memory is width x height x 4 regardless of PNG compression).
+   */
+  readonly trim?: boolean;
   readonly anims: readonly BakeAnim[];
 }
 
@@ -141,6 +159,35 @@ export const CHARACTERS: readonly BakeCharacter[] = [
       { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
       { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false },
       { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false },
+    ],
+  },
+  {
+    // Boss (docs/design/mobs.md). Baked at its in-game size (normal skeleton 62 px x boss radius scale 1.75)
+    // in a bigger, roomy frame (no clipping when it falls or raises the staff), so it is drawn 1:1 instead of
+    // being upscaled with nearest filtering. Trimmed atlases keep the large frame cheap in GPU memory.
+    id: 'necromancer',
+    model: 'Skeleton_Mage.glb',
+    hide: [],
+    attach: [{ model: 'Skeleton_Staff.gltf', bone: 'handslot.r' }],
+    height: 108,
+    frameSize: 288,
+    originY: 180,
+    trim: true,
+    nativeScale: 1.75,
+    anims: [
+      // 2H_Melee_Idle holds the staff across the body; the plain Idle lets it dangle skull-down.
+      { id: 'idle', clip: '2H_Melee_Idle', frames: 8, loop: true },
+      { id: 'run', clip: 'Walking_A', frames: 10, loop: true },
+      // Climbs out of the floor; geometry below the floor is cut so it reads as rising from the ground.
+      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 10, fps: 8, loop: false, clipBelowGround: true },
+      { id: 'cast_spears', clip: 'Spellcast_Shoot', frames: 8, fps: 16, loop: false },
+      { id: 'cast_summon', clip: 'Spellcast_Summon', frames: 10, fps: 10, loop: false },
+      // Staff raised overhead and slammed into the floor.
+      { id: 'cast_nova', clip: '2H_Melee_Attack_Chop', frames: 8, fps: 14, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      // Death_B staggers and collapses forward: slower, reads as a boss death. Death_C_Skeletons has strong
+      // root motion (the body slides out of place).
+      { id: 'death', clip: 'Death_B', frames: 8, fps: 8, loop: false },
     ],
   },
 ];

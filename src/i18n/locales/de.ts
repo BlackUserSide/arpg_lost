@@ -490,6 +490,9 @@ export const de: LocaleTable = {
   'run.roomClearedLine': 'Die Tür zum nächsten Raum ist offen',
   'run.bossRoomLine': 'Erwecke den Altar, wenn du bereit bist',
   'run.timeLeft': 'Noch {time}',
+  'boss.interrupted': 'Unterbrochen!',
+  'boss.immune': 'Immun',
+  'boss.phase': 'Phase {phase}',
   'run.titleWon': 'Karte {map} geschafft',
   'run.titleTimeout': 'Zeit abgelaufen',
   'run.titleAbandoned': 'Lauf beendet',
@@ -535,6 +538,7 @@ export const de: LocaleTable = {
   'mob.zombie.name': 'Zombie',
   'mob.runner.name': 'Läufer',
   'mob.archer.name': 'Bogenschütze',
+  'mob.necromancer.name': 'Nekromant',
 
   // ---- Content: supports ----
   'support.wider_swing.name': 'Weiter Schwung',

@@ -2,7 +2,7 @@ import { clamp, distance, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { PassiveMechanic } from '../passives/types';
 import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
-import type { ActionDef, ClassDef, Content, MobDef, MobRank, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
+import type { ActionDef, ClassDef, Content, MobAbilityKind, MobDef, MobRank, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
 import { resolveActions, type ActionSet } from '../skills/params';
 import { skillLevelChangeSets, type SkillProgress } from '../skills/levels';
 import { supportChangeSets } from '../supports/rules';
@@ -217,6 +217,75 @@ export interface MobState {
   bleedStacks?: number[];
   /** Active push (Knockback support); while set the mob neither moves on its own nor attacks. */
   knockback?: KnockbackState;
+  /**
+   * Mobs with abilities (MobDef.abilities) only: current phase, 1-based (1 at spawn; see MobPhaseDef). Render: a
+   * 'mobPhase' event marks each change.
+   */
+  phase?: number;
+  /**
+   * Phase change pause (MobPhaseDef.transition), set when the phase starts ('mobPhase' fires then): `remaining` /
+   * `total` seconds (world time, not slowed). While set the mob is immune (isImmune) and neither moves, attacks nor
+   * casts; absent = no pause. Render: roar animation, immunity look.
+   */
+  phaseTransition?: { remaining: number; readonly total: number };
+  /**
+   * Mobs with abilities only: seconds until each ability (by MobAbilityDef.id) is ready. Abilities of a later phase
+   * get their timer when that phase starts.
+   */
+  abilityTimers?: Record<string, number>;
+  /** Mobs with abilities only: seconds until any ability may start again (MobAbilitiesDef.recovery). */
+  castRecovery?: number;
+  /** The telegraphed ability being wound up; absent = not casting. While set the mob neither moves nor attacks. */
+  casting?: MobCast;
+  /**
+   * Minions only: id of the mob that raised them (summon ability). Minions give nothing on death: no XP, no
+   * supports, no kill count (designer decision 2026-10-24).
+   */
+  readonly summonerId?: number;
+}
+
+/**
+ * A mob winding up an ability (telegraph for render). The mob stands at its position for the whole wind-up; the
+ * ability resolves when `remaining` reaches 0, or is cancelled if the mob gets stunned / frozen / pushed
+ * ('mobCastInterrupted'; its cooldown stays spent, designer decision 2026-10-24).
+ */
+export interface MobCast {
+  /** MobAbilityDef.id. */
+  readonly abilityId: string;
+  readonly kind: MobAbilityKind;
+  /** Seconds of wind-up left (runs at the mob's speed factor, so a slowed caster takes longer). */
+  remaining: number;
+  /** Full wind-up, seconds (MobAbilityDef.windUp); progress = 1 − remaining / total. */
+  readonly total: number;
+  /**
+   * Unit direction from the mob to its target when the wind-up started; a projectile fan flies along it. (Ground
+   * zones do not use it: they go where the target is at resolve, see GroundZonesAbilityDef.)
+   */
+  readonly dir: Vec2;
+  /** Nova: radius of the coming explosion around the mob (draw the danger circle at the mob's position). */
+  readonly radius?: number;
+}
+
+/**
+ * A hostile ground zone (grave circle): it does nothing until `remaining` reaches 0, then erupts once
+ * ('hostileZoneErupt'), hitting the hero if their centre is within radius + hero radius, and disappears. It
+ * outlives its caster's stun (it is already on the ground). Render: draw a warning circle filling up over `total`.
+ */
+export interface HostileZone {
+  readonly id: number;
+  /** Mob that placed it, its def and ability (damage: that ability's damage × damageScale). */
+  readonly sourceId: number;
+  readonly sourceDefId: string;
+  readonly abilityId: string;
+  /** Centre, world units. */
+  readonly pos: Vec2;
+  readonly radius: number;
+  /** Seconds to the eruption. */
+  remaining: number;
+  /** Full delay, seconds (GroundZonesAbilityDef.delay). */
+  readonly total: number;
+  /** The caster's MobState.damageScale when placed (absent = 1). */
+  readonly damageScale?: number;
 }
 
 export interface Projectile {
@@ -247,6 +316,11 @@ export interface Projectile {
   readonly castModifiers: readonly Modifier[];
   /** Mob projectiles: the shooter's MobState.damageScale when fired (absent = 1). */
   readonly damageScale?: number;
+  /**
+   * Mob projectiles from an ability (projectileFan, e.g. 'boneSpears'): its MobAbilityDef.id; the hit uses that
+   * ability's damage instead of the basic attack's. Render may pick the projectile's look by it.
+   */
+  readonly abilityId?: string;
 }
 
 export interface Trap {
@@ -343,6 +417,8 @@ export interface WorldState {
   traps: Trap[];
   zones: GroundZone[];
   decoys: Decoy[];
+  /** Hostile ground zones waiting to erupt (mob abilities), in placement order. */
+  hostileZones: HostileZone[];
   spawn: { timer: number; wave: number };
   kills: number;
   /** Level of the area (map level); scales mob XP. */
@@ -425,6 +501,37 @@ export type WorldEvent =
   | { type: 'supportDrop'; mobId: number; pos: Vec2; defId: string; tier: number }
   /** A class skill reached `level` (one event per level gained); its effective action has already changed. */
   | { type: 'skillLevelUp'; skillId: string; level: number }
+  /** Mob `id` started winding up ability `abilityId` (see MobState.casting) for `duration` seconds. */
+  | { type: 'mobCast'; id: number; abilityId: string; kind: MobAbilityKind; pos: Vec2; dir: Vec2; duration: number; radius?: number }
+  /** Mob `id`'s wind-up was cancelled (stunned / frozen / pushed); the ability did not resolve. */
+  | { type: 'mobCastInterrupted'; id: number; abilityId: string }
+  /**
+   * Mob `id`'s ability resolved at `pos` (the mob): nova exploded (`radius`; `hit`: the hero was hit), fan fired
+   * (`projectileIds`), minions raised (`spawnedIds`), zones placed (`zoneIds`).
+   */
+  | {
+      type: 'mobAbility';
+      id: number;
+      abilityId: string;
+      kind: MobAbilityKind;
+      pos: Vec2;
+      radius?: number;
+      hit?: boolean;
+      projectileIds?: number[];
+      spawnedIds?: number[];
+      zoneIds?: number[];
+    }
+  /**
+   * Mob `id` entered phase `phase` (2, 3…) at `pos`; `transition`: seconds of its immune pause (see
+   * MobState.phaseTransition), omitted without one.
+   */
+  | { type: 'mobPhase'; id: number; phase: number; pos: Vec2; transition?: number }
+  /** A hero hit reached an immune mob (isImmune) and did nothing. */
+  | { type: 'immune'; targetId: number; pos: Vec2 }
+  /** A hostile zone appeared; it erupts `delay` seconds later. */
+  | { type: 'hostileZoneSpawn'; zoneId: number; sourceId: number; abilityId: string; pos: Vec2; radius: number; delay: number }
+  /** A hostile zone erupted and is gone; `hit`: the hero was inside and was hit. */
+  | { type: 'hostileZoneErupt'; zoneId: number; abilityId: string; pos: Vec2; radius: number; hit: boolean }
   | { type: 'playerDeath' };
 
 /** Everything a system needs during one step. */
@@ -539,6 +646,16 @@ export function movePlayer(player: PlayerState, pos: Vec2): void {
 /** Rank of a mob: its spawn rank (MobState.rank) or its def's (MobDef.boss / MobDef.elite). */
 export function mobRank(def: MobDef, mob: Pick<MobState, 'rank'>): MobRank {
   return mob.rank ?? (def.boss ? 'boss' : def.elite ? 'elite' : 'normal');
+}
+
+/**
+ * Immune mob (phase change pause, MobState.phaseTransition). Rule: hero hits still reach it (a projectile is used
+ * up, an arc counts it as a target) but do nothing: no damage, statuses, leech, resource, stun bar or knockback (an
+ * 'immune' event instead). Ignite / bleed already on it keep running out but deal no damage; ground zone ticks and
+ * death explosions deal no damage and apply nothing.
+ */
+export function isImmune(mob: MobState): boolean {
+  return mob.phaseTransition !== undefined;
 }
 
 export function isBoss(content: Content, mob: MobState): boolean {

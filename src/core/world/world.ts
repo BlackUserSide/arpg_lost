@@ -14,6 +14,7 @@ import { syncCharges, tickCooldowns } from './charges';
 import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { updateDecoys, updateZones } from './zones';
+import { updateHostileZones } from './abilities';
 import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Bounds, type Ctx, type Obstacle, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
@@ -155,6 +156,7 @@ export function createWorld(
     traps: [],
     zones: [],
     decoys: [],
+    hostileZones: [],
     spawn: { timer: content.arena.spawn.firstDelay, wave: 0 },
     kills: 0,
     areaLevel,
@@ -179,6 +181,7 @@ export function step(world: WorldState, input: PlayerInput, content: Content, dt
   // Zones and decoys created this step (by the hero, projectiles or traps) already count this step's dt.
   updateZones(ctx, dt);
   updateDecoys(ctx, dt);
+  updateHostileZones(ctx, dt);
   removeDeadMobs(ctx);
   updateSpawner(ctx, dt);
 

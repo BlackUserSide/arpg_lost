@@ -37,7 +37,8 @@ import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
 import { screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
-import { ACTION_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, SPRITE_SETS, textureKey } from './sprites';
+import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, textureKey } from './sprites';
+import { BossFx } from './bossFx';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
 // Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
@@ -79,6 +80,26 @@ const MOB_PROJECTILE_COLOR = 0xff4b4b;
 const CHAIN_AREA_COLOR = 0xffd23a;
 /** Far Shot (distanceDamage) glow around bolts. */
 const FAR_SHOT_GLOW = 0xfff0a0;
+/** Mob basic attack projectiles with their own look (by mob def id); others are the plain red streak. */
+const DARK_BOLT_MOBS: ReadonlySet<string> = new Set(['necromancer']);
+/** Ability projectiles drawn as bone spears (Projectile.abilityId). */
+const BONE_SPEAR_ABILITIES: ReadonlySet<string> = new Set(['boneSpears']);
+/** Sprite height of a normal-sized character in screen px (actor.scale multiplies it); for overhead effects. */
+const BODY_PX = 62;
+/** Minions crumbling with their summoner: a short corpse, a grey dusty tint, deaths staggered a little. */
+const CRUMBLE_CORPSE_TIME = 1.3;
+const CRUMBLE_TINT = 0x8a8478;
+const CRUMBLE_STAGGER = 0.3;
+/** Seconds between two "Immune" labels over the same mob (every hit sends an event). */
+const IMMUNE_TEXT_INTERVAL = 0.45;
+/** Immune roar: the boss flickers violet. */
+const IMMUNE_TINTS = [0x6a3aaa, 0x9a6ae0] as const;
+
+type FloatTextKind = 'interrupt' | 'immune';
+const FLOAT_TEXT_STYLES: Record<FloatTextKind, { color: string; size: number; rise: number; duration: number }> = {
+  interrupt: { color: '#e8d4ff', size: 20, rise: 34, duration: 900 },
+  immune: { color: '#c8b0ff', size: 18, rise: 24, duration: 650 },
+};
 
 /**
  * How ranked mobs stand out (visual only; their strength is core rank scaling). Their size is not here: the sprite
@@ -121,8 +142,15 @@ interface Actor {
   stunBarFlash: number;
   /** Mob rank (core mobRank); 'normal' for the hero. */
   rank: MobRank;
-  /** Drawn size: the mob's body radius over its def radius (core rank radius scale); 1 for the hero. */
+  /** Drawn size relative to a normal mob: core body radius scale × the set's native scale; 1 for the hero. */
   scale: number;
+  /**
+   * Pose driven by core state every frame (ability wind-up, phase roar): `anim` shown at `progress` 0..1 of its
+   * frames, so the release lands when the ability resolves. Overrides idle / run and one-shots except death.
+   */
+  pose: { anim: string; progress: number } | undefined;
+  /** Minions: the mob that raised them (MobState.summonerId). */
+  summonerId: number | undefined;
 }
 
 interface Corpse {
@@ -216,6 +244,10 @@ export class RunScene extends Phaser.Scene {
   private combatFx!: CombatFx;
   /** Level-3 skill effect visuals (ground zones, decoy ghost, split / whirl / slam bursts). */
   private skillFx!: SkillFx;
+  /** Boss / mob ability visuals (wind-up telegraphs, grave circles, nova, roar, crumbling minions). */
+  private bossFx!: BossFx;
+  /** Mob id → world time of its last "Immune" label. */
+  private readonly immuneShown = new Map<number, number>();
   /** Ground zones and decoys alive in core (a room change drops them without expire events). */
   private readonly liveZones = new Set<number>();
   private readonly liveDecoys = new Set<number>();
@@ -315,6 +347,8 @@ export class RunScene extends Phaser.Scene {
     this.fxTop = this.add.graphics().setDepth(4000);
     this.combatFx = new CombatFx(this);
     this.skillFx = new SkillFx(this);
+    this.bossFx = new BossFx(this);
+    this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
     const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
     this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
@@ -323,7 +357,7 @@ export class RunScene extends Phaser.Scene {
     this.buildRoom();
 
     this.hud = new Hud(this, getClass(this.content, this.classId), this.content.progression, this.content.skillLevels);
-    this.runHud = new RunHud(this, mapsData, () => (this.interactQueued = true));
+    this.runHud = new RunHud(this, mapsData, () => (this.interactQueued = true), this.content);
     this.pointer = pinToScreen(this.add.graphics(), HUD_UI_DEPTH - 2);
     this.overlay = undefined;
     this.paused = false;
@@ -401,6 +435,8 @@ export class RunScene extends Phaser.Scene {
     this.liveDecoys.clear();
     this.counterShot = undefined;
     this.supportFx.clearRoom();
+    this.bossFx.clear();
+    this.immuneShown.clear();
     this.buildRoom();
     this.cameras.main.fadeIn(ROOM_FADE, 7, 7, 10);
   }
@@ -1005,7 +1041,7 @@ export class RunScene extends Phaser.Scene {
         break;
       case 'mobAttack': {
         const actor = this.mobs.get(event.id);
-        if (actor) this.playOneShot(actor, 'attack');
+        if (actor) this.playOneShot(actor, ATTACK_ANIMS[actor.set] ?? 'attack');
         if (event.decoyId !== undefined) this.skillFx.decoyStruck(event.decoyId);
         break;
       }
@@ -1018,7 +1054,8 @@ export class RunScene extends Phaser.Scene {
         const actor = event.targetId === PLAYER_ID ? this.hero : this.mobs.get(event.targetId);
         // Hit reaction only interrupts idle/run, never an attack or skill.
         // A frozen mob holds its pose.
-        if (actor && !actor.oneShot && !actor.frozen) this.playOneShot(actor, 'hit');
+        // A casting mob keeps its wind-up pose.
+        if (actor && !actor.oneShot && !actor.frozen && !actor.pose) this.playOneShot(actor, 'hit');
         this.spawnDamageNumber(event.pos, event.amount, event.isCrit ? 'crit' : event.targetId === PLAYER_ID ? 'player' : 'hit');
         break;
       }
@@ -1026,11 +1063,21 @@ export class RunScene extends Phaser.Scene {
         this.flushDotTally(event.id);
         const actor = this.mobs.get(event.id);
         if (actor) {
-          this.playOneShot(actor, 'death');
+          const shot = this.playOneShot(actor, 'death');
+          actor.pose = undefined;
           actor.sprite.clearTint();
           actor.sprite.setDepth(toScreen(actor.display).y - 40);
-          this.corpses.push({ actor, ttl: actor.rank === 'boss' ? CORPSE_TIME * 3 : CORPSE_TIME });
+          // A minion whose summoner fell this step (its death event came first): it crumbles to dust (core gives
+          // no rewards for it), staggered so the group does not drop in unison.
+          const crumbles = actor.summonerId !== undefined && !this.mobs.has(actor.summonerId);
+          if (crumbles) {
+            if (shot) shot.elapsed = -Math.random() * CRUMBLE_STAGGER;
+            actor.sprite.setTint(CRUMBLE_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
+            this.bossFx.crumble(actor.sprite.x, actor.sprite.y);
+          }
+          this.corpses.push({ actor, ttl: crumbles ? CRUMBLE_CORPSE_TIME : actor.rank === 'boss' ? CORPSE_TIME * 3 : CORPSE_TIME });
           this.mobs.delete(event.id);
+          this.immuneShown.delete(event.id);
           if (actor.rank !== 'normal') {
             // A ranked mob falls: a ring in its colour.
             const look = RANK_LOOKS[actor.rank];
@@ -1076,6 +1123,64 @@ export class RunScene extends Phaser.Scene {
         this.supportFx.supportDrop(s.x, s.y, supportIcon(this, def, event.tier), `◆ ${supportTitle(def, event.tier)}`, tierColor(event.tier), tierColorNum(event.tier));
         break;
       }
+      case 'mobCastInterrupted': {
+        // The telegraph itself is drawn from MobState.casting, so it is already gone; here the "cut" feedback.
+        const actor = this.mobs.get(event.id);
+        if (!actor) break;
+        const mob = this.world.mobs.find((m) => m.id === event.id);
+        // A phase change also cancels the wind-up: the roar is the feedback then.
+        if (mob?.phaseTransition) break;
+        this.bossFx.interrupt(actor.sprite.x, actor.sprite.y, BODY_PX * actor.scale);
+        this.spawnFloatText(actor.display, t('boss.interrupted'), 'interrupt', BODY_PX * actor.scale + 18);
+        break;
+      }
+      case 'mobAbility': {
+        const s = toScreen(event.pos);
+        if (event.kind === 'nova') {
+          this.bossFx.nova(s.x, s.y, event.radius ?? 100);
+          this.cameras.main.shake(160, event.hit ? 0.007 : 0.004);
+        } else if (event.kind === 'summon') {
+          for (const id of event.spawnedIds ?? []) {
+            const minion = this.world.mobs.find((m) => m.id === id);
+            if (!minion) continue;
+            const p = toScreen(minion.pos);
+            this.bossFx.raise(p.x, p.y);
+          }
+        }
+        break;
+      }
+      case 'mobPhase': {
+        if (event.transition === undefined) break;
+        const actor = this.mobs.get(event.id);
+        const s = actor ? { x: actor.sprite.x, y: actor.sprite.y } : toScreen(event.pos);
+        const mob = this.world.mobs.find((m) => m.id === event.id);
+        this.bossFx.roar(s.x, s.y, mob?.radius ?? 26);
+        this.cameras.main.shake(event.transition * 1000, 0.004);
+        this.cameras.main.flash(260, 70, 30, 110);
+        if (mob) this.announce(mobName(mob.defId), t('boss.phase', { phase: event.phase }));
+        break;
+      }
+      case 'immune': {
+        const last = this.immuneShown.get(event.targetId);
+        if (last !== undefined && this.world.time - last < IMMUNE_TEXT_INTERVAL) break;
+        this.immuneShown.set(event.targetId, this.world.time);
+        const actor = this.mobs.get(event.targetId);
+        const s = toScreen(event.pos);
+        this.bossFx.deflect(s.x, s.y - BODY_PX * (actor?.scale ?? 1) * 0.5);
+        this.spawnFloatText(event.pos, t('boss.immune'), 'immune', BODY_PX * (actor?.scale ?? 1) + 4);
+        break;
+      }
+      case 'hostileZoneSpawn': {
+        const s = toScreen(event.pos);
+        this.bossFx.zoneDropped(s.x, s.y, event.radius);
+        break;
+      }
+      case 'hostileZoneErupt': {
+        const s = toScreen(event.pos);
+        this.bossFx.erupt(s.x, s.y, event.radius);
+        if (event.hit) this.cameras.main.shake(120, 0.005);
+        break;
+      }
       case 'levelUp':
         this.showLevelUp(event.level);
         this.refreshBanner();
@@ -1090,8 +1195,13 @@ export class RunScene extends Phaser.Scene {
   }
 
   private createActor(set: string, pos: Vec2, rank: MobRank = 'normal', scale = 1): Actor {
-    const sprite = this.add.sprite(0, 0, textureKey(set, 'idle'), 0).setOrigin(0.5, ORIGIN_Y).setScale(scale);
-    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0, rank, scale };
+    // Big sets (bosses) are baked in their own frame at their in-game size: own origin, smaller draw scale.
+    const layout = spriteLayout(set);
+    const sprite = this.add
+      .sprite(0, 0, textureKey(set, 'idle'), 0)
+      .setOrigin(0.5, layout.originY)
+      .setScale(scale / layout.nativeScale);
+    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0, rank, scale, pose: undefined, summonerId: undefined };
   }
 
   /** Remembers where everything was before a sim step, for interpolation. */
@@ -1120,6 +1230,8 @@ export class RunScene extends Phaser.Scene {
 
   private playOneShot(actor: Actor, anim: string): Actor['oneShot'] {
     if (actor.oneShot?.anim === 'death') return undefined;
+    // Climbing out of the floor plays through: attacks and hits right after appearing are not shown over it.
+    if (actor.oneShot?.anim === 'spawn' && anim !== 'death') return undefined;
     actor.oneShot = { anim, elapsed: 0 };
     return actor.oneShot;
   }
@@ -1137,9 +1249,34 @@ export class RunScene extends Phaser.Scene {
       let actor = this.mobs.get(mob.id);
       const def = getMob(this.content, mob.defId);
       if (!actor) {
-        actor = this.createActor(MOB_SPRITES[mob.defId] ?? 'skeleton_warrior', mob.pos, mobRank(def, mob), def.radius > 0 ? mob.radius / def.radius : 1);
+        const set = MOB_SPRITES[mob.defId] ?? 'skeleton_warrior';
+        // Sets baked bigger (the boss) already show their def's size: their native scale is the normal-mob scale.
+        const bodyScale = def.radius > 0 ? mob.radius / def.radius : 1;
+        actor = this.createActor(set, mob.pos, mobRank(def, mob), bodyScale * spriteLayout(set).nativeScale);
+        actor.summonerId = mob.summonerId;
+        // The boss and raised minions climb out of the floor.
+        if ((actor.rank === 'boss' || mob.summonerId !== undefined) && SPRITE_SETS[set]?.spawn) this.playOneShot(actor, 'spawn');
         this.mobs.set(mob.id, actor);
       }
+      // Ability wind-up / phase roar poses come straight from core state (telegraphs stay right on any frame).
+      const roar = mob.phaseTransition;
+      const cast = mob.casting;
+      if (roar) {
+        // Arms go up over the first third and hold there.
+        const anim = ROAR_ANIM;
+        const progress = 0.75 * Math.min(1, (1 - roar.remaining / Math.max(1e-6, roar.total)) * 3);
+        if (actor.pose) {
+          actor.pose.anim = anim;
+          actor.pose.progress = progress;
+        } else actor.pose = { anim, progress };
+      } else if (cast) {
+        const anim = CAST_ANIMS[cast.kind] ?? 'idle';
+        const progress = 1 - cast.remaining / Math.max(1e-6, cast.total);
+        if (actor.pose) {
+          actor.pose.anim = anim;
+          actor.pose.progress = progress;
+        } else actor.pose = { anim, progress };
+      } else actor.pose = undefined;
       actor.facing = mob.facing;
       const target = this.interpolated(mob.id, mob.pos);
       if (distance(actor.display, target) > SNAP_DISTANCE) actor.display = target;
@@ -1153,7 +1290,8 @@ export class RunScene extends Phaser.Scene {
       // Likewise a boss under an ordinary stun (stunSlow) looks stunned but keeps moving.
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
       const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, Math.max(mob.slow, mob.auraSlow), this.world.time, mob.id);
-      if (look !== undefined) actor.sprite.setTint(look.color).setTintMode(look.mode);
+      if (roar) actor.sprite.setTint(IMMUNE_TINTS[Math.floor(this.world.time * 12) % 2]!).setTintMode(Phaser.TintModes.SCREEN);
+      else if (look !== undefined) actor.sprite.setTint(look.color).setTintMode(look.mode);
       else if (actor.rank !== 'normal') actor.sprite.setTint(RANK_LOOKS[actor.rank].tint).setTintMode(Phaser.TintModes.MULTIPLY);
       else actor.sprite.clearTint();
     }
@@ -1233,12 +1371,20 @@ export class RunScene extends Phaser.Scene {
 
     const shot = actor.oneShot;
     const shotDef = shot && set[shot.anim];
-    if (shot && shotDef) {
+    const pose = actor.pose;
+    const poseDef = pose && shot?.anim !== 'death' ? set[pose.anim] : undefined;
+    if (pose && poseDef) {
+      // A state-driven pose wins over idle / run and any one-shot but death (which clears the pose).
+      actor.oneShot = undefined;
+      anim = pose.anim;
+      col = Phaser.Math.Clamp(Math.floor(pose.progress * poseDef.frames), 0, poseDef.frames - 1);
+    } else if (shot && shotDef) {
       shot.elapsed += dt;
       const index = Math.floor(shot.elapsed * shotDef.fps);
       if (index < shotDef.frames || shot.anim === 'death') {
         anim = shot.anim;
-        col = Math.min(index, shotDef.frames - 1);
+        // Negative elapsed (a staggered start) holds the first frame.
+        col = Math.max(0, Math.min(index, shotDef.frames - 1));
       } else {
         actor.oneShot = undefined;
       }
@@ -1283,6 +1429,11 @@ export class RunScene extends Phaser.Scene {
       this.skillFx.drawDecoy(g, decoy.id, p.x, p.y, decoy.radius, ORIGIN_Y, dt);
     }
     this.skillFx.updateFadingGhosts(dt);
+    // Grave circles (hostile zones): warning discs filling up until they erupt.
+    for (const zone of this.world.hostileZones) {
+      const p = toScreen(zone.pos);
+      this.bossFx.drawHostileZone(g, zone, p.x, p.y, this.world.time);
+    }
 
     // Ring under the hero so they never get lost in a crowd; orange while buffed.
     const hero = toScreen(this.hero.display);
@@ -1328,6 +1479,18 @@ export class RunScene extends Phaser.Scene {
       // Core body radius (rank scaled): rings and status marks match what hits land on.
       const radius = mob.radius;
       if (actor.rank !== 'normal') this.drawRankMarks(g, top, actor, mob.life / mob.maxLife, radius);
+      // Ability telegraphs, the immune roar and the later-phase mark (mobs with abilities).
+      const bodyHeight = BODY_PX * actor.scale;
+      if (mob.phaseTransition) {
+        const pause = mob.phaseTransition;
+        this.bossFx.drawImmuneAura(g, top, actor.sprite.x, actor.sprite.y, radius, bodyHeight, 1 - pause.remaining / Math.max(1e-6, pause.total), this.world.time, dt);
+      } else if ((mob.phase ?? 1) > 1) this.bossFx.drawPhaseMark(g, actor.sprite.x, actor.sprite.y, radius, this.world.time, dt);
+      const cast = mob.casting;
+      if (cast) {
+        const def = getMob(this.content, mob.defId);
+        const ability = def.abilities?.list.find((a) => a.id === cast.abilityId);
+        this.bossFx.drawCast(g, top, cast, ability, actor.display.x, actor.display.y, actor.sprite.x, actor.sprite.y, radius, bodyHeight, this.world.time, dt);
+      }
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
       this.combatFx.drawMobStatus(g, top, actor.sprite.x, actor.sprite.y, radius, frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, this.world.time, dt, mob.id);
       // Stun bar (stunBar mechanic): eases up to the core fill, snaps down on reset; flashes full after a stun.
@@ -1349,6 +1512,7 @@ export class RunScene extends Phaser.Scene {
     }
     this.combatFx.drawBursts(g, top, dt);
     this.skillFx.drawBursts(g, top, dt);
+    this.bossFx.drawBursts(g, top, dt);
     this.supportFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y);
 
     for (const p of this.world.projectiles) {
@@ -1357,7 +1521,11 @@ export class RunScene extends Phaser.Scene {
       const tail = toScreen(vec(pos.x - p.dir.x * 18, pos.y - p.dir.y * 18));
       const color = p.owner === 'mob' ? MOB_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
       g.fillStyle(0x000000, 0.35).fillEllipse(s.x, s.y, p.radius * 2, p.radius);
-      if (p.explodeRadius > 0) {
+      if (p.owner === 'mob' && p.abilityId !== undefined && BONE_SPEAR_ABILITIES.has(p.abilityId)) {
+        this.bossFx.drawBoneSpear(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
+      } else if (p.owner === 'mob' && p.abilityId === undefined && DARK_BOLT_MOBS.has(p.sourceId)) {
+        this.bossFx.drawDarkBolt(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
+      } else if (p.explodeRadius > 0) {
         // Exploding projectiles (fireball and its split children) leave a short fading glow behind.
         top.fillStyle(color, 0.22).fillCircle(tail.x, tail.y - PROJECTILE_HEIGHT, p.radius * 1.3);
         top.fillStyle(color, 0.35).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 2.2);
@@ -1464,6 +1632,27 @@ export class RunScene extends Phaser.Scene {
     const resId = classDef.resource.id;
     const restored = refills ? t('arena.restoredBoth', { resName: resourceText(resId), resAcc: resourceText(resId, 'acc') }) : t('arena.restoredLife');
     this.announce(t('arena.levelUp'), t('arena.levelUpLine', { level, restored }), 44);
+  }
+
+  /** A short floating label (localized) over a mob at world `pos`, `lift` px above its feet; pooled like damage numbers. */
+  private spawnFloatText(pos: Vec2, message: string, kind: FloatTextKind, lift: number): void {
+    const style = FLOAT_TEXT_STYLES[kind];
+    const screen = toScreen(pos);
+    const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
+    // Keep it below the run HUD (timer, boss bar), which would hide it when the mob stands near the top of the screen.
+    const minY = this.cameras.main.worldView.y + this.runHud.bottom() + 16 + style.rise;
+    text.setText(message).setPosition(screen.x, Math.max(screen.y - lift, minY)).setColor(style.color).setFontSize(style.size).setAlpha(1).setVisible(true);
+    this.tweens.add({
+      targets: text,
+      y: text.y - style.rise,
+      alpha: 0,
+      duration: style.duration,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        text.setVisible(false);
+        this.textPool.push(text);
+      },
+    });
   }
 
   private spawnDamageNumber(pos: Vec2, amount: number, kind: DamageNumberKind): void {

@@ -8,7 +8,7 @@ import { mitigate } from '../combat/mitigation';
 import { distance, vec } from '../math';
 import type { DeathExplosionDef } from './content';
 import { deathExplosionRadiusMultiplier, findMechanic, targetHasStatus } from './passiveEffects';
-import { allModifiers, getMob, type Ctx, type MobState } from './state';
+import { allModifiers, getMob, isImmune, type Ctx, type MobState } from './state';
 import { applyIgnite, conditionTarget } from './statuses';
 
 /**
@@ -49,7 +49,7 @@ export function explodeOnDeath(ctx: Ctx, dead: MobState, spec: DeathExplosionDef
   });
   const amount = spec.lifeFraction * dead.maxLife;
   const targets = world.mobs
-    .filter((mob) => mob.life > 0 && mob.id !== dead.id)
+    .filter((mob) => mob.life > 0 && mob.id !== dead.id && !isImmune(mob))
     .map((mob) => ({ mob, def: getMob(content, mob.defId), dist: distance(dead.pos, mob.pos) }))
     .filter(({ mob, dist }) => dist <= radius + mob.radius)
     .sort((a, b) => a.dist - b.dist || a.mob.id - b.mob.id);

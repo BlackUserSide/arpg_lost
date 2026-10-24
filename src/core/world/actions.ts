@@ -10,7 +10,7 @@ import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './st
 import { resourceOnHeroHit, startResourceUse } from './resource';
 import { spawnDecoy, spawnZone } from './zones';
 import type { DamageType, Modifier } from '../stats/types';
-import { allModifiers, clampToArena, getMob, heroConditionalModifiers, mobRank, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
+import { allModifiers, clampToArena, getMob, heroConditionalModifiers, isImmune, mobRank, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
 
 /** The hero's effective action (class data + skill changes, see PlayerState.actions). */
 export function findAction(ctx: Ctx, id: string): ActionDef {
@@ -442,6 +442,10 @@ export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, 
 export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifiers?: readonly Modifier[], effectiveness = 1): void {
   const { world, content, classDef, rng, events } = ctx;
   if (!action.damage && !(action.onHit && action.onHit.length > 0)) return;
+  if (isImmune(mob)) {
+    events.push({ type: 'immune', targetId: mob.id, pos: mob.pos });
+    return;
+  }
   const def = getMob(content, mob.defId);
   const before = conditionTarget(mob);
   const mods = withActionModifiers(allModifiers(classDef, world.player, before, castModifiers), action);
