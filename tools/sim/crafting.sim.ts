@@ -316,7 +316,8 @@ describe('crafting economy', () => {
       const r = items.rules.arenaRewards;
       const itemsPerRun = Math.min(r.maxItems, Math.floor(KILLS_PER_RUN / r.killsPerItem));
       const w = items.rules.rarityWeights;
-      const pRare = w.rare / (w.normal + w.magic + w.rare);
+      // One draw over all four weights (a unique pick only falls back to rare when no unique fits the item level).
+      const pRare = w.rare / (w.normal + w.magic + w.rare + w.unique);
       for (const ilvl of [20, 30]) {
         const bases = availableBases(items, ilvl);
         const pRing = bases.filter((b) => b.slot === 'ring').length / bases.length;

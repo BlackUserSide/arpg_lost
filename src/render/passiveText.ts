@@ -145,6 +145,11 @@ export function formatMechanic(m: PassiveMechanic, resourceId?: string): string[
       return [t('mech.deathExplosionRadius', { value: signedPct(m.increased) })];
     case 'freezeSlowed':
       return [t('mech.freezeSlowed', { target: skillTarget(m.skillIds, undefined), seconds: num(m.duration), bossSeconds: num(m.bossDuration) })];
+    // Unique-item mechanics: no passive node has them; the item's own effect text (unique.<id>.effect) describes them.
+    case 'elementalArmour':
+    case 'lifeOnCrit':
+    case 'critAfterSkill':
+      return [];
   }
 }
 

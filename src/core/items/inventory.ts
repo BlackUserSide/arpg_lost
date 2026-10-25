@@ -45,7 +45,7 @@ export function equipFromStash(
   if (!item) return 'no-item';
   const slot = slotOf(item, data);
   if (!slot) return 'unknown-base';
-  const where = target ?? equipSlotsFor(slot, character.equipment)[0]!;
+  const where = target ?? equipSlotsFor(slot, character.equipment, item)[0]!;
   const error = canEquip(item, where, { level: character.level, weaponType, equipment: character.equipment }, data);
   if (error) return error;
   takeFromStash(profile, itemId);

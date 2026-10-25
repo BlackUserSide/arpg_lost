@@ -4,6 +4,7 @@
 import type { DamageType, Modifier, SkillTag } from '../stats/types';
 import type {
   ArcEveryNth,
+  BurstDef,
   ChainHitDef,
   DamageConversion,
   DashLanding,
@@ -11,11 +12,13 @@ import type {
   EchoDef,
   GroundZoneDef,
   KnockbackDef,
+  OriginBlastDef,
   ProjectileSplit,
   SelfEffect,
   StatusId,
   TrapAura,
   TrapChain,
+  TrapFan,
 } from '../world/content';
 
 /**
@@ -101,6 +104,12 @@ export interface SkillGrants {
   readonly echo?: EchoDef;
   /** Hits push enemies away from the hero (Knockback support). */
   readonly knockback?: KnockbackDef;
+  /** Trap actions: one use throws a fan of traps (Madman's Gloves). */
+  readonly trapFan?: TrapFan;
+  /** Any action: every use hits the enemies around the hero (Ancestral Horn: Battle Cry stun). */
+  readonly burst?: BurstDef;
+  /** Any action: a blast where the hero stood when the use started (Rift Ring: Teleport). */
+  readonly originBlast?: OriginBlastDef;
 }
 
 /**
@@ -151,6 +160,11 @@ export interface SkillChangeSet {
    * see ActionDef.resourcePerHit). On top of ResourceDef.onHit.
    */
   readonly resourcePerHit?: number;
+  /**
+   * Fraction of the hero's current life paid on every use (see ActionDef.lifeCostFraction; Rift Ring). Several
+   * sources add up; a total that would leave no life is not paid (paying never kills).
+   */
+  readonly lifeCostFraction?: number;
 }
 
 /** What one source gives a single skill: a SkillChangeSet without the targeting (skill levels, supports). */

@@ -143,6 +143,13 @@ export interface PlayerState {
   leechRecent: number;
   /** Seconds until counterAttack can trigger again (its internal cooldown); 0 = ready. */
   counterCooldown: number;
+  /** Seconds until a crit can heal again (lifeOnCrit internal cooldown); 0 = ready. */
+  critHealCooldown: number;
+  /**
+   * critAfterSkill (Shadow Boots): the next attack use is a guaranteed crit. Set by using one of the mechanic's
+   * skills, cleared by the next use of an 'attack' action (no time limit). Render: the "next attack crits" indicator.
+   */
+  nextAttackCrit: boolean;
   /** Equipped weapon, or the class default. */
   weapon: WeaponDef;
   buffs: Buff[];
@@ -486,6 +493,9 @@ export interface PlayerInput {
   readonly skills: readonly boolean[];
 }
 
+/** What set off an 'area' event besides the plain delivery (see WorldEvent 'area'). */
+export type AreaTrigger = 'everyNth' | 'dashLanding' | 'burst' | 'originBlast';
+
 export type WorldEvent =
   | { type: 'action'; actionId: string; facing: Vec2 }
   /**
@@ -504,8 +514,12 @@ export type WorldEvent =
       sourceMobId?: number;
       /** A trap set off by another trap's explosion (chain detonation). */
       chain?: true;
-      /** What set off this area: the special N-th swing of an arc (Cleave circle), or a dash landing. */
-      trigger?: 'everyNth' | 'dashLanding';
+      /**
+       * What set off this area: the special N-th swing of an arc (Cleave circle), a dash landing, a burst around the
+       * hero (ActionDef.burst: Battle Cry with Ancestral Horn) or the blast where a use started (ActionDef.originBlast:
+       * Teleport with Rift Ring; `origin` = the start position).
+       */
+      trigger?: AreaTrigger;
     }
   /** A hero trap vanished without exploding: the oldest one, removed because the active-trap cap was reached. */
   | { type: 'trapRemoved'; trapId: number; pos: Vec2; reason: 'limit' }
@@ -524,6 +538,10 @@ export type WorldEvent =
    */
   | { type: 'dot'; targetId: number; pos: Vec2; amount: number; status: StatusId }
   | { type: 'teleport'; from: Vec2; to: Vec2 }
+  /** A crit healed the hero (lifeOnCrit) by `amount` (life, or ES under lifeToEnergyShield); only when > 0. */
+  | { type: 'critHeal'; amount: number; pos: Vec2 }
+  /** A use of `actionId` cost `amount` life (ActionDef.lifeCostFraction: Rift Ring), on top of its resource cost. */
+  | { type: 'lifeCost'; actionId: string; amount: number; pos: Vec2 }
   /** Mob `id` attacked; `decoyId` is set when its target was a decoy (not the hero). */
   | { type: 'mobAttack'; id: number; decoyId?: number }
   /** `source` 'zone': a ground zone damage tick (`zoneId`); omitted for ordinary hits. */

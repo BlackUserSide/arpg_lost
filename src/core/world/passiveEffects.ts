@@ -18,6 +18,9 @@
 // - distanceDamage: attack projectiles gain more damage by distance travelled (distanceDamageModifier; projectiles.ts).
 // - trapCharges / trapAura: converted to skill grants of trap actions (skillChangeSets): charges, active-trap cap,
 //   chain detonation and the armed-trap slow aura; runtime in actions.ts (charges, placeTrap) and projectiles.ts.
+// - elementalArmour: hero armour vs elemental hits (elementalArmourEffectiveness; damagePlayer in mobs.ts).
+// - lifeOnCrit: crits heal with an internal cooldown (lifeOnCritStats; damageMob in actions.ts).
+// - critAfterSkill: the next attack use after these skills crits (armsNextAttackCrit; performAction in actions.ts).
 // Glass Cannon needs no mechanic: it is plain `more` damage / damageTaken modifiers.
 
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveStatusId } from '../passives/types';
@@ -64,7 +67,7 @@ export function deriveStat(source: StatSource, stat: StatId, tags: readonly Tag[
       if (crystal?.lifeRegenToShield) return 0;
       break;
     case 'energyShield':
-      if (crystal) return computeStat((baseStats.energyShield ?? 0) + baseLife(source), modifiers, 'energyShield', tags);
+      if (crystal) return computeStat((baseStats.energyShield ?? 0) + baseLife(source) * lifeMoreMultiplier(modifiers), modifiers, 'energyShield', tags);
       break;
     case 'energyShieldRegen':
       if (crystal?.lifeRegenToShield) return plain('energyShieldRegen') + plain('lifeRegen');
@@ -73,6 +76,19 @@ export function deriveStat(source: StatSource, stat: StatId, tags: readonly Tag[
       break;
   }
   return plain(stat);
+}
+
+/**
+ * Π(1 + more) of the `life` "more" modifiers (e.g. unique costs "15% less life"). Under lifeToEnergyShield they scale
+ * the base life that becomes energy shield, so such a cost is not free there (designer default 2026-10-25, 6b review);
+ * increased / flat life still do nothing under it.
+ */
+function lifeMoreMultiplier(modifiers: readonly Modifier[]): number {
+  return computeStat(
+    1,
+    modifiers.filter((m) => m.kind === 'more'),
+    'life',
+  );
 }
 
 /** Class base life plus level life, before gear and % bonuses. */
@@ -366,6 +382,32 @@ export function distanceDamageMore(mechanics: readonly PassiveMechanic[], tags: 
 export function distanceDamageModifier(mechanics: readonly PassiveMechanic[], tags: readonly Tag[], travelled: number): Modifier | undefined {
   const value = distanceDamageMore(mechanics, tags, travelled);
   return value > 0 ? { stat: 'damage', kind: 'more', value } : undefined;
+}
+
+/** elementalArmour: the highest effectiveness of all sources (0 without one, never below 0). */
+export function elementalArmourEffectiveness(mechanics: readonly PassiveMechanic[]): number {
+  let best = 0;
+  for (const m of mechanics) if (m.kind === 'elementalArmour') best = Math.max(best, m.effectiveness);
+  return best;
+}
+
+/** Combined lifeOnCrit rules: fractions add up, the longest interval applies; undefined without one. */
+export function lifeOnCritStats(mechanics: readonly PassiveMechanic[]): { readonly fraction: number; readonly interval: number } | undefined {
+  let found = false;
+  let fraction = 0;
+  let interval = 0;
+  for (const m of mechanics) {
+    if (m.kind !== 'lifeOnCrit') continue;
+    found = true;
+    fraction += m.fraction;
+    interval = Math.max(interval, m.interval);
+  }
+  return found ? { fraction, interval } : undefined;
+}
+
+/** True if using `actionId` arms the guaranteed crit of the next attack (critAfterSkill). */
+export function armsNextAttackCrit(mechanics: readonly PassiveMechanic[], actionId: string): boolean {
+  return mechanics.some((m) => m.kind === 'critAfterSkill' && m.skillIds.includes(actionId));
 }
 
 /** Counter-attack rules from the first counterAttack mechanic (several do not stack), or undefined. */

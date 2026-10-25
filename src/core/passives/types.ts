@@ -2,7 +2,7 @@
 // Plain data: the tree lives in src/data/passives.ts, the hero's allocation is saved JSON.
 
 import type { DeathExplosionDef, StatusId } from '../world/content';
-import type { AddedStatus, SkillChangeSet, SkillParamChange } from '../skills/types';
+import type { AddedStatus, SkillChangeSet, SkillGrants, SkillParamChange } from '../skills/types';
 import type { DamageType, Modifier, SkillTag } from '../stats/types';
 
 /**
@@ -80,6 +80,10 @@ export type PassiveMechanic =
       readonly damageConversion?: NonNullable<SkillChangeSet['damageConversion']>;
       /** Class resource per enemy hit by the skill (see SkillChangeSet.resourcePerHit); uniques (Barrow Reaper). */
       readonly resourcePerHit?: number;
+      /** Rules granted to the skill (SkillGrants); uniques: trap fan, burst, origin blast. */
+      readonly grants?: SkillGrants;
+      /** Fraction of current life paid per use (see SkillChangeSet.lifeCostFraction); uniques (Rift Ring). */
+      readonly lifeCostFraction?: number;
     }
   /**
    * Hits fill the target's stun bar by baseFill + damage / maxLife × damageFill; full bar stuns and resets.
@@ -119,7 +123,23 @@ export type PassiveMechanic =
    * Hits from these skills freeze targets that were already slowed before the hit (duration scales with the
    * freezeDuration stat). Bosses get a strong slow for bossDuration instead (CombatConfig.bossFreezeSlow).
    */
-  | { readonly kind: 'freezeSlowed'; readonly skillIds: readonly string[]; readonly duration: number; readonly bossDuration: number };
+  | { readonly kind: 'freezeSlowed'; readonly skillIds: readonly string[]; readonly duration: number; readonly bossDuration: number }
+  /**
+   * The hero's armour also reduces elemental hits, after resistance, as if it were `effectiveness` × the armour
+   * (each elemental part of a hit separately, like physical). Several sources: the highest. Uniques (Iron Heart Oath).
+   */
+  | { readonly kind: 'elementalArmour'; readonly effectiveness: number }
+  /**
+   * A hero crit restores `fraction` of the max life recovery pool (ES under lifeToEnergyShield), at most once per
+   * `interval` seconds (PlayerState.critHealCooldown). Several sources: fractions add up, the longest interval.
+   * Uniques (Bloody Pupil).
+   */
+  | { readonly kind: 'lifeOnCrit'; readonly fraction: number; readonly interval: number }
+  /**
+   * Using one of `skillIds` makes the hero's next attack use (an action with the 'attack' tag) a guaranteed crit with
+   * every hit of that use (PlayerState.nextAttackCrit); no time limit, consumed by that use. Uniques (Shadow Boots).
+   */
+  | { readonly kind: 'critAfterSkill'; readonly skillIds: readonly string[] };
 
 export type PassiveMechanicKind = PassiveMechanic['kind'];
 

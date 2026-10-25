@@ -41,6 +41,7 @@ import { ISO_K, screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from '
 import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, textureKey } from './sprites';
 import { BossFx } from './bossFx';
 import { EliteFx, eliteLook } from './eliteFx';
+import { UniqueFx } from './uniqueFx';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
 // Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
@@ -87,6 +88,9 @@ const LEGENDARY_PARTICLES = 48;
 const MOB_PROJECTILE_COLOR = 0xff4b4b;
 /** Area tint of a trap explosion set off by another trap. */
 const CHAIN_AREA_COLOR = 0xffd23a;
+/** Area tint of a burst round the hero (Ancestral Horn stun) and of a teleport's origin blast (Rift Ring). */
+const BURST_AREA_COLOR = 0xffcf5a;
+const RIFT_AREA_COLOR = 0xb58cff;
 /** Far Shot (distanceDamage) glow around bolts. */
 const FAR_SHOT_GLOW = 0xfff0a0;
 /** Mob basic attack projectiles with their own look (by mob def id); others are the plain red streak. */
@@ -207,7 +211,7 @@ type OverlayKind = 'pause' | 'end';
 /** Lift of Chain Lightning bolts above the floor (screen px): roughly mid-body. */
 const CHAIN_HEIGHT = 30;
 
-type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot' | 'playerDot' | 'bleed';
+type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot' | 'playerDot' | 'bleed' | 'heal' | 'lifeCost';
 
 /** Visual-only damage number looks. */
 const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: number; rise: number; duration: number }> = {
@@ -218,6 +222,10 @@ const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: numb
   /** Damage over time on the hero (a fiery elite's burn): the incoming red, small like other DoT numbers. */
   playerDot: { color: '#ff5050', size: 14, rise: 20, duration: 700 },
   bleed: { color: '#ff6a6a', size: 14, rise: 20, duration: 700 },
+  /** Life restored by a crit (Bloody Pupil): green, shown with a plus. */
+  heal: { color: '#5cff8a', size: 16, rise: 34, duration: 700 },
+  /** Life paid for a skill use (Rift Ring): a small red number with a minus, apart from hits taken. */
+  lifeCost: { color: '#ff7070', size: 15, rise: 22, duration: 650 },
 };
 
 /** F wakes the altar: LMB / RMB / Q / E are the skills (CLAUDE.md), R restarts, P opens the talents. */
@@ -278,6 +286,7 @@ export class RunScene extends Phaser.Scene {
   private bossFx!: BossFx;
   /** Elite modifier visuals (glow, death circle and blast, fiery projectiles, hero burn, fast streaks). */
   private eliteFx!: EliteFx;
+  private uniqueFx!: UniqueFx;
   /** The hero sprite carries the burning tint (cleared once when the burn ends). */
   private heroTinted = false;
   /** Mob id → world time of its last "Immune" label. */
@@ -384,6 +393,7 @@ export class RunScene extends Phaser.Scene {
     this.skillFx = new SkillFx(this);
     this.bossFx = new BossFx(this);
     this.eliteFx = new EliteFx(this);
+    this.uniqueFx = new UniqueFx(this);
     this.heroTinted = false;
     this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
@@ -477,6 +487,7 @@ export class RunScene extends Phaser.Scene {
     this.supportFx.clearRoom();
     this.bossFx.clear();
     this.eliteFx.clear();
+    this.uniqueFx.clear();
     this.immuneShown.clear();
     this.buildRoom();
     this.cameras.main.fadeIn(ROOM_FADE, 7, 7, 10);
@@ -1079,11 +1090,24 @@ export class RunScene extends Phaser.Scene {
           this.combatFx.deathExplosion(event.damageType === 'cold' ? 'ice' : 'fire', s.x, s.y, event.radius);
         } else {
           // Chain detonations: a golden tint plus a shock ring, so a chain reads apart from a triggered trap.
-          const color = event.chain ? CHAIN_AREA_COLOR : this.convertsToCold(event.actionId) ? COLD_AREA_COLOR : (AREA_COLORS[event.actionId] ?? 0xdde4ff);
+          const color = event.chain
+            ? CHAIN_AREA_COLOR
+            : event.trigger === 'burst'
+              ? BURST_AREA_COLOR
+              : event.trigger === 'originBlast'
+                ? RIFT_AREA_COLOR
+                : this.convertsToCold(event.actionId) ? COLD_AREA_COLOR : (AREA_COLORS[event.actionId] ?? 0xdde4ff);
           this.areas.push({ ...event, color, ttl: AREA_TTL });
           const s = toScreen(event.origin);
           if (event.chain) this.combatFx.chainBurst(s.x, s.y, event.radius);
-          if (event.trigger === 'everyNth') {
+          if (event.trigger === 'burst') {
+            // A use that hits everything round the hero (Ancestral Horn: Battle Cry stuns): a gold shockwave.
+            this.uniqueFx.shockwave(s.x, s.y, event.radius);
+            this.cameras.main.shake(110, 0.004);
+          } else if (event.trigger === 'originBlast') {
+            // The blast left where the use started (Rift Ring: Teleport): a lightning rift at the start point.
+            this.uniqueFx.rift(s.x, s.y, event.radius);
+          } else if (event.trigger === 'everyNth') {
             // Cleave's special swing: the spin starts where the hero faces.
             const ahead = toScreen(vec(event.origin.x + event.facing.x, event.origin.y + event.facing.y));
             this.skillFx.whirl(s.x, s.y, event.radius, Math.atan2(ahead.y - s.y, ahead.x - s.x));
@@ -1121,6 +1145,14 @@ export class RunScene extends Phaser.Scene {
         this.combatFx.trapFizzle(s.x, s.y);
         break;
       }
+      case 'critHeal':
+        this.spawnDamageNumber(event.pos, event.amount, 'heal');
+        this.uniqueFx.heal(this.hero.sprite.x, this.hero.sprite.y, BODY_PX);
+        break;
+      case 'lifeCost':
+        // Paid before the use moved the hero (Teleport): shown where the hero is now, not at the start point.
+        this.spawnDamageNumber(this.world.player.pos, event.amount, 'lifeCost');
+        break;
       case 'dot':
         this.addDotTally(event.targetId, event.pos, event.amount, event.status === 'bleed');
         break;
@@ -1667,6 +1699,8 @@ export class RunScene extends Phaser.Scene {
     this.skillFx.drawBursts(g, top, dt);
     this.bossFx.drawBursts(g, top, dt);
     this.eliteFx.drawBursts(g, top, dt);
+    this.uniqueFx.drawBursts(g, top, dt);
+    this.uniqueFx.drawCritMark(top, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, player.nextAttackCrit && !player.dead, this.world.time, dt);
     this.supportFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y);
 
     for (const p of this.world.projectiles) {
@@ -1861,11 +1895,15 @@ export class RunScene extends Phaser.Scene {
     const screen = toScreen(pos);
     const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
     // Damage over time numbers (ignite, bleed) sit a bit lower and to the side so they do not cover hit numbers.
-    const small = kind === 'dot' || kind === 'playerDot' || kind === 'bleed';
-    const dx = small ? 14 + Math.random() * 10 : (Math.random() - 0.5) * 16;
+    const small = kind === 'dot' || kind === 'playerDot' || kind === 'bleed' || kind === 'lifeCost';
+    // Heal / life cost numbers sit to the left of the hero (incoming hit numbers jitter round the centre).
+    const side = kind === 'heal' || kind === 'lifeCost';
+    const dx = side ? -18 - Math.random() * 8 : small ? 14 + Math.random() * 10 : (Math.random() - 0.5) * 16;
+    const value = small || kind === 'heal' ? Math.max(1, Math.round(amount)) : Math.round(amount);
+    const label = kind === 'heal' ? `+${value}` : kind === 'lifeCost' ? `-${value}` : String(value);
     text
-      .setText(String(small ? Math.max(1, Math.round(amount)) : Math.round(amount)))
-      .setPosition(screen.x + dx, screen.y - (small ? 56 : 70))
+      .setText(label)
+      .setPosition(screen.x + dx, screen.y - (kind === 'heal' ? 84 : small ? 56 : 70))
       .setColor(style.color)
       .setFontSize(style.size)
       .setAlpha(1)

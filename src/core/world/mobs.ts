@@ -13,6 +13,7 @@ import { applyHeroStatuses, eliteModifierDef, mobActionSpeedMultiplier, mobMoveS
 import { gainKillXp } from './experience';
 import { decayStunBar, tickBleed, tickIgnite } from './statuses';
 import { resourceOnHeroHitTaken } from './resource';
+import { elementalArmourEffectiveness } from './passiveEffects';
 import { mobTarget } from './zones';
 import { allModifiers, clampToArena, getMob, mobRank, playerStat, type Ctx, type MobState, type WorldEvent, type WorldState } from './state';
 
@@ -153,8 +154,10 @@ export function damagePlayer(ctx: Ctx, base: BaseDamage, critChance: number, sou
   if (player.dead || player.invulnerable > 0) return false;
   const damageScale = source.damageScale ?? 1;
   const mod = eliteModifierDef(content, source.eliteModifier);
+  const armour = playerStat(classDef, player, 'armour');
   const defences: Defences = {
-    armour: playerStat(classDef, player, 'armour'),
+    armour,
+    elementalArmour: armour * elementalArmourEffectiveness(player.mechanics),
     resistances: {
       fire: playerStat(classDef, player, 'fireResistance'),
       cold: playerStat(classDef, player, 'coldResistance'),

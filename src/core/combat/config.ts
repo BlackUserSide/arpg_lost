@@ -18,4 +18,10 @@ export interface CombatConfig {
    * stun's duration (own slot MobState.stunSlow). Exception: the full stun bar (stunBar mechanic) does stun a boss.
    */
   readonly bossStunSlow: number;
+  /**
+   * Cap on a skill's summed life cost fraction (ActionDef.lifeCostFraction, Rift Ring): several sources add up, but
+   * one use never takes more than this fraction of the current life (or ES under lifeToEnergyShield). Below 1, so the
+   * cost never drains the last point.
+   */
+  readonly maxLifeCostFraction: number;
 }

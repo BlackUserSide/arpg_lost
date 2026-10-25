@@ -21,7 +21,7 @@ export const contentKey = {
   resource: (id: string, form: 'name' | 'gen' | 'acc'): string => `resource.${id}.${form}`,
   rareWord: (position: 'first' | 'second', word: string): string => `item.rare.${position}.${word}`,
   uniqueName: (id: string): string => `unique.${id}.name`,
-  /** The unique's effect line; its placeholders are filled from the UniqueDef's mechanics / effect modifiers. */
+  /** The unique's effect line; its placeholders are filled from the UniqueDef (effectParams). */
   uniqueEffect: (id: string): string => `unique.${id}.effect`,
 } as const;
 
