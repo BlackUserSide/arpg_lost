@@ -9,7 +9,7 @@ import { heroMechanics } from '../progression/hero';
 import { createCharacter, createProfile } from '../progression/profile';
 import { createRng } from '../rng';
 import { canCraft, CRAFT_OPS } from './craft';
-import { canEquip, equipmentMechanics } from './equipment';
+import { canEquip, equipmentMechanics, equipSlotsFor } from './equipment';
 import { generateItem, generateUnique, itemMechanics, itemModifiers, rollRarity, tierOf, uniqueDefOf, uniquePool, uniqueTierAt } from './generate';
 import { equipFromStash, salvageFromStash } from './inventory';
 import type { Item, ItemsData, UniqueDef } from './types';
@@ -82,10 +82,10 @@ describe('unique generation', () => {
 
   it('drop pool: by rarity, positive weight, known base, level reached, optional slot', () => {
     const ids = (rarity: 'unique' | 'legendary', level: number, slot?: Parameters<typeof uniquePool>[3]): string[] => uniquePool(data, rarity, level, slot).map((u) => u.id);
-    expect(ids('unique', 1, 'ring')).toEqual(['test_ring']);
-    expect(ids('unique', 20, 'ring')).toEqual(['test_ring', 'late_ring']);
+    expect(ids('unique', 1, 'ring')).toEqual(['bloody_pupil', 'rift_ring', 'test_ring']);
+    expect(ids('unique', 20, 'ring')).toEqual(['bloody_pupil', 'rift_ring', 'test_ring', 'late_ring']);
     expect(ids('legendary', 1)).toEqual(['test_legend']);
-    expect(ids('unique', 1)).toEqual(['glass_cannon_crown', 'splitter', 'heart_of_winter', 'barrow_reaper', 'test_ring']);
+    expect(ids('unique', 1)).toEqual([...Object.keys(itemsData.uniques), 'test_ring']);
     // The real data has no legendaries yet (6c–6e).
     expect(uniquePool(itemsData, 'legendary', 99)).toEqual([]);
   });
@@ -95,9 +95,11 @@ describe('unique drops', () => {
   const onlyUniques = (d: ItemsData): ItemsData => ({ ...d, rules: { ...d.rules, rarityWeights: { normal: 0, magic: 0, rare: 0, unique: 1 } } });
 
   it('a unique rarity roll picks a unique for the slot and level; with none available the item is rare', () => {
-    const ring = generateItem(createRng(3), 'a', { itemLevel: 5, slot: 'ring' }, onlyUniques(data));
+    // Fixture uniques only: the real data has a unique for every slot.
+    const fixtures: ItemsData = { ...data, uniques: { test_ring: testRing, late_ring: lateRing, off_ring: offRing, lost_base: lostBase, test_legend: legend } };
+    const ring = generateItem(createRng(3), 'a', { itemLevel: 5, slot: 'ring' }, onlyUniques(fixtures));
     expect(ring).toMatchObject({ rarity: 'unique', baseId: 'iron_ring', unique: { id: 'test_ring' } });
-    const boots = generateItem(createRng(3), 'b', { itemLevel: 5, slot: 'boots' }, onlyUniques(data));
+    const boots = generateItem(createRng(3), 'b', { itemLevel: 5, slot: 'boots' }, onlyUniques(fixtures));
     expect(boots.rarity).toBe('rare');
     expect(boots.unique).toBeUndefined();
     expect(boots.affixes.length).toBeGreaterThanOrEqual(3);
@@ -191,10 +193,41 @@ describe('unique rules: duplicates, crafting, salvage', () => {
     const { profile, id } = hero();
     profile.stash.items.push(a, b);
     expect(equipFromStash(profile, id, 'a', 'sword', data)).toBeNull();
-    expect(equipFromStash(profile, id, 'b', 'sword', data)).toBe('unique-duplicate');
+    // An explicit other ring place is refused.
+    expect(equipFromStash(profile, id, 'b', 'sword', data, 'ring2')).toBe('unique-duplicate');
     expect(profile.stash.items.map((i) => i.id)).toEqual(['b']);
     expect(equipFromStash(profile, id, 'b', 'sword', data, 'ring1')).toBeNull();
     expect(profile.stash.items.map((i) => i.id)).toEqual(['a']);
+  });
+
+  it('auto-targeting swaps a unique ring with its worn copy instead of refusing (ring1 full / ring2 empty, both full)', () => {
+    const a = generateUnique(createRng(1), 'a', testRing, 1, data);
+    const b = generateUnique(createRng(2), 'b', testRing, 1, data);
+    const other = generateItem(createRng(3), 'c', { itemLevel: 1, slot: 'ring', rarity: 'magic' }, data);
+    expect(equipSlotsFor('ring', { ring1: a }, b)).toEqual(['ring1', 'ring2']);
+    expect(equipSlotsFor('ring', { ring1: other, ring2: a }, b)).toEqual(['ring2', 'ring1']);
+    // Not a unique / no copy worn: the usual order (first empty ring).
+    expect(equipSlotsFor('ring', { ring1: a }, other)).toEqual(['ring2', 'ring1']);
+    expect(equipSlotsFor('ring', { ring1: other })).toEqual(['ring2', 'ring1']);
+
+    // ring1 holds the copy, ring2 is empty: the new copy replaces ring1, ring2 stays empty.
+    const first = hero();
+    first.profile.stash.items.push(a, b);
+    expect(equipFromStash(first.profile, first.id, 'a', 'sword', data)).toBeNull();
+    expect(equipFromStash(first.profile, first.id, 'b', 'sword', data)).toBeNull();
+    const eq1 = first.profile.characters[0]!.equipment;
+    expect([eq1.ring1?.id, eq1.ring2?.id]).toEqual(['b', undefined]);
+    expect(first.profile.stash.items.map((i) => i.id)).toEqual(['a']);
+
+    // Both rings full, the copy in ring2: the new copy replaces ring2, ring1 keeps the other ring.
+    const second = hero();
+    second.profile.stash.items.push(other, a, b);
+    expect(equipFromStash(second.profile, second.id, 'c', 'sword', data)).toBeNull();
+    expect(equipFromStash(second.profile, second.id, 'a', 'sword', data)).toBeNull();
+    expect(equipFromStash(second.profile, second.id, 'b', 'sword', data)).toBeNull();
+    const eq2 = second.profile.characters[0]!.equipment;
+    expect([eq2.ring1?.id, eq2.ring2?.id]).toEqual(['c', 'b']);
+    expect(second.profile.stash.items.map((i) => i.id)).toEqual(['a']);
   });
 
   it('crafting refuses uniques and legendaries; salvage gives 25 / 100 shards', () => {

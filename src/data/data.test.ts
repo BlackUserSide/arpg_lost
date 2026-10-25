@@ -160,7 +160,7 @@ describe('unique data validation', () => {
     }
   });
 
-  it('6a uniques: the designed slots / weapon types, and their mechanics name real skills', () => {
+  it('uniques: the designed slots / weapon types, and their mechanics name real skills', () => {
     const slotOf = (id: string): string | undefined => {
       const base = itemsData.bases[itemsData.uniques[id]!.baseId]!;
       return base.weapon?.type ?? base.slot;
@@ -170,11 +170,22 @@ describe('unique data validation', () => {
       splitter: 'crossbow',
       heart_of_winter: 'wand',
       barrow_reaper: 'sword',
+      iron_heart_oath: 'armour',
+      bloody_pupil: 'ring',
+      ancestral_horn: 'amulet',
+      madman_gloves: 'gloves',
+      shadow_boots: 'boots',
+      rift_ring: 'ring',
     });
     const skillIds = new Set(allActions().map((a) => a.id));
     for (const u of Object.values(itemsData.uniques)) {
       expect(u.rarity).toBe('unique');
-      for (const m of u.mechanics ?? []) if (m.kind === 'skillParams') for (const id of m.skillIds ?? []) expect(skillIds.has(id), `${u.id}: ${id}`).toBe(true);
+      for (const m of u.mechanics ?? []) {
+        if (m.kind !== 'skillParams' && m.kind !== 'critAfterSkill') continue;
+        for (const id of m.skillIds ?? []) expect(skillIds.has(id), `${u.id}: ${id}`).toBe(true);
+        // A life cost of 1 or more would never be paid (it must leave life).
+        if (m.kind === 'skillParams' && m.lifeCostFraction !== undefined) expect(m.lifeCostFraction).toBeLessThan(1);
+      }
     }
   });
 

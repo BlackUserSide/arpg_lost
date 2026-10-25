@@ -1,5 +1,4 @@
-import type { UniqueDef } from '../core/items/types';
-import type { PassiveMechanic } from '../core/passives/types';
+import type { UniqueDef, UniqueTextParam } from '../core/items/types';
 import type { Content } from '../core/world/content';
 import { tx, type Params } from '../i18n';
 import { contentKey } from './contentText';
@@ -7,9 +6,8 @@ import { resourceText } from './resourceText';
 import { formatModifiers, pct } from './statText';
 
 // Effect text of unique / legendary items (unique.<id>.effect). The wording lives in the locale files; every number
-// in it comes from the UniqueDef (its mechanics and effect modifiers), filled in here per unique. Pure (tested).
-
-type SkillParams = Extract<PassiveMechanic, { kind: 'skillParams' }>;
+// in it comes from the UniqueDef: its effectParams say which value fills which placeholder (UniqueTextParam), so a
+// new unique needs data and locale text only, no code here. Pure (tested).
 
 /** Placeholder values of one unique's effect text, plus which effect modifiers the text already states. */
 export interface UniqueEffectFill {
@@ -18,59 +16,70 @@ export interface UniqueEffectFill {
   readonly stated: readonly number[];
 }
 
-const skillParams = (def: UniqueDef): SkillParams[] => (def.mechanics ?? []).filter((m): m is SkillParams => m.kind === 'skillParams');
+/** The value at a dot path inside the def ('mechanics.0.addOnHit.0.duration'), or undefined if any step is missing. */
+function valueAt(def: UniqueDef, path: string): unknown {
+  let node: unknown = def;
+  for (const key of path.split('.')) {
+    if (node === null || typeof node !== 'object') return undefined;
+    node = (node as Readonly<Record<string, unknown>>)[key];
+  }
+  return node;
+}
 
 /** The resource of the class that owns `skillId` (Barrow Reaper's Cleave: Rage), else the viewing hero's. */
-function skillResource(content: Content, skillId: string | undefined, fallback: string | undefined): string | undefined {
-  if (skillId === undefined) return fallback;
+function skillResource(content: Content, skillId: string, fallback: string | undefined): string | undefined {
   const owner = Object.values(content.classes).find((c) => c.skills.some((s) => s.id === skillId) || c.basicAttack.id === skillId);
   return owner?.resource.id ?? fallback;
 }
 
-type Filler = (def: UniqueDef, content: Content, resourceId: string | undefined) => UniqueEffectFill | undefined;
+/** One placeholder value, or undefined when the path does not lead to a value of the right kind. */
+function paramValue(def: UniqueDef, param: UniqueTextParam, content: Content, resourceId: string | undefined): string | number | undefined {
+  if ('resourceOf' in param) {
+    const skillId = valueAt(def, param.resourceOf);
+    return typeof skillId === 'string' ? resourceText(skillResource(content, skillId, resourceId), 'gen') : undefined;
+  }
+  const value = valueAt(def, param.path);
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  // Signs are dropped: the wording carries the direction ("50% shorter", "less").
+  return param.format === 'percent' ? pct(value) : Math.abs(value);
+}
 
-/** One filler per unique whose effect text has placeholders. undefined = the data lacks what the text needs. */
-const FILLERS: Readonly<Record<string, Filler>> = {
-  glass_cannon_crown: (def) => {
-    const more = def.effectModifiers?.[0];
-    return more ? { params: { pct: pct(more.value) }, stated: [0] } : undefined;
-  },
-  splitter: (def) => {
-    const pierce = skillParams(def)
-      .flatMap((m) => m.changes ?? [])
-      .find((c) => c.param === 'pierce');
-    return pierce?.add !== undefined ? { params: { count: pierce.add }, stated: [] } : undefined;
-  },
-  heart_of_winter: (def) => {
-    const slow = skillParams(def)
-      .flatMap((m) => m.addOnHit ?? [])
-      .find((s) => s.status === 'slow');
-    return slow?.magnitude !== undefined ? { params: { pct: pct(slow.magnitude), seconds: slow.duration }, stated: [] } : undefined;
-  },
-  barrow_reaper: (def, content, resourceId) => {
-    const source = skillParams(def).find((m) => m.resourcePerHit !== undefined);
-    if (!source?.resourcePerHit) return undefined;
-    const resource = skillResource(content, source.skillIds?.[0], resourceId);
-    return { params: { amount: source.resourcePerHit, resGen: resourceText(resource, 'gen') }, stated: [] };
-  },
-};
-
-/** Placeholder values for a unique's effect text; uniques without a filler get none (their text has no numbers). */
-export function uniqueEffectFill(def: UniqueDef, content: Content, resourceId?: string): UniqueEffectFill | undefined {
-  const filler = FILLERS[def.id];
-  return filler ? filler(def, content, resourceId) : { params: {}, stated: [] };
+/** Effect modifier index a path points into ('effectModifiers.0.value' → 0), if any. */
+function statedIndex(param: UniqueTextParam): number | undefined {
+  if ('resourceOf' in param) return undefined;
+  const [root, index] = param.path.split('.');
+  return root === 'effectModifiers' && index !== undefined && /^\d+$/.test(index) ? Number(index) : undefined;
 }
 
 /**
- * The effect lines of a unique: its localized effect text (empty when the locale has none), then each effect
- * modifier the text does not already state, as a modifier line.
+ * Placeholder values for a unique's effect text from its effectParams; params whose path leads nowhere are left
+ * out (uniqueEffectLines then drops the text line rather than show a raw placeholder).
+ */
+export function uniqueEffectFill(def: UniqueDef, content: Content, resourceId?: string): UniqueEffectFill {
+  const params: Record<string, string | number> = {};
+  const stated: number[] = [];
+  for (const [name, param] of Object.entries(def.effectParams ?? {})) {
+    const value = paramValue(def, param, content, resourceId);
+    if (value === undefined) continue;
+    params[name] = value;
+    const index = statedIndex(param);
+    if (index !== undefined) stated.push(index);
+  }
+  return { params, stated };
+}
+
+/**
+ * The effect lines of a unique: its localized effect text (none when the locale has no text, or when a placeholder
+ * could not be filled from the data), then each effect modifier the text does not already state, as a modifier line.
  */
 export function uniqueEffectLines(def: UniqueDef, content: Content, resourceId?: string): string[] {
   const fill = uniqueEffectFill(def, content, resourceId);
   const lines: string[] = [];
-  const text = tx(contentKey.uniqueEffect(def.id), fill?.params, '');
-  if (text) lines.push(text);
-  const rest = (def.effectModifiers ?? []).filter((_, i) => !fill?.stated.includes(i));
+  const text = tx(contentKey.uniqueEffect(def.id), fill.params, '');
+  const shown = text !== '' && !/\{\w+\}/.test(text);
+  if (shown) lines.push(text);
+  // Without the text line nothing is stated: every effect modifier gets its own line.
+  const rest = (def.effectModifiers ?? []).filter((_, i) => !(shown && fill.stated.includes(i)));
   lines.push(...formatModifiers(rest, resourceId));
   return lines;
 }

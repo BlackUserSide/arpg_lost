@@ -60,7 +60,7 @@ function hero(skills: ActionDef[], baseStats: ClassDef['baseStats'] = {}): Class
 
 function makeContent(skills: ActionDef[] = [sweep, slam], spawn: Partial<Content['arena']['spawn']> = {}, baseStats: ClassDef['baseStats'] = {}): Content {
   return {
-    combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5, bossStunSlow: 0.5 },
+    combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5, bossStunSlow: 0.5, maxLifeCostFraction: 0.9 },
     classes: { hero: hero(skills, baseStats) },
     mobs: { dummy, walker, shooter },
     arena: {

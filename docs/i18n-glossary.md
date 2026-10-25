@@ -138,3 +138,9 @@ A unique's drawback lines read `item.cost` ("Cost: …" / "Ціна: …"); the 
 | splitter | Splitter | Розщеплювач | Spalter | Rozszczepiacz |
 | heart_of_winter | Heart of Winter | Серце Зими | Herz des Winters | Serce Zimy |
 | barrow_reaper | Barrow Reaper | Жнець Курганів | Hügelgrabschnitter | Żniwiarz Kurhanów |
+| iron_heart_oath | Iron Heart Oath | Клятва Залізного Серця | Schwur des Eisenherzens | Przysięga Żelaznego Serca |
+| bloody_pupil | Bloody Pupil | Кривава Зіниця | Blutige Pupille | Krwawa Źrenica |
+| ancestral_horn | Ancestral Horn | Ріг Предків | Horn der Ahnen | Róg Przodków |
+| madman_gloves | Madman's Gloves | Рукавиці Безумця | Handschuhe des Wahnsinnigen | Rękawice Szaleńca |
+| shadow_boots | Shadow Boots | Чоботи Тіні | Schattenstiefel | Buty Cienia |
+| rift_ring | Rift Ring | Перстень Розлому | Ring des Risses | Pierścień Szczeliny |

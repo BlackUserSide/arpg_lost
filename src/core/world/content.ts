@@ -72,6 +72,36 @@ export interface TrapAura {
   readonly slow: number;
 }
 
+/**
+ * One use throws `count` traps fanned evenly over `spreadDeg` around the aim direction, each at the use's throw
+ * distance (Madman's Gloves). Every trap goes through the active-trap cap (placeTrap) in throw order.
+ */
+export interface TrapFan {
+  readonly count: number;
+  readonly spreadDeg: number;
+}
+
+/**
+ * Every use also hits all enemies within `radius` (+ their radius) of the hero with the action's damage (if any) and
+ * on-hit statuses (Ancestral Horn: Battle Cry stuns). Radius follows the `radius` param. 'area' event trigger 'burst'.
+ */
+export interface BurstDef {
+  readonly radius: number;
+}
+
+/**
+ * Every use leaves a blast where the hero stood when the use started (Rift Ring: Teleport). It hits everyone within
+ * `radius` (+ their radius) for its own base damage, as a hit of the action with `tags` added to the action's tags
+ * (so spell / area modifiers scale it) and the action's own modifiers; no on-hit statuses, chains, knockback or zones.
+ * Radius follows the `radius` param. 'area' event trigger 'originBlast'.
+ */
+export interface OriginBlastDef {
+  readonly radius: number;
+  readonly damage: BaseDamage;
+  readonly critChance: number;
+  readonly tags: readonly SkillTag[];
+}
+
 /** How the action reaches its targets. */
 export type Delivery =
   /** Sector in front of the actor (360° = circle around the actor), closest first. */
@@ -99,6 +129,7 @@ export type Delivery =
    *   without exploding (placeTrap, actions.ts).
    * - chain: when this trap explodes, the hero's other traps within `radius` explode `delay` seconds later.
    * - aura: while armed, enemies within `radius` (+ their radius) are slowed by `slow` (MobState.auraSlow).
+   * - fan: one use throws several traps (TrapFan); they count towards the cap like any other trap.
    */
   | {
       readonly kind: 'trap';
@@ -110,6 +141,7 @@ export type Delivery =
       readonly maxActive?: number;
       readonly chain?: TrapChain;
       readonly aura?: TrapAura;
+      readonly fan?: TrapFan;
     }
   /** No targets; only self effects. */
   | { readonly kind: 'self' };
@@ -171,6 +203,20 @@ export interface ActionDef {
    * ResourceDef.onHit and without its per-use cap. Chain bolts, zone ticks and ignite do not grant it.
    */
   readonly resourcePerHit?: number;
+  /** Area around the hero on every use (SkillGrants.burst). */
+  readonly burst?: BurstDef;
+  /** Blast where the hero stood when the use started (SkillGrants.originBlast). */
+  readonly originBlast?: OriginBlastDef;
+  /**
+   * Extra cost in life: this fraction of the hero's CURRENT life is paid on every use, on top of resourceCost
+   * (SkillChangeSet.lifeCostFraction; Rift Ring). It never kills: a fraction of what is left (≥ 1 is not paid).
+   */
+  readonly lifeCostFraction?: number;
+  /**
+   * Runtime only, never in data: every hit of this use is a crit (Shadow Boots: the attack after a roll). Set on the
+   * snapshot of one use (projectiles / traps / dashes keep it), never on PlayerState.actions.
+   */
+  readonly guaranteedCrit?: boolean;
 }
 
 /**

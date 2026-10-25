@@ -2,15 +2,31 @@ import { computeDamage, rollBaseDamage, scaleDamage, type DamageByType } from '.
 import { resolveHit } from '../combat/hit';
 import { add, distance, dot, normalize, rotate, scale, sub, type Vec2 } from '../math';
 import { computeStat } from '../stats/modifiers';
-import type { ActionDef, KnockbackDef } from './content';
-import { applyLeech } from './experience';
+import type { ActionDef, KnockbackDef, OriginBlastDef } from './content';
+import { applyLeech, recoverLife } from './experience';
 import { actionReady, spendCharge } from './charges';
-import { actionCost, canPay, counterAttackStats, critStats } from './passiveEffects';
+import { actionCost, armsNextAttackCrit, canPay, counterAttackStats, critStats, lifeOnCritStats, lifeRecoveryPool } from './passiveEffects';
 import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './statuses';
 import { recoverResource, resourceOnHeroHit, startResourceUse } from './resource';
 import { spawnDecoy, spawnZone } from './zones';
 import type { DamageType, Modifier } from '../stats/types';
-import { allModifiers, clampToArena, getMob, heroConditionalModifiers, isImmune, mobDefences, mobRank, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
+import {
+  allModifiers,
+  clampToArena,
+  getMob,
+  heroConditionalModifiers,
+  isImmune,
+  mobDefences,
+  mobRank,
+  movePlayer,
+  playerStat,
+  type AreaTrigger,
+  type Ctx,
+  type MobState,
+  type PendingEcho,
+  type PlayerState,
+  type Trap,
+} from './state';
 
 /** The hero's effective action (class data + skill changes, see PlayerState.actions). */
 export function findAction(ctx: Ctx, id: string): ActionDef {
@@ -55,16 +71,36 @@ export function canAfford(player: PlayerState, action: ActionDef): boolean {
   return canPay(player, actionCost(player.mechanics, action.resourceCost));
 }
 
-function payCost(player: PlayerState, action: ActionDef): void {
+/**
+ * Pays the action's cost: its resource cost (life under blood magic), then its life cost: lifeCostFraction (capped
+ * at CombatConfig.maxLifeCostFraction) of what is left in the life recovery pool (life; ES under lifeToEnergyShield),
+ * so it never kills nor drains the last point ('lifeCost' event; `amount` in that pool's points).
+ */
+// Designer default 2026-10-25 (6b review): under Crystal Shell the Rift Ring cost comes from energy shield.
+function payCost(ctx: Ctx, action: ActionDef): void {
+  const player = ctx.world.player;
   const cost = actionCost(player.mechanics, action.resourceCost);
   if (cost.pool === 'life') player.life -= cost.amount;
   else player.resource -= cost.amount;
+  const fraction = Math.min(action.lifeCostFraction ?? 0, ctx.content.combat.maxLifeCostFraction);
+  const pool = lifeRecoveryPool(player.mechanics);
+  if (fraction > 0 && player[pool] > 0) {
+    const amount = player[pool] * fraction;
+    player[pool] -= amount;
+    ctx.events.push({ type: 'lifeCost', actionId: action.id, amount, pos: player.pos });
+  }
 }
 
+/**
+ * One use of an action: cost, charge, action time, delivery, self effects, echo roll.
+ * critAfterSkill: an 'attack' use while PlayerState.nextAttackCrit is set consumes it and delivers a snapshot with
+ * guaranteedCrit (every hit of this use crits; projectiles / dashes keep it; its echo does not); then using one of
+ * the mechanic's skills arms the flag for the next attack.
+ */
 export function performAction(ctx: Ctx, action: ActionDef): void {
   const { world, events, input, rng } = ctx;
   const player = world.player;
-  payCost(player, action);
+  payCost(ctx, action);
   startResourceUse(ctx.classDef, player, action);
   spendCharge(player, action);
   player.actionTimer = useTime(ctx, action);
@@ -73,7 +109,10 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
   const delivery = action.delivery;
   const special = delivery.kind === 'arc' && delivery.everyNth !== undefined && countUse(player, action.id) % Math.max(1, Math.floor(delivery.everyNth.every)) === 0;
   const use: ActionUse = { facing: player.facing, aim: input.aim, special };
-  deliver(ctx, action, use);
+  const crits = player.nextAttackCrit && action.tags.includes('attack');
+  if (crits) player.nextAttackCrit = false;
+  deliver(ctx, crits ? { ...action, guaranteedCrit: true } : action, use);
+  if (armsNextAttackCrit(player.mechanics, action.id)) player.nextAttackCrit = true;
 
   for (const effect of action.selfEffects ?? []) {
     switch (effect.kind) {
@@ -130,11 +169,15 @@ export function updateEchoes(ctx: Ctx, dt: number): void {
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
 const TIME_EPSILON = 1e-9;
 
-/** Resolves the action's delivery for one use: hits, projectiles, motion, teleport or trap. */
+/**
+ * Resolves the action's delivery for one use: hits, projectiles, motion, teleport or trap; then its burst around the
+ * hero (ActionDef.burst) and its blast where the use started (ActionDef.originBlast), in that order.
+ */
 function deliver(ctx: Ctx, action: ActionDef, use: ActionUse): void {
   const { world, events } = ctx;
   const player = world.player;
   const delivery = action.delivery;
+  const start = player.pos;
   switch (delivery.kind) {
     case 'arc': {
       const angleDeg = use.special && delivery.everyNth ? delivery.everyNth.angleDeg : delivery.angleDeg;
@@ -191,26 +234,56 @@ function deliver(ctx: Ctx, action: ActionDef, use: ActionUse): void {
     }
     case 'trap': {
       const dist = Math.min(delivery.throwRange, distance(use.aim, player.pos));
-      const trap: Trap = {
-        id: world.nextId++,
-        actionId: action.id,
-        action,
-        pos: clampToArena(add(player.pos, scale(use.facing, dist)), 0, ctx.world),
-        armTimer: delivery.armTime,
-        lifetime: delivery.lifetime,
-        triggerRadius: delivery.triggerRadius,
-        explodeRadius: delivery.explodeRadius,
-        chain: delivery.chain ?? null,
-        aura: delivery.aura ?? null,
-        chainTimer: null,
-        castModifiers: heroConditionalModifiers(ctx.classDef, player),
-      };
-      placeTrap(ctx, trap, delivery.maxActive);
+      const castModifiers = heroConditionalModifiers(ctx.classDef, player);
+      // A fan (TrapFan) throws count traps evenly over spreadDeg, left to right; each one goes through the cap.
+      const count = Math.max(1, Math.floor(delivery.fan?.count ?? 1));
+      const spread = ((delivery.fan?.spreadDeg ?? 0) * Math.PI) / 180;
+      for (let i = 0; i < count; i++) {
+        const dir = count > 1 ? rotate(use.facing, -spread / 2 + (spread * i) / (count - 1)) : use.facing;
+        const trap: Trap = {
+          id: world.nextId++,
+          actionId: action.id,
+          action,
+          pos: clampToArena(add(player.pos, scale(dir, dist)), 0, ctx.world),
+          armTimer: delivery.armTime,
+          lifetime: delivery.lifetime,
+          triggerRadius: delivery.triggerRadius,
+          explodeRadius: delivery.explodeRadius,
+          chain: delivery.chain ?? null,
+          aura: delivery.aura ?? null,
+          chainTimer: null,
+          castModifiers,
+        };
+        placeTrap(ctx, trap, delivery.maxActive);
+      }
       break;
     }
     case 'self':
       break;
   }
+  if (action.burst) hitArc(ctx, action, player.pos, use.facing, action.burst.radius, 360, { trigger: 'burst' });
+  if (action.originBlast) {
+    hitArc(ctx, originBlastAction(action, action.originBlast), start, use.facing, action.originBlast.radius, 360, { trigger: 'originBlast' });
+  }
+}
+
+/**
+ * The action an origin blast hits with: the action's id, own modifiers and snapshot extras (guaranteedCrit), the
+ * blast's damage, the action's tags plus the blast's; no on-hit statuses, chains, knockback, zones, echo, resource
+ * per hit, burst or further blasts.
+ */
+function originBlastAction(action: ActionDef, blast: OriginBlastDef): ActionDef {
+  const { onHit, knockback, chainHit, echo, zone, resourcePerHit, burst, originBlast, ...rest } = action;
+  void onHit;
+  void knockback;
+  void chainHit;
+  void echo;
+  void zone;
+  void resourcePerHit;
+  void burst;
+  void originBlast;
+  const tags = [...action.tags, ...blast.tags.filter((t) => !action.tags.includes(t))];
+  return { ...rest, tags, damage: { source: 'skill', base: blast.damage, critChance: blast.critChance } };
 }
 
 /** Counts one more use of the action for its use rhythm (PlayerState.useCounts); returns the new count. */
@@ -292,7 +365,7 @@ export interface HitArcOptions {
   /** Marks the 'area' event of a chain-detonated trap. */
   readonly chain?: boolean;
   /** What set off the area, for render ('area' event `trigger`). */
-  readonly trigger?: 'everyNth' | 'dashLanding';
+  readonly trigger?: AreaTrigger;
   /** Scales the rolled damage of every hit (see damageMob). */
   readonly effectiveness?: number;
 }
@@ -465,11 +538,13 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
       baseCrit = action.damage.critChance;
     }
     const damage = computeDamage(rolled, mods, action.tags, action.damageConversion);
-    const { critChance, critMultiplier } = critStats(world.player.mechanics, {
+    const crit = critStats(world.player.mechanics, {
       critChance: computeStat(baseCrit, mods, 'critChance', action.tags),
       critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', action.tags),
     });
-    const hit = resolveHit(rng, { damage, critChance, critMultiplier }, mobDefences(def, mob), content.combat);
+    // guaranteedCrit (critAfterSkill) forces the crit; the multiplier stays as computed (alwaysCrit's fixed one included).
+    const critChance = action.guaranteedCrit ? 1 : crit.critChance;
+    const hit = resolveHit(rng, { damage, critChance, critMultiplier: crit.critMultiplier }, mobDefences(def, mob), content.combat);
     // Leech counts only the life actually removed (overkill does not leech).
     removed = Math.max(0, Math.min(hit.total, mob.life));
     mob.life -= hit.total;
@@ -477,6 +552,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
     applyLeech(classDef, world.player, removed, action.leech ?? 0);
     resourceOnHeroHit(classDef, world.player, action);
     if (action.resourcePerHit) recoverResource(classDef, world.player, action.resourcePerHit);
+    if (hit.isCrit) critHeal(ctx);
     raw = hit.raw;
   }
   const hit = { mods, tags: action.tags, raw, before };
@@ -486,6 +562,22 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
     if (bar) fillStunBar(ctx, mob, bar, removed, action.stunBarFillIncreased ?? 0);
   }
   if (action.knockback) applyKnockback(ctx, mob, action.knockback);
+}
+
+/**
+ * lifeOnCrit (Bloody Pupil): a crit restores fraction × the max recovery pool (life, ES under lifeToEnergyShield) when
+ * the internal cooldown is ready, then the cooldown restarts (also at full life). 'critHeal' event when > 0.
+ */
+// Designer default 2026-10-25: at most once per 0.2 s (closes the roadmap row about Steady Hand crits healing every hit).
+function critHeal(ctx: Ctx): void {
+  const { world, classDef } = ctx;
+  const player = world.player;
+  const stats = lifeOnCritStats(player.mechanics);
+  if (!stats || player.critHealCooldown > 0 || player.dead) return;
+  player.critHealCooldown = stats.interval;
+  const max = playerStat(classDef, player, lifeRecoveryPool(player.mechanics));
+  const amount = recoverLife(classDef, player, max * stats.fraction);
+  if (amount > 0) ctx.events.push({ type: 'critHeal', amount, pos: player.pos });
 }
 
 /**

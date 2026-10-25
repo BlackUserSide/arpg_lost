@@ -12,10 +12,21 @@ export function slotOf(item: Item, data: ItemsData): Slot | undefined {
   return data.bases[item.baseId]?.slot;
 }
 
-/** Equip slots an item can go to, in preference order (first empty ring first). */
-export function equipSlotsFor(slot: Slot, equipment: Equipment): EquipSlot[] {
+/**
+ * Equip slots an item can go to, in preference order: the first empty ring first. With `item` given, a unique /
+ * legendary whose copy (same UniqueDef id) is already worn in one of the places goes there first (swapping in the
+ * other copy), since the duplicate rule refuses every other place (canEquip).
+ */
+export function equipSlotsFor(slot: Slot, equipment: Equipment, item?: Item): EquipSlot[] {
   if (slot !== 'ring') return [slot];
-  return equipment.ring1 && !equipment.ring2 ? ['ring2', 'ring1'] : ['ring1', 'ring2'];
+  const order: EquipSlot[] = equipment.ring1 && !equipment.ring2 ? ['ring2', 'ring1'] : ['ring1', 'ring2'];
+  const uniqueId = item?.unique?.id;
+  if (uniqueId === undefined) return order;
+  const copy = order.find((s) => {
+    const worn = equipment[s];
+    return worn !== undefined && worn.id !== item?.id && worn.unique?.id === uniqueId;
+  });
+  return copy ? [copy, ...order.filter((s) => s !== copy)] : order;
 }
 
 /**

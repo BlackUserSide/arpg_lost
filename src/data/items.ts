@@ -122,12 +122,16 @@ const baseList: BaseDef[] = [
 // so the same unique stays useful up to map 30. PROPOSAL: line ranges are on par with the matching affix tiers;
 // weapon uniques sit on the level-1 bases, so their added-damage line runs a little above the affix to keep up with
 // the level-10 / 20 bases. Names and effect texts: unique.<id>.name / unique.<id>.effect in the locale files.
-// Sub-package 6a: #10 #4 #7 #2; the other six and the legendaries come in 6b–6e.
+// Sub-package 6a: #10 #4 #7 #2; 6b: #1 #9 #3 #6 #5 #8; the legendaries come in 6c–6e.
+// effectParams name where each number of the effect text comes from (render fills the placeholders).
 
 const uline = (line: StatLine, t: AffixTier[]): UniqueStatLine => ({ ...line, tiers: t });
 const ADDED_WEAPON_DAMAGE = int([2, 4], [4, 7], [7, 11], [11, 16], [16, 22]);
 const DAMAGE_INC_25_55 = pct([0.1, 0.15], [0.16, 0.24], [0.25, 0.34], [0.35, 0.44], [0.45, 0.55]);
 const SPEED_5_20 = pct([0.05, 0.07], [0.08, 0.1], [0.11, 0.13], [0.14, 0.16], [0.17, 0.2]);
+const LIFE_8_55 = int([8, 14], [15, 24], [25, 34], [35, 44], [45, 55]);
+const CRIT_INC_10_60 = pct([0.1, 0.19], [0.2, 0.29], [0.3, 0.39], [0.4, 0.49], [0.5, 0.6]);
+const CRIT_MULTI_10_35 = pct([0.1, 0.14], [0.15, 0.19], [0.2, 0.24], [0.25, 0.29], [0.3, 0.35]);
 
 const uniqueList: UniqueDef[] = [
   // #10 Glass Cannon Crown (helmet): +50% more damage; cost: 40% more damage taken.
@@ -143,6 +147,7 @@ const uniqueList: UniqueDef[] = [
     ],
     effectModifiers: [{ stat: 'damage', kind: 'more', value: 0.5 }],
     costs: [{ stat: 'damageTaken', kind: 'more', value: 0.4 }],
+    effectParams: { pct: { path: 'effectModifiers.0.value', format: 'percent' } },
   },
   // #4 Splitter (crossbow): bolts (attack projectiles, basic attack included) pierce 2 more targets; cost: 25% less damage.
   {
@@ -157,6 +162,7 @@ const uniqueList: UniqueDef[] = [
     ],
     costs: [{ stat: 'damage', kind: 'more', value: -0.25 }],
     mechanics: [{ kind: 'skillParams', tags: ['attack', 'projectile'], changes: [{ param: 'pierce', add: 2 }] }],
+    effectParams: { count: { path: 'mechanics.0.changes.0.add' } },
   },
   // #7 Heart of Winter (wand): Fireball deals cold instead of fire (its explosion, split fireballs and any fire zone it
   // leaves too) and slows (30% for 2 s, PROPOSAL: weaker than Frost Nova's 40% / 2.5 s).
@@ -178,6 +184,7 @@ const uniqueList: UniqueDef[] = [
         addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.3 }],
       },
     ],
+    effectParams: { pct: { path: 'mechanics.0.addOnHit.0.magnitude', format: 'percent' }, seconds: { path: 'mechanics.0.addOnHit.0.duration' } },
   },
   // #2 Barrow Reaper (sword): Cleave grants 2 of the class resource per enemy hit (designer default 2026-10-25:
   // "mana" = the class resource; a sword, there are no axes).
@@ -192,6 +199,128 @@ const uniqueList: UniqueDef[] = [
       uline({ stat: 'life', kind: 'flat' }, int([8, 14], [15, 24], [25, 34], [35, 44], [45, 55])),
     ],
     mechanics: [{ kind: 'skillParams', skillIds: ['cleave'], resourcePerHit: 2 }],
+    effectParams: { amount: { path: 'mechanics.0.resourcePerHit' }, resGen: { resourceOf: 'mechanics.0.skillIds.0' } },
+  },
+  // #1 Iron Heart Oath (body armour): armour also works against elemental hits at 50% effectiveness (after resistance);
+  // cost: 20% less movement speed.
+  {
+    id: 'iron_heart_oath',
+    rarity: 'unique',
+    baseId: 'chainmail',
+    weight: 100,
+    stats: [
+      uline({ stat: 'armour', kind: 'increased' }, pct([0.15, 0.2], [0.21, 0.28], [0.29, 0.36], [0.37, 0.45], [0.46, 0.55])),
+      uline({ stat: 'armour', kind: 'flat' }, int([8, 15], [16, 30], [31, 50], [51, 75], [76, 100])),
+      uline({ stat: 'life', kind: 'flat' }, LIFE_8_55),
+    ],
+    costs: [{ stat: 'movementSpeed', kind: 'more', value: -0.2 }],
+    mechanics: [{ kind: 'elementalArmour', effectiveness: 0.5 }],
+    effectParams: { pct: { path: 'mechanics.0.effectiveness', format: 'percent' } },
+  },
+  // #9 Bloody Pupil (ring): crits heal 2% of max life, at most once per 0.2 s (designer default 2026-10-25, so Steady
+  // Hand's every-hit crits do not heal 2% per hit); cost: 15% less max life.
+  {
+    id: 'bloody_pupil',
+    rarity: 'unique',
+    baseId: 'iron_ring',
+    weight: 100,
+    stats: [
+      uline({ stat: 'critChance', kind: 'increased' }, CRIT_INC_10_60),
+      uline({ stat: 'critMultiplier', kind: 'flat' }, CRIT_MULTI_10_35),
+      uline({ stat: 'life', kind: 'flat' }, LIFE_8_55),
+    ],
+    costs: [{ stat: 'life', kind: 'more', value: -0.15 }],
+    mechanics: [{ kind: 'lifeOnCrit', fraction: 0.02, interval: 0.2 }],
+    effectParams: { pct: { path: 'mechanics.0.fraction', format: 'percent' }, seconds: { path: 'mechanics.0.interval' } },
+  },
+  // #3 Ancestral Horn (amulet): Battle Cry stuns the enemies around it (radius 180, PROPOSAL) for 1 s (bosses: the usual
+  // stun → slow rule) and its cooldown is 50% shorter; cost: 10% less life.
+  {
+    id: 'ancestral_horn',
+    rarity: 'unique',
+    baseId: 'amber_amulet',
+    weight: 100,
+    stats: [
+      uline({ stat: 'life', kind: 'flat' }, LIFE_8_55),
+      uline({ stat: 'damage', kind: 'increased', tags: ['attack'] }, DAMAGE_INC_25_55),
+      uline({ stat: 'cooldownRecovery', kind: 'increased' }, pct([0.04, 0.06], [0.07, 0.09], [0.1, 0.12], [0.13, 0.15], [0.16, 0.18])),
+    ],
+    costs: [{ stat: 'life', kind: 'more', value: -0.1 }],
+    mechanics: [
+      {
+        kind: 'skillParams',
+        skillIds: ['battle_cry'],
+        changes: [{ param: 'cooldown', increased: -0.5 }],
+        grants: { burst: { radius: 180 } },
+        addOnHit: [{ status: 'stun', duration: 1 }],
+      },
+    ],
+    effectParams: { seconds: { path: 'mechanics.0.addOnHit.0.duration' }, pct: { path: 'mechanics.0.changes.0.increased', format: 'percent' } },
+  },
+  // #6 Madman's Gloves (gloves): Explosive Trap throws 3 traps in a 40° fan (PROPOSAL); its cooldown is doubled
+  // (+100% increased: adds with other cooldown changes). The traps share the active-trap cap with Minefield
+  // (designer default 2026-10-25: cap 3, so the fan eats the cap).
+  {
+    id: 'madman_gloves',
+    rarity: 'unique',
+    baseId: 'wrapped_mitts',
+    weight: 100,
+    stats: [
+      uline({ stat: 'damage', kind: 'increased', tags: ['area'] }, DAMAGE_INC_25_55),
+      uline({ stat: 'critChance', kind: 'increased' }, CRIT_INC_10_60),
+      uline({ stat: 'life', kind: 'flat' }, LIFE_8_55),
+    ],
+    mechanics: [
+      {
+        kind: 'skillParams',
+        skillIds: ['explosive_trap'],
+        changes: [{ param: 'cooldown', increased: 1 }],
+        grants: { trapFan: { count: 3, spreadDeg: 40 } },
+      },
+    ],
+    effectParams: { count: { path: 'mechanics.0.grants.trapFan.count' }, pct: { path: 'mechanics.0.changes.0.increased', format: 'percent' } },
+  },
+  // #5 Shadow Boots (boots): after a Roll the next attack is a guaranteed crit (designer default 2026-10-25: no time
+  // limit, every hit of that attack). No cost.
+  {
+    id: 'shadow_boots',
+    rarity: 'unique',
+    baseId: 'leather_boots',
+    weight: 100,
+    stats: [
+      uline({ stat: 'movementSpeed', kind: 'increased' }, pct([0.05, 0.08], [0.09, 0.12], [0.13, 0.16], [0.17, 0.2], [0.21, 0.25])),
+      uline({ stat: 'critMultiplier', kind: 'flat' }, CRIT_MULTI_10_35),
+      uline({ stat: 'life', kind: 'flat' }, LIFE_8_55),
+    ],
+    mechanics: [{ kind: 'critAfterSkill', skillIds: ['roll'] }],
+  },
+  // #8 Rift Ring (ring): Teleport has no cooldown and leaves a blast where it started (10–18 lightning, radius 100,
+  // PROPOSAL; a spell + area hit, so spell / area modifiers scale it); cost: every teleport takes 15% of the current
+  // life (designer default 2026-10-25: never lethal).
+  {
+    id: 'rift_ring',
+    rarity: 'unique',
+    baseId: 'topaz_ring',
+    weight: 100,
+    stats: [
+      uline({ stat: 'damage', kind: 'increased', tags: ['spell'] }, pct([0.06, 0.1], [0.11, 0.15], [0.16, 0.2], [0.21, 0.25], [0.26, 0.3])),
+      uline({ stat: 'castSpeed', kind: 'increased' }, SPEED_5_20),
+      uline({ stat: 'energyShield', kind: 'flat' }, int([5, 9], [10, 16], [17, 24], [25, 33], [34, 42])),
+    ],
+    mechanics: [
+      {
+        kind: 'skillParams',
+        skillIds: ['teleport'],
+        changes: [{ param: 'cooldown', increased: -1 }],
+        grants: { originBlast: { radius: 100, damage: { lightning: { min: 10, max: 18 } }, critChance: 0.05, tags: ['area'] } },
+        lifeCostFraction: 0.15,
+      },
+    ],
+    effectParams: {
+      pct: { path: 'mechanics.0.lifeCostFraction', format: 'percent' },
+      min: { path: 'mechanics.0.grants.originBlast.damage.lightning.min' },
+      max: { path: 'mechanics.0.grants.originBlast.damage.lightning.max' },
+    },
   },
 ];
 

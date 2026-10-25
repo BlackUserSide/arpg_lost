@@ -97,7 +97,24 @@ export interface UniqueDef {
   readonly costs?: readonly Modifier[];
   /** Mechanics the item brings while equipped (equipmentMechanics → heroMechanics). */
   readonly mechanics?: readonly PassiveMechanic[];
+  /**
+   * Where each placeholder of the effect text (unique.<id>.effect) takes its value from, so the wording can live in
+   * the locale files while every number stays in this def. Read by render only; ignored by the simulation.
+   */
+  readonly effectParams?: Readonly<Record<string, UniqueTextParam>>;
 }
+
+/**
+ * One placeholder value of a unique's effect text, read from the UniqueDef itself by a dot path (object keys and
+ * array indices, e.g. 'mechanics.0.addOnHit.0.duration'):
+ * - `path` + `format` 'number' (default): the number as is (sign dropped); a `count` placeholder also picks the plural.
+ * - `path` + `format` 'percent': a fraction shown as a percentage (sign dropped: the wording says "less" / "more").
+ * - `resourceOf`: a path to a skill id; the class resource of the class owning that skill (genitive form).
+ * A path into effectModifiers marks that modifier as stated by the text (it gets no extra modifier line).
+ */
+export type UniqueTextParam =
+  | { readonly path: string; readonly format?: 'number' | 'percent' }
+  | { readonly resourceOf: string };
 
 export interface LootRules {
   /**

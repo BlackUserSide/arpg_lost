@@ -41,7 +41,7 @@ function applyTotal(base: number, total: ParamTotal | undefined): number {
  * - cooldown: the action cooldown (with charges: the recharge time of one charge).
  * - charges: stored uses (base: granted charges, else the action's, else 1; rounded down, at least 1).
  * - buffDuration: every buff the action applies to its user (not invulnerability).
- * - radius: arc radius (melee swings, novas) and a dash landing's radius. Projectile hitboxes and dash hit widths
+ * - radius: arc radius (melee swings, novas), a dash landing's, a burst's and an origin blast's radius. Projectile hitboxes and dash hit widths
  *   are not "radius"; nor are ground zones and projectile splits (their own data).
  * - explodeRadius: projectile explosion, trap explosion.
  * - pierce: projectile pierce count (rounded down to a whole number of targets).
@@ -76,11 +76,13 @@ function applyDelivery(d: Delivery, p: (param: AnySkillParam, base: number) => n
       const maxActive = grants.maxActiveTraps !== undefined ? Math.min(grants.maxActiveTraps, d.maxActive ?? Infinity) : d.maxActive;
       const chain = d.chain ?? grants.trapChain;
       const aura = d.aura ?? grants.trapAura;
+      const fan = d.fan ?? grants.trapFan;
       return {
         ...d,
         ...(maxActive !== undefined ? { maxActive } : {}),
         ...(chain ? { chain } : {}),
         ...(aura ? { aura } : {}),
+        ...(fan ? { fan } : {}),
         throwRange: p('range', d.throwRange),
         armTime: p('armTime', d.armTime),
         triggerRadius: p('triggerRadius', d.triggerRadius),
@@ -123,6 +125,9 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
   let chainHit: SkillGrants['chainHit'];
   let echo: SkillGrants['echo'];
   let knockback: SkillGrants['knockback'];
+  let trapFan: SkillGrants['trapFan'];
+  let burst: SkillGrants['burst'];
+  let originBlast: SkillGrants['originBlast'];
   for (const { grants } of sets) {
     if (!grants) continue;
     if (grants.charges !== undefined) charges = Math.max(charges ?? 0, grants.charges);
@@ -136,6 +141,9 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
     chainHit ??= grants.chainHit;
     echo ??= grants.echo;
     knockback ??= grants.knockback;
+    trapFan ??= grants.trapFan;
+    burst ??= grants.burst;
+    originBlast ??= grants.originBlast;
   }
   return {
     ...(charges !== undefined ? { charges } : {}),
@@ -149,6 +157,9 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
     ...(chainHit ? { chainHit } : {}),
     ...(echo ? { echo } : {}),
     ...(knockback ? { knockback } : {}),
+    ...(trapFan ? { trapFan } : {}),
+    ...(burst ? { burst } : {}),
+    ...(originBlast ? { originBlast } : {}),
   };
 }
 
@@ -158,7 +169,8 @@ function combineGrants(sets: readonly SkillChangeSet[]): SkillGrants {
  * base value with all matching changes summed (add and increased combine like stats). Returns `action` itself when nothing matches.
  * Added statuses that combat does not implement are skipped. Duration changes also scale a freeze's bossDuration.
  * Stat modifiers of the sets (SkillChangeSet.modifiers) are appended to ActionDef.modifiers (the action's own).
- * Resource cost multipliers of the sets multiply (designer decision 2026-10-23); leech, resourcePerHit and stun bar fill add up;
+ * Resource cost multipliers of the sets multiply (designer decision 2026-10-23); leech, resourcePerHit,
+ * lifeCostFraction and stun bar fill add up;
  * damage conversions combine as described at SkillChangeSet.damageConversion (the action's own comes first).
  */
 export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]): ActionDef {
@@ -174,12 +186,14 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
   let costMultiplier = 1;
   let leech = action.leech ?? 0;
   let resourcePerHit = action.resourcePerHit ?? 0;
+  let lifeCostFraction = action.lifeCostFraction ?? 0;
   let stunBarFill = action.stunBarFillIncreased ?? 0;
   let conversion = action.damageConversion;
   for (const set of matching) {
     costMultiplier *= set.resourceCostMultiplier ?? 1;
     leech += set.leech ?? 0;
     resourcePerHit += set.resourcePerHit ?? 0;
+    lifeCostFraction += set.lifeCostFraction ?? 0;
     stunBarFill += set.stunBarFillIncreased ?? 0;
     const c = set.damageConversion;
     if (c && (!conversion || conversion.to === c.to)) {
@@ -239,6 +253,8 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
   const chainHit = action.chainHit ?? grants.chainHit;
   const echo = action.echo ?? grants.echo;
   const knockback = action.knockback ?? grants.knockback;
+  const burstDef = action.burst ?? grants.burst;
+  const blastDef = action.originBlast ?? grants.originBlast;
 
   return {
     ...action,
@@ -257,6 +273,9 @@ export function resolveAction(action: ActionDef, sets: readonly SkillChangeSet[]
     ...(echo ? { echo } : {}),
     ...(knockback ? { knockback } : {}),
     ...(conversion ? { damageConversion: conversion } : {}),
+    ...(lifeCostFraction !== 0 ? { lifeCostFraction } : {}),
+    ...(burstDef ? { burst: { ...burstDef, radius: p('radius', burstDef.radius) } } : {}),
+    ...(blastDef ? { originBlast: { ...blastDef, radius: p('radius', blastDef.radius) } } : {}),
   };
 }
 

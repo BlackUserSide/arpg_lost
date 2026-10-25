@@ -61,7 +61,7 @@ const heroClass: ClassDef = {
 };
 
 const content: Content = {
-  combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5, bossStunSlow: 0.5 },
+  combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5, bossStunSlow: 0.5, maxLifeCostFraction: 0.9 },
   classes: { hero: heroClass },
   mobs: { dummy, late, biter, caller, plated },
   arena: { width: 1000, height: 1000, spawn: { firstDelay: 1, interval: 1, batchStart: 5, batchGrowth: 0, maxAlive: 50, mobIds: ['dummy'] } },

@@ -137,6 +137,8 @@ export function createWorld(
     stillTime: 0,
     leechRecent: 0,
     counterCooldown: 0,
+    critHealCooldown: 0,
+    nextAttackCrit: false,
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
@@ -206,6 +208,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   advanceCombatIdle(classDef, player, dt);
   // Snap float leftovers (1 − 60 × 1/60) so a 1 s internal cooldown ends after exactly 60 steps.
   player.counterCooldown = player.counterCooldown - dt > TIME_EPSILON ? player.counterCooldown - dt : 0;
+  player.critHealCooldown = player.critHealCooldown - dt > TIME_EPSILON ? player.critHealCooldown - dt : 0;
 
   const maxLife = playerStat(classDef, player, 'life');
   const maxShield = playerStat(classDef, player, 'energyShield');

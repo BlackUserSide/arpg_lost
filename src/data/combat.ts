@@ -12,4 +12,6 @@ export const combatConfig: CombatConfig = {
   // PROPOSAL: bosses are not stunned by ordinary stuns; a stun becomes this slow for the stun's duration
   // ("сильне сповільнення", magnitude not specified; same as the freeze-slow).
   bossStunSlow: 0.5,
+  // PROPOSAL (6b review): summed life cost per use (Rift Ring 15% + future sources) is capped at 90% of the pool.
+  maxLifeCostFraction: 0.9,
 };
