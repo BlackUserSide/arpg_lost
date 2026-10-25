@@ -3,8 +3,8 @@
 
 import { ESSENCE_CURRENCY } from '../items/craft';
 import { generateUnique, uniquePool, weightedPick } from '../items/generate';
-import { addToStash, rollItem, SALVAGE_CURRENCY } from '../items/inventory';
-import type { Item, ItemsData } from '../items/types';
+import { rollItem, SALVAGE_CURRENCY, storeLoot, type LootPlace } from '../items/inventory';
+import type { Item, ItemsData, WeaponType } from '../items/types';
 import { addCurrency, type Profile } from '../progression/profile';
 import type { Rng } from '../rng';
 import { timeLeft } from './run';
@@ -115,8 +115,13 @@ export function planRunRewards(outcome: RunOutcome, rules: RunRewardRules): Rewa
 export interface GrantedRewards {
   /** Every rolled item, including the ones salvaged because the stash was full. */
   readonly items: Item[];
-  /** Ids of the items that did not fit the stash and were salvaged at once. */
+  /** Ids of the items that did not fit the stash (nor the overflow) and were salvaged at once, in `items` order. */
   readonly salvagedIds: string[];
+  /**
+   * Ids of the items that did not fit the stash and wait in the overflow (Profile.stash.overflow: uniques and
+   * legendaries are never salvaged on a full stash, designer decision 2026-10-26), in `items` order.
+   */
+  readonly overflowIds: string[];
   /** Shards from the plan plus from the salvaged items. */
   readonly shards: number;
   readonly essence: number;
@@ -127,36 +132,48 @@ export interface GrantedRewards {
 /**
  * Rolls the planned items (in plan order, rollItem), then the legendary roll if planned: one draw of its chance, and
  * on a hit a legendary picked by weight among those that can drop at its item level (none in the data: nothing).
- * Items go into the stash (a legendary first, so a nearly full stash keeps it); items that do not fit are salvaged
- * into shards. Adds the shards and essence to the account currency. `items` lists the planned items in plan order,
- * then the legendary.
+ * `weaponType` is the run hero's: unique / legendary weapons of other weapon types never drop (uniquePool; designer
+ * decision 2026-10-26). Items are stored with storeLoot (a legendary first, so a nearly full stash keeps it):
+ * stash, else overflow for uniques and legendaries, else salvaged into shards. Adds the shards and essence to the
+ * account currency. `items` lists the planned items in plan order, then the legendary.
  */
-// DESIGN-TBD: a full stash salvages even a legendary (100 shards), like any other chest item; see overnight-questions.md.
-export function grantRunRewards(profile: Profile, rng: Rng, plan: RewardPlan, items: ItemsData): GrantedRewards {
+export function grantRunRewards(profile: Profile, rng: Rng, plan: RewardPlan, items: ItemsData, weaponType?: WeaponType): GrantedRewards {
   const rolled: Item[] = [];
   for (const p of plan.items) {
     rolled.push(
-      rollItem(profile, rng, { itemLevel: p.itemLevel, luck: p.luck, ...(p.uniqueWeightMultiplier !== undefined ? { uniqueWeightMultiplier: p.uniqueWeightMultiplier } : {}) }, items),
+      rollItem(
+        profile,
+        rng,
+        {
+          itemLevel: p.itemLevel,
+          luck: p.luck,
+          ...(p.uniqueWeightMultiplier !== undefined ? { uniqueWeightMultiplier: p.uniqueWeightMultiplier } : {}),
+          ...(weaponType !== undefined ? { uniqueWeaponType: weaponType } : {}),
+        },
+        items,
+      ),
     );
   }
   let legendary: Item | undefined;
   if (plan.legendary && rng.chance(plan.legendary.chance)) {
-    const def = weightedPick(rng, uniquePool(items, 'legendary', plan.legendary.itemLevel), (u) => u.weight);
+    const def = weightedPick(rng, uniquePool(items, 'legendary', plan.legendary.itemLevel, undefined, weaponType), (u) => u.weight);
     if (def) legendary = generateUnique(rng, `i${profile.nextItemId++}`, def, plan.legendary.itemLevel, items);
   }
-  const salvagedIds: string[] = [];
+  const places = new Map<string, LootPlace | null>();
   let shards = plan.shards;
   for (const item of legendary ? [legendary, ...rolled] : rolled) {
-    if (addToStash(profile, item, items)) {
-      salvagedIds.push(item.id);
-      shards += items.rules.salvage[item.rarity];
-    }
+    const place = storeLoot(profile, item, items);
+    places.set(item.id, place);
+    // DESIGN-TBD: an overflow already at its cap (LootRules.overflow.size) salvages even a unique / legendary.
+    if (!place) shards += items.rules.salvage[item.rarity];
   }
+  const all = legendary ? [...rolled, legendary] : rolled;
   addCurrency(profile, SALVAGE_CURRENCY, shards);
   addCurrency(profile, ESSENCE_CURRENCY, plan.essence);
   return {
-    items: legendary ? [...rolled, legendary] : rolled,
-    salvagedIds: legendary ? [...salvagedIds.filter((id) => id !== legendary.id), ...salvagedIds.filter((id) => id === legendary.id)] : salvagedIds,
+    items: all,
+    salvagedIds: all.filter((i) => places.get(i.id) === null).map((i) => i.id),
+    overflowIds: all.filter((i) => places.get(i.id) === 'overflow').map((i) => i.id),
     shards,
     essence: plan.essence,
     ...(legendary ? { legendaryId: legendary.id } : {}),

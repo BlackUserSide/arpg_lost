@@ -101,6 +101,10 @@ export const uk: LocaleTable = {
   'inv.salvageConfirm': 'Розібрати «{name}»?',
   'inv.salvageButton': 'Розібрати',
   'inv.clickToSelect': 'Натисніть, щоб вибрати',
+  'inv.mail': 'Пошта: {count}',
+  'inv.mailHint': 'Унікальні й легендарні предмети, що не влізли в повне сховище, чекають тут. Сховище: {stash}/{size}.',
+  'inv.claim': 'Забрати',
+  'inv.mailMoved': 'З пошти до сховища: {count}',
 
   // ---- Crafting (inventory tab) ----
   'inv.tab.craft': 'Крафт',
@@ -524,6 +528,7 @@ export const uk: LocaleTable = {
   },
   'run.currency': '+{shards}  ·  +{essence}',
   'run.nothing': 'Цього разу без нагороди',
+  'run.mailWaiting': { one: 'Сховище повне: {count} предмет чекає в пошті', few: 'Сховище повне: {count} предмети чекають у пошті', many: 'Сховище повне: {count} предметів чекають у пошті', other: 'Сховище повне: {count} предмета чекають у пошті' },
   'run.unlocked': 'Відкрито карту {map}!',
   'run.again': 'Ще раз',
   'run.nextMap': 'Карта {map} →',

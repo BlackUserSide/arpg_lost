@@ -110,6 +110,45 @@ describe('unique drops', () => {
     expect(boots.name).not.toBe('');
   });
 
+  it('unique weapons drop only for their weapon type; non-weapon uniques and normal loot are unaffected', () => {
+    const weapons = (weaponType?: 'sword' | 'crossbow' | 'wand'): string[] => uniquePool(itemsData, 'unique', 30, 'weapon', weaponType).map((u) => u.id);
+    expect(weapons()).toEqual(['splitter', 'heart_of_winter', 'barrow_reaper']);
+    expect(weapons('sword')).toEqual(['barrow_reaper']);
+    expect(weapons('crossbow')).toEqual(['splitter']);
+    expect(weapons('wand')).toEqual(['heart_of_winter']);
+    // Without a slot: every non-weapon unique stays, only the other classes' weapons go.
+    const all = uniquePool(itemsData, 'unique', 30).map((u) => u.id);
+    expect(uniquePool(itemsData, 'unique', 30, undefined, 'wand').map((u) => u.id)).toEqual(all.filter((id) => id !== 'splitter' && id !== 'barrow_reaper'));
+    expect(uniquePool(itemsData, 'legendary', 30, undefined, 'sword').map((u) => u.id)).toEqual(['devourer_crown', 'clock_last_moment']);
+
+    // A unique weapon roll for a mage: always the wand; with no wand unique the item becomes rare.
+    for (let seed = 0; seed < 30; seed++) {
+      const item = generateItem(createRng(seed), 'w', { itemLevel: 30, slot: 'weapon', uniqueWeaponType: 'wand' }, onlyUniques(itemsData));
+      expect(item.unique?.id).toBe('heart_of_winter');
+    }
+    const noWand: ItemsData = { ...itemsData, uniques: Object.fromEntries(Object.entries(itemsData.uniques).filter(([id]) => id !== 'heart_of_winter')) };
+    const fallback = generateItem(createRng(3), 'w', { itemLevel: 30, slot: 'weapon', uniqueWeaponType: 'wand' }, onlyUniques(noWand));
+    expect(fallback.rarity).toBe('rare');
+    expect(fallback.unique).toBeUndefined();
+    // Default weights, a fixed seed set: every item that is not a unique without the filter is exactly the same with
+    // it (same base, rarity, affixes, values: the filter only touches the unique pick).
+    let plainCount = 0;
+    let uniqueCount = 0;
+    for (let seed = 0; seed < 3000; seed++) {
+      const options = { itemLevel: 30, luck: 0.4 };
+      const a = generateItem(createRng(seed), 'x', options, itemsData);
+      if (a.rarity === 'unique') {
+        uniqueCount++;
+        continue;
+      }
+      plainCount++;
+      for (const weaponType of ['sword', 'crossbow', 'wand'] as const) {
+        expect(generateItem(createRng(seed), 'x', { ...options, uniqueWeaponType: weaponType }, itemsData)).toEqual(a);
+      }
+    }
+    expect([plainCount, uniqueCount]).toEqual([2970, 30]);
+  });
+
   it('rarity weights: unique ≈ 1 in 100, ×3 with the boss multiplier, untouched by speed luck', () => {
     const count = (luck: number, multiplier: number): number => {
       const rng = createRng(11);

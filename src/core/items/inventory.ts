@@ -21,6 +21,45 @@ export function addToStash(profile: Profile, item: Item, data: ItemsData): Inven
   return null;
 }
 
+/** Where storeLoot put an item; null: nowhere (the caller salvages it). */
+export type LootPlace = 'stash' | 'overflow';
+
+/**
+ * Stores a newly found item: into the stash if there is room; otherwise, for a rarity in LootRules.overflow.rarities
+ * (uniques and legendaries, designer decision 2026-10-26), at the end of the overflow if it holds fewer than
+ * LootRules.overflow.size items; otherwise nowhere (null).
+ */
+export function storeLoot(profile: Profile, item: Item, data: ItemsData): LootPlace | null {
+  if (!addToStash(profile, item, data)) return 'stash';
+  const { size, rarities } = data.rules.overflow;
+  if (!rarities.includes(item.rarity) || profile.stash.overflow.length >= size) return null;
+  profile.stash.overflow.push(item);
+  return 'overflow';
+}
+
+/** Moves one overflow item into the stash ('stash-full' if there is no room, 'no-item' for an unknown id). */
+export function claimOverflow(profile: Profile, itemId: string, data: ItemsData): InventoryError | null {
+  const index = profile.stash.overflow.findIndex((i) => i.id === itemId);
+  if (index < 0) return 'no-item';
+  if (profile.stash.items.length >= data.rules.stashSize) return 'stash-full';
+  profile.stash.items.push(profile.stash.overflow.splice(index, 1)[0]!);
+  return null;
+}
+
+/**
+ * Moves overflow items into the stash, oldest first, while there is room; returns the ids moved (render: on hub /
+ * inventory entry; finishRun: before the chest, so waiting items take freed space before new loot).
+ */
+export function fillStashFromOverflow(profile: Profile, data: ItemsData): string[] {
+  const moved: string[] = [];
+  while (profile.stash.overflow.length > 0 && profile.stash.items.length < data.rules.stashSize) {
+    const item = profile.stash.overflow.shift()!;
+    profile.stash.items.push(item);
+    moved.push(item.id);
+  }
+  return moved;
+}
+
 function takeFromStash(profile: Profile, itemId: string): Item | undefined {
   const index = profile.stash.items.findIndex((i) => i.id === itemId);
   if (index < 0) return undefined;

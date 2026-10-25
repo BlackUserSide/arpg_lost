@@ -1,11 +1,13 @@
 // Folding a finished map run into the profile: hero progress and stats, map unlock, chest / consolation, supports.
 // One call per run (render calls it when the run ends or the screen closes).
 
+import { fillStashFromOverflow } from '../items/inventory';
 import type { ItemsData } from '../items/types';
 import { applyRunResult, findCharacter, type Profile } from '../progression/profile';
 import { createRng } from '../rng';
 import { grantSupportDrops, type SupportRewards } from '../supports/tab';
 import type { SupportData } from '../supports/types';
+import type { ClassDef } from '../world/content';
 import { unlockNextMap } from './progress';
 import { grantRunRewards, planRunRewards, runOutcome, type GrantedRewards, type RewardPlan, type RunOutcome } from './rewards';
 import { abandonRun } from './run';
@@ -29,11 +31,15 @@ export interface RunSummary {
   readonly unlockedMap: number | null;
   /** Map completion XP the win granted (already in the hero's progress). */
   readonly bonusXp: number;
+  /** Overflow items moved into space freed in the stash before the chest (fillStashFromOverflow), oldest first. */
+  readonly claimedFromOverflow: string[];
 }
 
 export interface FinishData {
   readonly maps: MapsData;
   readonly items: ItemsData;
+  /** Class defs: the hero's weapon type filters unique weapons out of the chest (grantRunRewards). */
+  readonly classes: Readonly<Record<string, ClassDef>>;
   readonly supports?: SupportData;
 }
 
@@ -41,7 +47,8 @@ export interface FinishData {
  * Records a run once: an active run is abandoned first (abandonRun). Then character stats and account records
  * (applyRunResult: XP and skill XP are kept on any outcome), the map unlock on a win, the chest or consolation
  * (planRunRewards / grantRunRewards, items rolled from the world's loot stream so the whole run replays from its
- * seed), and the supports if kept (keepsSupportDrops). Returns null if the run was already recorded or the character
+ * seed; unique weapons only of the hero's weapon type; overflow items first take any space freed in the stash), and
+ * the supports if kept (keepsSupportDrops). Returns null if the run was already recorded or the character
  * does not exist (the run is then marked recorded and nothing is granted).
  */
 export function finishRun(profile: Profile, characterId: string, run: RunState, data: FinishData): RunSummary | null {
@@ -66,10 +73,11 @@ export function finishRun(profile: Profile, characterId: string, run: RunState, 
 
   const outcome = runOutcome(run, data.maps);
   const plan = planRunRewards(outcome, data.maps.rewards);
+  const claimedFromOverflow = fillStashFromOverflow(profile, data.items);
   const loot = createRng(world.lootRngState);
-  const rewards = grantRunRewards(profile, loot, plan, data.items);
+  const rewards = grantRunRewards(profile, loot, plan, data.items, data.classes[character.classId]?.weaponType);
   world.lootRngState = loot.getState();
 
   const supports = data.supports && keepsSupportDrops(run) ? grantSupportDrops(profile, character, world.supportDrops, data.supports) : undefined;
-  return { outcome, plan, rewards, ...(supports ? { supports } : {}), unlockedMap: unlocked, bonusXp: run.bonusXp };
+  return { outcome, plan, rewards, ...(supports ? { supports } : {}), unlockedMap: unlocked, bonusXp: run.bonusXp, claimedFromOverflow };
 }

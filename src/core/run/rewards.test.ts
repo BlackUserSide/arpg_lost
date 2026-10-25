@@ -11,9 +11,9 @@ import { addCurrency, createCharacter, createProfile, type CharacterRecord, type
 import { createRng } from '../rng';
 import { finishRun, keepsSupportDrops } from './finish';
 import { availableMaps, canEnterMap, unlockedMap, unlockNextMap } from './progress';
-import { essenceFor, grantRunRewards, planRunRewards, rewardItemLevel, speedTier, type RunOutcome } from './rewards';
+import { essenceFor, grantRunRewards, planRunRewards, rewardItemLevel, speedTier, type RewardPlan, type RunOutcome } from './rewards';
 import { createRun, currentTemplate, openDoor, stepRun } from './run';
-import type { ItemsData, UniqueDef } from '../items/types';
+import type { ItemsData, UniqueDef, WeaponType } from '../items/types';
 import type { RunInput, RunRewardRules, RunState } from './types';
 
 const rules: RunRewardRules = {
@@ -255,7 +255,7 @@ describe('finishRun', () => {
     const run = createRun(content, mapsData, 'warrior', 1234, {}, 1);
     winRun(run);
     run.world.supportDrops.push({ defId: Object.keys(supportsData.supports)[0]!, tier: 1 });
-    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, supports: supportsData })!;
+    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, classes: content.classes, supports: supportsData })!;
     // The whole run took a few seconds: the best speed tier (+2 items, +2 levels), boss +1 → map level + 3.
     expect(summary.plan.speedTier).toBe(mapsData.rewards.chest.speedTiers[1]);
     expect(summary.rewards.items.map((i) => i.level)).toEqual([4, 4, 4, 4]);
@@ -271,7 +271,7 @@ describe('finishRun', () => {
     expect(profile.records).toMatchObject({ bestMapLevel: 1, bossKills: 1, bestClearTime: run.elapsed });
     expect(character.level).toBe(run.world.player.level);
     // Recorded once.
-    expect(finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, supports: supportsData })).toBeNull();
+    expect(finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, classes: content.classes, supports: supportsData })).toBeNull();
     expect(profile.stash.items).toHaveLength(4);
   });
 
@@ -280,7 +280,7 @@ describe('finishRun', () => {
       const { profile, character } = newHero();
       const run = createRun(content, mapsData, 'warrior', 99, {}, 5);
       winRun(run);
-      return finishRun(profile, character.id, run, { maps: mapsData, items: itemsData })!.rewards;
+      return finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, classes: content.classes })!.rewards;
     };
     expect(chest()).toEqual(chest());
   });
@@ -295,7 +295,7 @@ describe('finishRun', () => {
     run.world.player.dead = true;
     run.status = 'failed';
     run.failReason = 'death';
-    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, supports: supportsData })!;
+    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, classes: content.classes, supports: supportsData })!;
     expect(summary.plan).toEqual({ items: [{ itemLevel: 3, luck: 0 }], shards: 6, essence: essenceFor(run.elitesKilled, false, mapsData.rewards) });
     expect(summary.rewards.items.map((i) => i.level)).toEqual([3]);
     expect(summary.supports).toBeUndefined();
@@ -315,10 +315,71 @@ describe('finishRun', () => {
     const { profile, character } = newHero();
     const run = createRun(content, mapsData, 'warrior', 5, {}, 1);
     run.world.supportDrops.push({ defId: Object.keys(supportsData.supports)[0]!, tier: 1 });
-    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, supports: supportsData })!;
+    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: itemsData, classes: content.classes, supports: supportsData })!;
     expect(run).toMatchObject({ status: 'failed', failReason: 'abandoned', recorded: true });
     expect(summary.plan).toEqual({ items: [], shards: 0, essence: 0 });
     expect(summary.supports).toBeUndefined();
     expect(character.stats.deaths).toBe(0);
+  });
+});
+
+describe('unique weapons for the run hero, stash overflow (designer decisions 2026-10-26)', () => {
+  const onlyUniques = (d: ItemsData): ItemsData => ({ ...d, rules: { ...d.rules, rarityWeights: { normal: 0, magic: 0, rare: 0, unique: 1 } } });
+  // Weapon bases only: every chest item is a weapon, and only weapon uniques can be picked.
+  const weaponsOnly = (d: ItemsData): ItemsData => ({ ...d, bases: Object.fromEntries(Object.entries(d.bases).filter(([, b]) => b.slot === 'weapon')) });
+  const chest = (count: number, itemLevel = 30): RewardPlan => ({ items: Array.from({ length: count }, () => ({ itemLevel, luck: 0 })), shards: 2, essence: 0 });
+
+  it('a unique weapon in the chest is always of the hero weapon type; without a type any class weapon drops', () => {
+    const items = onlyUniques(weaponsOnly(itemsData));
+    const ids = (weaponType?: WeaponType): string[] => [...new Set(grantRunRewards(createProfile(), createRng(42), chest(12), items, weaponType).items.map((i) => i.unique?.id ?? 'none'))].sort();
+    expect(ids('crossbow')).toEqual(['splitter']);
+    expect(ids('sword')).toEqual(['barrow_reaper']);
+    expect(ids('wand')).toEqual(['heart_of_winter']);
+    expect(ids()).toEqual(['barrow_reaper', 'heart_of_winter', 'splitter']);
+  });
+
+  it('full stash: uniques wait in the overflow (not salvaged), normal loot is salvaged; over the overflow cap a unique is salvaged', () => {
+    const tiny = (d: ItemsData, overflow: number): ItemsData => ({ ...d, rules: { ...d.rules, stashSize: 1, overflow: { ...d.rules.overflow, size: overflow } } });
+    const profile = createProfile();
+    const got = grantRunRewards(profile, createRng(42), chest(4), tiny(onlyUniques(itemsData), 20));
+    expect(got.items.map((i) => i.rarity)).toEqual(['unique', 'unique', 'unique', 'unique']);
+    expect(profile.stash.items.map((i) => i.id)).toEqual(['i1']);
+    expect(profile.stash.overflow.map((i) => i.id)).toEqual(['i2', 'i3', 'i4']);
+    expect(got).toMatchObject({ salvagedIds: [], overflowIds: ['i2', 'i3', 'i4'], shards: 2 });
+    expect(profile.currency[SALVAGE_CURRENCY]).toBe(2);
+
+    const capped = createProfile();
+    const over = grantRunRewards(capped, createRng(42), chest(4), tiny(onlyUniques(itemsData), 2));
+    expect(over).toMatchObject({ salvagedIds: ['i4'], overflowIds: ['i2', 'i3'], shards: 2 + itemsData.rules.salvage.unique });
+
+    // Normal loot keeps the old behaviour: the stash takes one, the rest is salvaged, the overflow stays empty.
+    const plain = createProfile();
+    const normal: ItemsData = { ...tiny(itemsData, 20), rules: { ...tiny(itemsData, 20).rules, rarityWeights: { normal: 1, magic: 0, rare: 0, unique: 0 } } };
+    expect(grantRunRewards(plain, createRng(42), chest(3), normal)).toMatchObject({ salvagedIds: ['i2', 'i3'], overflowIds: [], shards: 2 + 2 * itemsData.rules.salvage.normal });
+    expect(plain.stash.overflow).toEqual([]);
+  });
+
+  it('a legendary on a full stash waits in the overflow', () => {
+    const legend: UniqueDef = { id: 'test_legend', rarity: 'legendary', baseId: 'amber_amulet', weight: 1, stats: [] };
+    const items: ItemsData = { ...itemsData, uniques: { test_legend: legend }, rules: { ...itemsData.rules, stashSize: 0, rarityWeights: { normal: 1, magic: 0, rare: 0, unique: 0 } } };
+    const profile = createProfile();
+    const got = grantRunRewards(profile, createRng(42), { ...chest(1), legendary: { itemLevel: 31, chance: 1 } }, items);
+    expect(got).toMatchObject({ legendaryId: 'i2', overflowIds: ['i2'], salvagedIds: ['i1'] });
+    expect(profile.stash.overflow.map((i) => i.rarity)).toEqual(['legendary']);
+  });
+
+  it('finishRun: waiting overflow items take freed stash space before the chest; the chest weapon uniques fit the hero', () => {
+    const { profile, character } = newHero();
+    const waiting = { id: 'w1', baseId: 'iron_ring', level: 5, rarity: 'unique' as const, name: '', affixes: [] };
+    profile.stash.overflow.push(waiting);
+    const run = createRun(content, mapsData, 'warrior', 1234, {}, 1);
+    winRun(run);
+    const items = onlyUniques(weaponsOnly(itemsData));
+    const summary = finishRun(profile, character.id, run, { maps: mapsData, items: { ...items, rules: { ...items.rules, stashSize: 3 } }, classes: content.classes })!;
+    expect(summary.claimedFromOverflow).toEqual(['w1']);
+    expect(summary.rewards.items.map((i) => i.unique?.id)).toEqual(['barrow_reaper', 'barrow_reaper', 'barrow_reaper', 'barrow_reaper']);
+    expect(profile.stash.items.map((i) => i.id)).toEqual(['w1', ...summary.rewards.items.slice(0, 2).map((i) => i.id)]);
+    expect(profile.stash.overflow.map((i) => i.id)).toEqual(summary.rewards.items.slice(2).map((i) => i.id));
+    expect(summary.rewards.overflowIds).toEqual(summary.rewards.items.slice(2).map((i) => i.id));
   });
 });

@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { applyCraft, ESSENCE_CURRENCY, type CraftData, type CraftOp } from '../core/items/craft';
 import { equippedWeapon } from '../core/items/equipment';
-import { equipFromStash, salvageFromStash, SALVAGE_CURRENCY, unequipToStash, type InventoryError } from '../core/items/inventory';
+import { claimOverflow, equipFromStash, fillStashFromOverflow, salvageFromStash, SALVAGE_CURRENCY, unequipToStash, type InventoryError } from '../core/items/inventory';
 import type { EquipSlot, Item } from '../core/items/types';
 import { heroMechanics, heroModifiers } from '../core/progression/hero';
 import { critStats, leechStats } from '../core/world/passiveEffects';
@@ -28,19 +28,21 @@ import { damageTypeText, num } from './statText';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { SupportsSceneData } from './SupportsScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
-import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
+import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, makeFrame, showToast, UI } from './ui';
 
 // Paper doll (8 slots) + shared stash + item details. Select-then-act controls so it works by touch;
 // double click / double tap equips or unequips directly. The Craft tab (hub only: this scene is never opened during a
-// run) swaps the details for the crafting panel; the doll and the stash then only pick the item to craft.
+// run) swaps the details for the crafting panel; the doll and the stash then only pick the item to craft. The Mail tab
+// (header button, shown while the stash overflow holds items) lists the uniques that did not fit a full stash; each is
+// claimed into the stash once there is room.
 
 const CRAFT_DATA: CraftData = { items: itemsData, crafting: craftingRules };
 /** Below this shrink factor the item tooltip drops its tier detail lines instead of shrinking further. */
 const TOOLTIP_DETAIL_MIN_SCALE = 0.8;
 
-export type InventoryTab = 'items' | 'craft';
+export type InventoryTab = 'items' | 'craft' | 'mail';
 
-type Selection = { where: 'stash'; id: string } | { where: 'equip'; slot: EquipSlot } | undefined;
+type Selection = { where: 'stash'; id: string } | { where: 'overflow'; id: string } | { where: 'equip'; slot: EquipSlot } | undefined;
 
 const DOLL: ReadonlyArray<{ slot: EquipSlot; col: number; row: number; name: MessageKey }> = [
   { slot: 'weapon', col: 0, row: 0, name: 'inv.slot.weapon' },
@@ -83,7 +85,7 @@ function levelLine(character: CharacterRecord): string {
 
 function sameSelection(a: Selection, b: Selection): boolean {
   if (!a || !b || a.where !== b.where) return false;
-  return a.where === 'stash' ? a.id === (b as { id: string }).id : a.slot === (b as { slot: EquipSlot }).slot;
+  return a.where === 'equip' ? a.slot === (b as { slot: EquipSlot }).slot : a.id === (b as { id: string }).id;
 }
 
 export class InventoryScene extends Phaser.Scene {
@@ -125,8 +127,12 @@ export class InventoryScene extends Phaser.Scene {
   create(): void {
     this.app = getApp(this);
     this.cameras.main.setBackgroundColor(UI.bg);
+    // Mail items take any stash room freed since they arrived (oldest first).
+    const moved = fillStashFromOverflow(this.app.profile, itemsData);
+    if (moved.length > 0) this.app.save();
     this.build();
     fadeIn(this);
+    if (moved.length > 0) showToast(this, t('inv.mailMoved', { count: moved.length }));
     const rebuild = (): void => this.build();
     this.scale.on('resize', rebuild);
     this.input.keyboard?.on('keydown-ESC', () => this.back());
@@ -157,13 +163,27 @@ export class InventoryScene extends Phaser.Scene {
     const m = compact ? 10 : 24;
     const titleH = compact ? 40 : 64;
     const look = CLASS_LOOKS.find((l) => l.classId === character.classId);
+    const overflow = this.app.profile.stash.overflow;
+    // The last mail item was claimed: back to the stash.
+    if (this.tab === 'mail' && overflow.length === 0) {
+      this.tab = 'items';
+      if (this.selection?.where === 'overflow') this.selection = undefined;
+    }
 
+    // Header buttons from the right: Back, Talents, Supports (130 wide at -250), then Mail while the overflow has items.
+    const headerY = titleH / 2 + (compact ? 0 : 4);
+    const headerBtnH = compact ? 34 : 42;
+    const mailW = overflow.length > 0 ? (compact ? 112 : 136) : 0;
+    const buttonsLeft = width - m - 60 - 250 - 65 - (mailW > 0 ? mailW + 8 : 0);
     const title = heading(this, m + 4, compact ? 4 : 12, compact ? character.name : t('inv.title', { name: character.name, class: className(character.classId) }), compact ? 24 : 34);
-    this.root.add(title);
-    // The level line sits between the title and the header buttons (Supports is the leftmost, 130 wide at -250): it
-    // shrinks into that gap, or hides on screens too narrow for it.
+    // Narrow phones with mail: the name shrinks, or hides, to leave the header buttons their room.
+    const titleRoom = buttonsLeft - 8 - title.x;
+    fitText(title, titleRoom);
+    this.root.add(title.setVisible(title.width <= titleRoom));
+    // The level line sits between the title and the header buttons: it shrinks into that gap, or hides on screens too
+    // narrow for it.
     const levelX = title.x + title.width + 16;
-    const levelRoom = width - m - 60 - 250 - 65 - 8 - levelX;
+    const levelRoom = buttonsLeft - 8 - levelX;
     const level = fitText(label(this, levelX, title.y + title.height - (compact ? 20 : 26), levelLine(character), UI.size.small, UI.goldBrightText), levelRoom);
     this.root.add(level.setVisible(level.width <= levelRoom));
     this.root.add(makeButton(this, width - m - 60, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, t('common.back'), () => this.back()));
@@ -179,6 +199,12 @@ export class InventoryScene extends Phaser.Scene {
         this.scene.start('supports', data);
       }),
     );
+    if (mailW > 0) {
+      const mailTab = this.tab === 'mail';
+      this.root.add(makeButton(this, buttonsLeft + mailW / 2, headerY, mailW, headerBtnH, t('inv.mail', { count: overflow.length }), () => this.setTab('mail'), mailTab ? 'primary' : 'secondary'));
+      // Unclaimed mail: an ember pip on the button's corner while another tab is open.
+      if (!mailTab) this.root.add(this.add.circle(buttonsLeft + mailW - 7, headerY - headerBtnH / 2 + 7, 5, UI.ember).setStrokeStyle(1.5, 0x120a04));
+    }
 
     const top = titleH + (compact ? 0 : 6);
     const avail = height - top - m;
@@ -231,17 +257,35 @@ export class InventoryScene extends Phaser.Scene {
     const headerText =
       this.tab === 'craft'
         ? `${CURRENCY_LOOK[SALVAGE_CURRENCY]!.glyph} ${wallet[SALVAGE_CURRENCY] ?? 0}   ${CURRENCY_LOOK[ESSENCE_CURRENCY]!.glyph} ${currencyAmount(ESSENCE_CURRENCY, wallet[ESSENCE_CURRENCY] ?? 0)}`
-        : `${items.length}/${rules.stashSize}   ◆ ${compact ? (wallet[SALVAGE_CURRENCY] ?? 0) : shardsWord(wallet[SALVAGE_CURRENCY] ?? 0)}`;
+        : this.tab === 'mail'
+          ? `${t('inv.mail', { count: overflow.length })}/${rules.overflow.size}`
+          : `${items.length}/${rules.stashSize}   ◆ ${compact ? (wallet[SALVAGE_CURRENCY] ?? 0) : shardsWord(wallet[SALVAGE_CURRENCY] ?? 0)}`;
     const headerRight = stashX + stashW / 2 - 14;
     const headerRoom = headerRight - (tabsLeft + tabW * 2 + 6 + 10);
     const info = fitText(label(this, headerRight, tabY, headerText, UI.size.small, UI.muted).setOrigin(1, 0.5), headerRoom);
     this.root.add(info.setVisible(info.width <= headerRoom));
-    for (let i = 0; i < rules.stashSize; i++) {
+    // The mail tab shows the overflow in the same grid (it holds fewer items than the stash).
+    const mail = this.tab === 'mail';
+    // Enough cells for every waiting item (an older save may hold more than the cap), within the stash grid.
+    const cells = mail ? Math.min(Math.max(overflow.length, rules.overflow.size), rules.stashSize) : rules.stashSize;
+    const shown = mail ? overflow : items;
+    for (let i = 0; i < cells; i++) {
       const x = stashX - stashW / 2 + 14 + sCell / 2 + (i % cols) * (sCell + sGap);
       const y = top + headerH + sCell / 2 + Math.floor(i / cols) * (sCell + sGap);
-      const item = items[i];
-      if (item) this.buildStashCell(item, x, y, sCell);
+      const item = shown[i];
+      if (item) this.buildStashCell(item, x, y, sCell, mail ? 'overflow' : 'stash');
       else this.root.add(this.add.rectangle(x, y, sCell, sCell, 0x000000, 0.35).setStrokeStyle(1, 0x2a2430));
+    }
+    if (mail) {
+      // What the mail is (and how full the stash is), under its grid.
+      const hintTop = top + headerH + Math.ceil(cells / cols) * (sCell + sGap) + 4;
+      const hintRoom = top + avail - 10 - hintTop;
+      const hint = label(this, stashX, hintTop, t('inv.mailHint', { stash: items.length, size: rules.stashSize }), compact ? 12 : UI.size.small, UI.muted)
+        .setOrigin(0.5, 0)
+        .setAlign('center')
+        .setWordWrapWidth(stashW - 28);
+      if (hint.height > hintRoom && hintRoom > 0) hint.setScale(Math.max(0.8, hintRoom / hint.height));
+      this.root.add(hint.setVisible(hint.displayHeight <= hintRoom));
     }
 
     // Details: own column on wide screens, overlay on narrow ones.
@@ -272,10 +316,10 @@ export class InventoryScene extends Phaser.Scene {
     this.root.add(fitText(label(this, x, y + size / 2 + 2, name, 12, item ? UI.muted : '#5e574c').setOrigin(0.5, 0), size + 6));
   }
 
-  private buildStashCell(item: Item, x: number, y: number, size: number): void {
-    const selected = this.selection?.where === 'stash' && this.selection.id === item.id;
-    const card = makeCard(this, x, y, size, size, selected, () => this.clickStash(item.id));
-    card.on('pointerover', () => this.setHover({ where: 'stash', id: item.id })).on('pointerout', () => this.setHover(undefined));
+  private buildStashCell(item: Item, x: number, y: number, size: number, where: 'stash' | 'overflow'): void {
+    const selected = this.selection?.where === where && this.selection.id === item.id;
+    const card = makeCard(this, x, y, size, size, selected, () => (where === 'stash' ? this.clickStash(item.id) : this.clickOverflow(item.id)));
+    card.on('pointerover', () => this.setHover({ where, id: item.id })).on('pointerout', () => this.setHover(undefined));
     this.root.add(card);
     const base = itemsData.bases[item.baseId];
     // Items above the hero's level are dimmed and show the required level.
@@ -326,11 +370,13 @@ export class InventoryScene extends Phaser.Scene {
   private setHover(hover: Selection): void {
     this.hover = hover;
     // On wide screens hovering previews an item; overlays only follow taps. The crafting panel stays on the selection.
-    if (!this.detailsArea.overlay && this.tab === 'items') this.buildDetails();
+    if (!this.detailsArea.overlay && this.tab !== 'craft') this.buildDetails();
   }
 
   private setTab(tab: InventoryTab): void {
     if (tab === this.tab) return;
+    // Mail items and stash items are never picked in the same view.
+    if (tab === 'mail' || this.tab === 'mail') this.selection = undefined;
     this.tab = tab;
     this.message = '';
     this.craftAffix = undefined;
@@ -404,6 +450,7 @@ export class InventoryScene extends Phaser.Scene {
   private itemFor(sel: Selection): Item | undefined {
     if (!sel) return undefined;
     if (sel.where === 'stash') return this.app.profile.stash.items.find((i) => i.id === sel.id);
+    if (sel.where === 'overflow') return this.app.profile.stash.overflow.find((i) => i.id === sel.id);
     return this.character?.equipment[sel.slot];
   }
 
@@ -421,7 +468,7 @@ export class InventoryScene extends Phaser.Scene {
       if (!area.overlay) {
         this.details.add(makeFrame(this, area.x + area.w / 2, area.y + area.h / 2, area.w, area.h, 'panel'));
         this.details.add(
-          label(this, area.x + area.w / 2, area.y + area.h / 2, this.message || t('inv.emptyHint'), UI.size.small, UI.muted)
+          label(this, area.x + area.w / 2, area.y + area.h / 2, this.message || (this.tab === 'mail' ? t('inv.clickToSelect') : t('inv.emptyHint')), UI.size.small, UI.muted)
             .setOrigin(0.5)
             .setAlign('center'),
         );
@@ -493,6 +540,9 @@ export class InventoryScene extends Phaser.Scene {
       const bw = (w - 10) / 2;
       parts.push(makeButton(this, x + bw / 2, buttonsY, bw, 40, t('inv.equip'), () => this.equip(id), 'primary'));
       parts.push(makeButton(this, x + bw * 1.5 + 10, buttonsY, bw, 40, t('inv.salvage', { value: itemsData.rules.salvage[item.rarity] }), () => this.salvage(item), 'danger'));
+    } else if (isSelected && this.selection?.where === 'overflow') {
+      const id = this.selection.id;
+      parts.push(makeButton(this, area.x + area.w / 2, buttonsY, Math.min(200, w), 40, t('inv.claim'), () => this.claim(id), 'primary'));
     } else if (isSelected && this.selection?.where === 'equip') {
       const slot = this.selection.slot;
       parts.push(makeButton(this, area.x + area.w / 2, buttonsY, Math.min(200, w), 40, t('inv.unequip'), () => this.unequip(slot)));
@@ -541,6 +591,17 @@ export class InventoryScene extends Phaser.Scene {
     this.build();
   }
 
+  /** Mail tab: select, or double click / tap to claim at once. */
+  private clickOverflow(id: string): void {
+    this.message = '';
+    if (this.isDoubleClick(`o:${id}`)) {
+      this.claim(id);
+      return;
+    }
+    this.selection = { where: 'overflow', id };
+    this.build();
+  }
+
   private clickEquip(slot: EquipSlot): void {
     this.message = '';
     if (!this.character?.equipment[slot]) {
@@ -571,6 +632,10 @@ export class InventoryScene extends Phaser.Scene {
   private unequip(slot: EquipSlot): void {
     const error = unequipToStash(this.app.profile, this.characterId, slot, itemsData);
     this.afterChange(error);
+  }
+
+  private claim(itemId: string): void {
+    this.afterChange(claimOverflow(this.app.profile, itemId, itemsData));
   }
 
   private salvage(item: Item): void {
