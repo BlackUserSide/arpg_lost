@@ -315,7 +315,7 @@ describe('modifiers and mechanics', () => {
   });
 
   it('heroMechanics returns the mechanics of allocated nodes', () => {
-    expect(heroMechanics({ passives: { nodes: ['n1', 'k1'], spec: 'sa', specNodes: ['sa_e', 'sa_k'] } }, tree)).toEqual([
+    expect(heroMechanics({ equipment: {}, passives: { nodes: ['n1', 'k1'], spec: 'sa', specNodes: ['sa_e', 'sa_k'] } }, tree, { bases: {}, affixes: {}, uniques: {}, rules: {} } as unknown as ItemsData)).toEqual([
       { kind: 'bloodMagic', lifePerResource: 1 },
       { kind: 'deathExplosionRadius', increased: 0.5 },
     ]);

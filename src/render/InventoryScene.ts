@@ -17,11 +17,11 @@ import { itemsData } from '../data/items';
 import { passiveTree } from '../data/passives';
 import { formatNumber, t, upper, type MessageKey } from '../i18n';
 import { getApp, type App } from './app';
-import { itemIcon } from './itemIcons';
+import { itemIcon, legendaryGlow } from './itemIcons';
 import { className, itemName } from './contentText';
 import { buildCraftPanel, CURRENCY_LOOK, type CraftFlash } from './craftPanel';
 import { AFFIX_OPS, changedAffixes, currencyAmount } from './craftText';
-import { describeItem, rarityLabel } from './itemText';
+import { describeItem, LINE_TONE, rarityLabel } from './itemText';
 import { shardsWord } from './passiveText';
 import { resourceText } from './resourceText';
 import { damageTypeText, num } from './statText';
@@ -35,6 +35,8 @@ import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, m
 // run) swaps the details for the crafting panel; the doll and the stash then only pick the item to craft.
 
 const CRAFT_DATA: CraftData = { items: itemsData, crafting: craftingRules };
+/** Below this shrink factor the item tooltip drops its tier detail lines instead of shrinking further. */
+const TOOLTIP_DETAIL_MIN_SCALE = 0.8;
 
 export type InventoryTab = 'items' | 'craft';
 
@@ -55,6 +57,7 @@ const ERROR_KEY: Readonly<Record<InventoryError, MessageKey>> = {
   'wrong-slot': 'inv.error.wrongSlot',
   level: 'inv.error.level',
   'weapon-type': 'inv.error.weaponType',
+  'unique-duplicate': 'inv.error.uniqueDuplicate',
   'unknown-base': 'inv.error.unknownBase',
   'stash-full': 'inv.error.stashFull',
   'no-item': 'inv.error.noItem',
@@ -261,7 +264,10 @@ export class InventoryScene extends Phaser.Scene {
     card.on('pointerover', () => this.setHover({ where: 'equip', slot })).on('pointerout', () => this.setHover(undefined));
     this.root.add(card);
     const base = item && itemsData.bases[item.baseId];
-    if (item && base) this.root.add(this.add.image(x, y, itemIcon(this, base, item.rarity)).setDisplaySize(size - 12, size - 12));
+    if (item && base) {
+      if (item.rarity === 'legendary') this.root.add(legendaryGlow(this, x, y, size - 12));
+      this.root.add(this.add.image(x, y, itemIcon(this, base, item.rarity)).setDisplaySize(size - 12, size - 12));
+    }
     // Captions of neighbouring cells must not touch: shrink to the cell plus most of the gap.
     this.root.add(fitText(label(this, x, y + size / 2 + 2, name, 12, item ? UI.muted : '#5e574c').setOrigin(0.5, 0), size + 6));
   }
@@ -274,6 +280,7 @@ export class InventoryScene extends Phaser.Scene {
     const base = itemsData.bases[item.baseId];
     // Items above the hero's level are dimmed and show the required level.
     const tooHigh = item.level > (this.character?.level ?? 1);
+    if (base && item.rarity === 'legendary') this.root.add(legendaryGlow(this, x, y, size - 10));
     if (base) this.root.add(this.add.image(x, y, itemIcon(this, base, item.rarity)).setDisplaySize(size - 10, size - 10).setAlpha(tooHigh ? 0.4 : 1));
     if (tooHigh) this.root.add(label(this, x - size / 2 + 4, y + size / 2 - 16, String(item.level), 11, UI.danger, true).setStroke('#000', 3));
     // Rarity pip in the corner.
@@ -284,7 +291,7 @@ export class InventoryScene extends Phaser.Scene {
     const classDef = getClass(content, character.classId);
     const levelMods = levelModifiers(character.level, content.progression);
     const mods = [...heroModifiers(character, itemsData, passiveTree), ...levelMods];
-    const mechanics = heroMechanics(character, passiveTree);
+    const mechanics = heroMechanics(character, passiveTree, itemsData);
     // Keystones (Blood Magic, Crystal Shell, ...) change derived stats; core owns that math.
     const source: StatSource = { baseStats: classDef.baseStats, modifiers: mods, levelModifiers: levelMods, mechanics };
     const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
@@ -437,31 +444,43 @@ export class InventoryScene extends Phaser.Scene {
     }
     parts.push(label(this, area.x + area.w / 2, y, upper(rarityLabel(tooltip.rarity)), 11, UI.muted).setOrigin(0.5, 0));
     y += 22;
-    let lastKind = '';
-    for (const line of tooltip.lines) {
-      if (lastKind && line.kind !== lastKind) {
-        parts.push(this.add.rectangle(area.x + area.w / 2, y + 4, w * 0.8, 1, 0x5a4320));
-        y += 10;
-      }
-      lastKind = line.kind;
-      const tooHigh = line.kind === 'meta' && item.level > (this.character?.level ?? 1);
-      const tone = tooHigh ? UI.danger : line.kind === 'implicit' ? '#b9d4ff' : line.kind === 'affix' ? '#8fb3ff' : line.kind === 'meta' ? UI.muted : UI.text;
-      const text = label(this, x, y, line.text, line.kind === 'meta' ? 12 : UI.size.small, tone, line.kind === 'affix').setWordWrapWidth(w);
-      parts.push(text);
-      y += text.height + 1;
-      if (line.detail) {
-        parts.push(label(this, x + 8, y, line.detail, 11, '#7a7262'));
-        y += 15;
-      }
-      y += 3;
-    }
-
-    // Actions (only for the selected item, not a hover preview).
-    const isSelected = sameSelection(shown, this.selection);
+    const linesTop = y;
+    const headerParts = parts.length;
     const buttonsY = area.y + area.h - pad - 22;
     // Long tooltips on short screens (and longer translations): the text block shrinks, kept centred, so it never
     // runs under the buttons.
     const textBottom = buttonsY - 30 - (this.message ? 22 : 0);
+    const layoutLines = (details: boolean): void => {
+      let lastKind = '';
+      for (const line of tooltip.lines) {
+        if (lastKind && line.kind !== lastKind) {
+          parts.push(this.add.rectangle(area.x + area.w / 2, y + 4, w * 0.8, 1, 0x5a4320));
+          y += 10;
+        }
+        lastKind = line.kind;
+        const tooHigh = line.kind === 'meta' && item.level > (this.character?.level ?? 1);
+        const tone = tooHigh ? UI.danger : (LINE_TONE[line.kind] ?? UI.text);
+        const bold = line.kind === 'affix' || line.kind === 'unique' || line.kind === 'effect';
+        const text = label(this, x, y, line.text, line.kind === 'meta' ? 12 : UI.size.small, tone, bold).setWordWrapWidth(w);
+        parts.push(text);
+        y += text.height + 1;
+        if (line.detail && details) {
+          parts.push(label(this, x + 8, y, line.detail, 11, '#7a7262'));
+          y += 15;
+        }
+        y += 3;
+      }
+    };
+    layoutLines(true);
+    // Too long to stay readable when shrunk (uniques on a phone): drop the tier detail lines first.
+    if (y > textBottom && (textBottom - area.y) / (y - area.y) < TOOLTIP_DETAIL_MIN_SCALE) {
+      for (const o of parts.splice(headerParts)) o.destroy();
+      y = linesTop;
+      layoutLines(false);
+    }
+
+    // Actions (only for the selected item, not a hover preview).
+    const isSelected = sameSelection(shown, this.selection);
     const body = this.add.container(0, 0, parts.splice(0));
     if (y > textBottom && y > area.y) {
       const s = Math.max(0.6, (textBottom - area.y) / (y - area.y));

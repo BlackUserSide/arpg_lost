@@ -2,6 +2,7 @@
 // win, a consolation on a fail. Planning is pure and deterministic; granting rolls the items with a seeded RNG.
 
 import { ESSENCE_CURRENCY } from '../items/craft';
+import { generateUnique, uniquePool, weightedPick } from '../items/generate';
 import { addToStash, rollItem, SALVAGE_CURRENCY } from '../items/inventory';
 import type { Item, ItemsData } from '../items/types';
 import { addCurrency, type Profile } from '../progression/profile';
@@ -58,6 +59,8 @@ export interface PlannedItem {
   readonly itemLevel: number;
   /** Rarity luck (rollRarity). */
   readonly luck: number;
+  /** Multiplier on the unique rarity weight (boss loot: RunRewardRules.chest.bossUniqueWeightMultiplier). */
+  readonly uniqueWeightMultiplier?: number;
 }
 
 export interface RewardPlan {
@@ -67,11 +70,15 @@ export interface RewardPlan {
   readonly essence: number;
   /** The speed tier of a won run's chest (render: "fast clear" label), if any. */
   readonly speedTier?: SpeedTier;
+  /** A killed boss on a high enough map: one roll for an extra legendary item (RunRewardRules.chest.legendary). */
+  readonly legendary?: { readonly itemLevel: number; readonly chance: number };
 }
 
 /**
  * Win (chest): chest.items + the speed tier's extra items, item level = map level + boss bonus + speed bonus
  * (capped, rewardItemLevel), the tier's rarity luck; shards per room cleared; essence for elites and the boss.
+ * With the boss killed the first chest item gets the boss unique weight multiplier, and from legendary.minMapLevel on
+ * the plan carries the legendary roll (chest item level).
  * Fail (consolation): shards per room cleared; if the boss room was reached, bossRoomConsolationItems items of map
  * level (no bonus, no luck); essence for the elites only.
  */
@@ -82,11 +89,18 @@ export function planRunRewards(outcome: RunOutcome, rules: RunRewardRules): Rewa
     const count = rules.chest.items + (tier?.extraItems ?? 0);
     const itemLevel = rewardItemLevel(outcome.mapLevel, rules.chest.bossItemLevelBonus + (tier?.itemLevelBonus ?? 0), rules);
     const luck = tier?.luck ?? 0;
+    const bossMultiplier = outcome.bossKilled ? rules.chest.bossUniqueWeightMultiplier : 1;
+    const legendary = rules.chest.legendary;
     return {
-      items: Array.from({ length: Math.max(0, count) }, () => ({ itemLevel, luck })),
+      items: Array.from({ length: Math.max(0, count) }, (_, i) =>
+        i === 0 && bossMultiplier !== 1 ? { itemLevel, luck, uniqueWeightMultiplier: bossMultiplier } : { itemLevel, luck },
+      ),
       shards,
       essence: essenceFor(outcome.elitesKilled, outcome.bossKilled, rules),
       ...(tier ? { speedTier: tier } : {}),
+      ...(outcome.bossKilled && outcome.mapLevel >= legendary.minMapLevel && legendary.chance > 0
+        ? { legendary: { itemLevel, chance: legendary.chance } }
+        : {}),
     };
   }
   const consolation = outcome.reachedBossRoom ? rules.bossRoomConsolationItems : 0;
@@ -106,19 +120,33 @@ export interface GrantedRewards {
   /** Shards from the plan plus from the salvaged items. */
   readonly shards: number;
   readonly essence: number;
+  /** Id of the legendary item among `items` (render: legendary banner and flash), if one dropped. */
+  readonly legendaryId?: string;
 }
 
 /**
- * Rolls the planned items (in plan order, rollItem) into the stash; items that do not fit are salvaged into shards.
- * Adds the shards and essence to the account currency.
+ * Rolls the planned items (in plan order, rollItem), then the legendary roll if planned: one draw of its chance, and
+ * on a hit a legendary picked by weight among those that can drop at its item level (none in the data: nothing).
+ * Items go into the stash (a legendary first, so a nearly full stash keeps it); items that do not fit are salvaged
+ * into shards. Adds the shards and essence to the account currency. `items` lists the planned items in plan order,
+ * then the legendary.
  */
+// DESIGN-TBD: a full stash salvages even a legendary (100 shards), like any other chest item; see overnight-questions.md.
 export function grantRunRewards(profile: Profile, rng: Rng, plan: RewardPlan, items: ItemsData): GrantedRewards {
   const rolled: Item[] = [];
+  for (const p of plan.items) {
+    rolled.push(
+      rollItem(profile, rng, { itemLevel: p.itemLevel, luck: p.luck, ...(p.uniqueWeightMultiplier !== undefined ? { uniqueWeightMultiplier: p.uniqueWeightMultiplier } : {}) }, items),
+    );
+  }
+  let legendary: Item | undefined;
+  if (plan.legendary && rng.chance(plan.legendary.chance)) {
+    const def = weightedPick(rng, uniquePool(items, 'legendary', plan.legendary.itemLevel), (u) => u.weight);
+    if (def) legendary = generateUnique(rng, `i${profile.nextItemId++}`, def, plan.legendary.itemLevel, items);
+  }
   const salvagedIds: string[] = [];
   let shards = plan.shards;
-  for (const p of plan.items) {
-    const item = rollItem(profile, rng, { itemLevel: p.itemLevel, luck: p.luck }, items);
-    rolled.push(item);
+  for (const item of legendary ? [legendary, ...rolled] : rolled) {
     if (addToStash(profile, item, items)) {
       salvagedIds.push(item.id);
       shards += items.rules.salvage[item.rarity];
@@ -126,5 +154,11 @@ export function grantRunRewards(profile: Profile, rng: Rng, plan: RewardPlan, it
   }
   addCurrency(profile, SALVAGE_CURRENCY, shards);
   addCurrency(profile, ESSENCE_CURRENCY, plan.essence);
-  return { items: rolled, salvagedIds, shards, essence: plan.essence };
+  return {
+    items: legendary ? [...rolled, legendary] : rolled,
+    salvagedIds: legendary ? [...salvagedIds.filter((id) => id !== legendary.id), ...salvagedIds.filter((id) => id === legendary.id)] : salvagedIds,
+    shards,
+    essence: plan.essence,
+    ...(legendary ? { legendaryId: legendary.id } : {}),
+  };
 }

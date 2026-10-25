@@ -60,6 +60,46 @@ describe('item text', () => {
     expect(t.lines[3]!.detail).toBe('S · T5 · 6%–11%');
   });
 
+  const crown: Item = {
+    id: 'u1',
+    baseId: 'leather_helm',
+    level: 16,
+    rarity: 'unique',
+    name: '',
+    affixes: [],
+    unique: {
+      id: 'glass_cannon_crown',
+      rolls: [
+        { tier: 3, value: 0.2 },
+        { tier: 3, value: 0.31 },
+        { tier: 3, value: 18 },
+      ],
+    },
+  };
+
+  it('describes a unique: own name over its base, rolled lines with tier and range, effect, cost', () => {
+    const t = describeItem(crown, itemsData, 'mana');
+    expect(t.title).toBe('Glass Cannon Crown');
+    expect(t.subtitle).toBe('Leather Helm');
+    const of = (kind: string): string[] => t.lines.filter((l) => l.kind === kind).map((l) => l.text);
+    expect(of('unique')).toEqual(['20% increased Damage', '31% increased Critical Strike Chance', '+18 to maximum Mana']);
+    expect(t.lines.find((l) => l.kind === 'unique')!.detail).toBe('T3 · 19%–24%');
+    expect(of('effect')).toEqual(['50% more Damage']);
+    expect(of('cost')).toEqual(['Cost: 40% more Damage Taken']);
+    expect(t.lines[t.lines.length - 1]!.kind).toBe('meta');
+    setLocale('uk');
+    const uk = describeItem(crown, itemsData);
+    expect(uk.title).toBe('Вінець Скляної Гармати');
+    expect(uk.lines.find((l) => l.kind === 'cost')!.text).toMatch(/^Ціна: /);
+  });
+
+  it('shows a unique whose id left the data as its base only', () => {
+    const t = describeItem({ ...crown, unique: { id: 'gone', rolls: [{ tier: 1, value: 5 }] } }, itemsData);
+    expect(t.title).toBe('Leather Helm');
+    expect(t.subtitle).toBeUndefined();
+    expect(t.lines.filter((l) => l.kind === 'unique' || l.kind === 'effect' || l.kind === 'cost')).toEqual([]);
+  });
+
   it('names normal and magic items by their base in the current language, whatever name the save holds', () => {
     const magic: Item = { id: 'i2', baseId: 'rusty_sword', level: 1, rarity: 'magic', name: 'Rusty Sword', affixes: [] };
     expect(describeItem({ ...magic, name: '' }, itemsData).title).toBe('Rusty Sword');

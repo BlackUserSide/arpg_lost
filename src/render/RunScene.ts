@@ -31,7 +31,8 @@ import { baseName, eliteModifierName, itemName, mobName } from './contentText';
 import { currencyWord } from './craftText';
 import { ESSENCE_CURRENCY } from '../core/items/craft';
 import { SALVAGE_CURRENCY } from '../core/items/inventory';
-import { t } from '../i18n';
+import { t, upper } from '../i18n';
+import { softDotTexture } from './fxTextures';
 import { PointsBadge } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
@@ -76,6 +77,13 @@ const ROOM_FADE = 380;
 /** Visual-only colors per action / damage flavour. */
 const AREA_COLORS: Record<string, number> = { cleave: 0xff9a3c, fireball: 0xff6a1a, explosive_trap: 0xff8a2a, frost_nova: 0x8fd3ff };
 const PROJECTILE_COLORS: Record<string, number> = { ranger_bolt: 0xe8e2cf, volley: 0xe8e2cf, wand_bolt: 0xb58cff, fireball: 0xff7a1a };
+/** Fireball (projectile and explosion) converted to cold (Heart of Winter): icy instead of fire. */
+const COLD_PROJECTILE_COLOR = 0xa8e4ff;
+const COLD_AREA_COLOR = 0x8fd3ff;
+/** Legendary drop on the chest screen: screen flash colour (RGB) and duration, burst size. */
+const LEGENDARY_FLASH: readonly [number, number, number] = [255, 95, 210];
+const LEGENDARY_FLASH_MS = 520;
+const LEGENDARY_PARTICLES = 48;
 const MOB_PROJECTILE_COLOR = 0xff4b4b;
 /** Area tint of a trap explosion set off by another trap. */
 const CHAIN_AREA_COLOR = 0xffd23a;
@@ -235,6 +243,8 @@ export class RunScene extends Phaser.Scene {
   private world!: WorldState;
   /** finishRun result once the run is recorded (null: recorded without a hero, nothing granted). */
   private summary: RunSummary | null | undefined;
+  /** The legendary drop flash / burst played for this run's chest (not again on an overlay rebuild). */
+  private legendaryCelebrated = false;
   private overlayKind: OverlayKind | undefined;
   /** Support modifier visuals (chain bolts, echo ghost, knockback, bleed, support drops). */
   private supportFx!: SupportFx;
@@ -325,7 +335,7 @@ export class RunScene extends Phaser.Scene {
           level: character.level,
           xp: character.xp,
           modifiers: heroModifiers(character, itemsData, passiveTree),
-          mechanics: heroMechanics(character, passiveTree),
+          mechanics: heroMechanics(character, passiveTree, itemsData),
           weapon: equippedWeapon(character.equipment, itemsData, classDef.weapon),
           skills: character.skills,
           // Socketed skill modifiers change the skills for the whole run (they are swapped only in the hub).
@@ -337,6 +347,7 @@ export class RunScene extends Phaser.Scene {
     this.run = createRun(this.content, mapsData, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout, mapLevel);
     this.world = this.run.world;
     this.summary = undefined;
+    this.legendaryCelebrated = false;
     this.overlayKind = undefined;
     // Dev-only handles for debugging and automated checks from the console.
     if (import.meta.env.DEV) Object.assign(window as object, { __world: this.world, __run: this.run });
@@ -535,7 +546,7 @@ export class RunScene extends Phaser.Scene {
     // otherwise the saved allocation would exceed the saved level and be reset on the next load.
     character.level = this.world.player.level;
     character.xp = this.world.player.xp;
-    setLoadoutModifiers(this.world, this.content, heroModifiers(character, itemsData, passiveTree), heroMechanics(character, passiveTree));
+    setLoadoutModifiers(this.world, this.content, heroModifiers(character, itemsData, passiveTree), heroMechanics(character, passiveTree, itemsData));
     this.refreshBanner();
     if (save) app.save();
   }
@@ -642,11 +653,13 @@ export class RunScene extends Phaser.Scene {
     const top = height / 2 - panelH / 2;
     objects.push(heading(this, width / 2, top + (compact ? 28 : 40), this.overlayTitle(kind), compact ? 26 : 34).setOrigin(0.5));
     let y = top + headerH;
+    let banner: Phaser.GameObjects.Text | undefined;
     for (const l of lines) {
       y += l.gap ?? 0;
       const text = l.heading ? heading(this, width / 2, y, l.text, l.size) : label(this, width / 2, y, l.text, l.size, l.color, l.bold);
       objects.push(text.setOrigin(0.5, 0));
       if (!l.heading) text.setWordWrapWidth(panelW - 32).setAlign('center');
+      if (l.legendary) banner = text.setStroke('#2a0820', 5);
       y += lineH(l) - (l.gap ?? 0);
     }
 
@@ -667,7 +680,38 @@ export class RunScene extends Phaser.Scene {
     const fadeTargets = objects.slice(1);
     for (const o of fadeTargets) (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha(0);
     this.tweens.add({ targets: fadeTargets, alpha: 1, duration: died ? 600 : 180, delay: died ? 500 : 0 });
+    if (banner) objects.push(...this.celebrateLegendary(banner));
     this.overlay = objects;
+  }
+
+  /**
+   * Legendary drop on the chest screen: the banner pulses; the first time this run's chest is shown also a screen
+   * flash and a particle burst from the banner (not again when the overlay is rebuilt on resize). No sound yet.
+   * Returns objects to destroy with the overlay.
+   */
+  private celebrateLegendary(banner: Phaser.GameObjects.Text): Phaser.GameObjects.GameObject[] {
+    const pulse = this.tweens.add({ targets: banner, scale: 1.08, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay: 200 });
+    banner.once('destroy', () => pulse.remove());
+    if (this.legendaryCelebrated) return [];
+    this.legendaryCelebrated = true;
+    const [r, g, b] = LEGENDARY_FLASH;
+    this.cameras.main.flash(LEGENDARY_FLASH_MS, r, g, b);
+    const x = banner.x;
+    const y = banner.y + banner.height / 2;
+    const burst = this.add.particles(x, y, softDotTexture(this), {
+      emitting: false,
+      speed: { min: 120, max: 360 },
+      angle: { min: 0, max: 360 },
+      gravityY: 160,
+      scale: { start: 0.45, end: 0 },
+      alpha: { start: 1, end: 0 },
+      color: [0xffffff, 0xffb8ef, 0xff5fd2, 0xb46cff],
+      lifespan: { min: 600, max: 1200 },
+      blendMode: Phaser.BlendModes.ADD,
+    });
+    pinToScreen(burst, 20001);
+    burst.explode(LEGENDARY_PARTICLES);
+    return [burst];
   }
 
   private overlayTitle(kind: OverlayKind): string {
@@ -715,9 +759,19 @@ export class RunScene extends Phaser.Scene {
     if (currency.length === 2) fixed.push({ text: t('run.currency', { shards: currency[0]!, essence: currency[1]! }), size: body, color: UI.text, bold: true });
     else if (currency.length === 1) fixed.push({ text: `+${currency[0]!}`, size: body, color: UI.text, bold: true });
 
+    // A legendary drop: a banner under the chest heading (showOverlay adds the flash and the burst), and the item goes
+    // first in the list so trimming on a short screen never hides it.
+    const legendaryId = rewards?.legendaryId;
+    if (legendaryId && items.some((i) => i.id === legendaryId)) {
+      fixed.push({ text: upper(t('run.legendary')), size: compact ? 24 : 30, color: UI.rarity.legendary, bold: true, gap: 2, legendary: true });
+    }
     const list: Line[] = [];
-    for (const item of items) {
-      const name = item.rarity === 'rare' ? t('arena.lootRare', { name: itemName(item), base: baseName(item.baseId) }) : itemName(item);
+    const ordered = legendaryId ? [...items.filter((i) => i.id === legendaryId), ...items.filter((i) => i.id !== legendaryId)] : items;
+    for (const item of ordered) {
+      // Rares and uniques: own name with the base type (a unique without text is already named by its base).
+      const own = itemName(item);
+      const base = baseName(item.baseId);
+      const name = (item.rarity === 'rare' || item.unique) && own !== base ? t('arena.lootRare', { name: own, base }) : own;
       list.push({ text: t('arena.lootItem', { name, level: item.level }), size: body, color: UI.rarity[item.rarity], bold: true });
     }
     const supports = this.content.supports?.supports ?? {};
@@ -1025,7 +1079,7 @@ export class RunScene extends Phaser.Scene {
           this.combatFx.deathExplosion(event.damageType === 'cold' ? 'ice' : 'fire', s.x, s.y, event.radius);
         } else {
           // Chain detonations: a golden tint plus a shock ring, so a chain reads apart from a triggered trap.
-          const color = event.chain ? CHAIN_AREA_COLOR : (AREA_COLORS[event.actionId] ?? 0xdde4ff);
+          const color = event.chain ? CHAIN_AREA_COLOR : this.convertsToCold(event.actionId) ? COLD_AREA_COLOR : (AREA_COLORS[event.actionId] ?? 0xdde4ff);
           this.areas.push({ ...event, color, ttl: AREA_TTL });
           const s = toScreen(event.origin);
           if (event.chain) this.combatFx.chainBurst(s.x, s.y, event.radius);
@@ -1059,7 +1113,7 @@ export class RunScene extends Phaser.Scene {
         break;
       case 'projectileSplit': {
         const s = toScreen(event.pos);
-        this.skillFx.split(s.x, s.y - PROJECTILE_HEIGHT);
+        this.skillFx.split(s.x, s.y - PROJECTILE_HEIGHT, this.convertsToCold(event.actionId));
         break;
       }
       case 'trapRemoved': {
@@ -1619,7 +1673,8 @@ export class RunScene extends Phaser.Scene {
       const pos = this.interpolated(p.id, p.pos);
       const s = toScreen(pos);
       const tail = toScreen(vec(pos.x - p.dir.x * 18, pos.y - p.dir.y * 18));
-      const color = p.owner === 'mob' ? MOB_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
+      const color =
+        p.owner === 'mob' ? MOB_PROJECTILE_COLOR : p.action?.damageConversion?.to === 'cold' ? COLD_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
       g.fillStyle(0x000000, 0.35).fillEllipse(s.x, s.y, p.radius * 2, p.radius);
       const mobBasic = p.owner === 'mob' && p.abilityId === undefined;
       const thrownBone = p.owner === 'mob' && (p.abilityId !== undefined ? THROWN_BONE_ABILITIES.has(p.abilityId) : THROWN_BONE_MOBS.has(p.sourceId));
@@ -1689,6 +1744,16 @@ export class RunScene extends Phaser.Scene {
       .setDepth(4001);
     const def = eliteModifierDef(this.content, modifier);
     return { modifier, fire: this.firesWith(modifier), fast: (def?.moveSpeed ?? 1) > 1, label, glow: this.eliteFx.addGlow(actor.sprite, modifier) };
+  }
+
+  /**
+   * The hero's action converts its damage to cold (Heart of Winter's Fireball, from core's effective action): icy
+   * looks for its explosion and split.
+   */
+  private convertsToCold(actionId: string): boolean {
+    const actions = this.world.player.actions;
+    const action = actions.skills.find((a) => a.id === actionId) ?? (actions.basicAttack.id === actionId ? actions.basicAttack : undefined);
+    return action?.damageConversion?.to === 'cold';
   }
 
   /** The elite modifier converts its damage to fire (core data): fire looks for its projectiles, zones and swings. */
@@ -1827,6 +1892,8 @@ interface Line {
   heading?: boolean;
   /** Extra space above the line. */
   gap?: number;
+  /** The legendary drop banner (pulses; flash and burst when first shown). */
+  legendary?: true;
 }
 
 const RUN_EVENT_TYPES: ReadonlySet<string> = new Set<RunEvent['type']>(['roomEnter', 'waveStart', 'roomCleared', 'altarActivated', 'bossSpawned', 'rankedKill', 'timeWarning', 'runWon', 'runFailed']);

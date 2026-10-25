@@ -1,4 +1,4 @@
-import type { AffixDef, AffixTier, BaseDef, ItemsData, LootRules, Slot, StatLine } from '../core/items/types';
+import type { AffixDef, AffixTier, BaseDef, ItemsData, LootRules, Slot, StatLine, UniqueDef, UniqueStatLine } from '../core/items/types';
 
 // See docs/design/items.md. All numbers are PROPOSAL until a balance pass.
 // Base names are keyed by id in src/i18n/locales (base.<id>.name); rare name words double as their keys.
@@ -117,8 +117,87 @@ const baseList: BaseDef[] = [
   { id: 'lapis_amulet', slot: 'amulet', level: 1, implicit: { stat: 'resource', kind: 'flat', range: range(10, 15) } },
 ];
 
+// ── Uniques and legendaries (docs/design/items.md, decisions 2026-10-21 / 2026-10-25) ──
+// Each has a fixed set of stat lines whose values roll inside the best tier unlocked at the item level (TIER_LEVELS),
+// so the same unique stays useful up to map 30. PROPOSAL: line ranges are on par with the matching affix tiers;
+// weapon uniques sit on the level-1 bases, so their added-damage line runs a little above the affix to keep up with
+// the level-10 / 20 bases. Names and effect texts: unique.<id>.name / unique.<id>.effect in the locale files.
+// Sub-package 6a: #10 #4 #7 #2; the other six and the legendaries come in 6b–6e.
+
+const uline = (line: StatLine, t: AffixTier[]): UniqueStatLine => ({ ...line, tiers: t });
+const ADDED_WEAPON_DAMAGE = int([2, 4], [4, 7], [7, 11], [11, 16], [16, 22]);
+const DAMAGE_INC_25_55 = pct([0.1, 0.15], [0.16, 0.24], [0.25, 0.34], [0.35, 0.44], [0.45, 0.55]);
+const SPEED_5_20 = pct([0.05, 0.07], [0.08, 0.1], [0.11, 0.13], [0.14, 0.16], [0.17, 0.2]);
+
+const uniqueList: UniqueDef[] = [
+  // #10 Glass Cannon Crown (helmet): +50% more damage; cost: 40% more damage taken.
+  {
+    id: 'glass_cannon_crown',
+    rarity: 'unique',
+    baseId: 'leather_helm',
+    weight: 100,
+    stats: [
+      uline({ stat: 'damage', kind: 'increased' }, pct([0.08, 0.12], [0.13, 0.18], [0.19, 0.24], [0.25, 0.3], [0.31, 0.36])),
+      uline({ stat: 'critChance', kind: 'increased' }, pct([0.1, 0.19], [0.2, 0.29], [0.3, 0.39], [0.4, 0.49], [0.5, 0.6])),
+      uline({ stat: 'resource', kind: 'flat' }, int([5, 9], [10, 15], [16, 22], [23, 30], [31, 40])),
+    ],
+    effectModifiers: [{ stat: 'damage', kind: 'more', value: 0.5 }],
+    costs: [{ stat: 'damageTaken', kind: 'more', value: 0.4 }],
+  },
+  // #4 Splitter (crossbow): bolts (attack projectiles, basic attack included) pierce 2 more targets; cost: 25% less damage.
+  {
+    id: 'splitter',
+    rarity: 'unique',
+    baseId: 'light_crossbow',
+    weight: 100,
+    stats: [
+      uline({ stat: 'damage', kind: 'flat', damageType: 'physical' }, ADDED_WEAPON_DAMAGE),
+      uline({ stat: 'damage', kind: 'increased', tags: ['attack'] }, DAMAGE_INC_25_55),
+      uline({ stat: 'attackSpeed', kind: 'increased' }, SPEED_5_20),
+    ],
+    costs: [{ stat: 'damage', kind: 'more', value: -0.25 }],
+    mechanics: [{ kind: 'skillParams', tags: ['attack', 'projectile'], changes: [{ param: 'pierce', add: 2 }] }],
+  },
+  // #7 Heart of Winter (wand): Fireball deals cold instead of fire (its explosion, split fireballs and any fire zone it
+  // leaves too) and slows (30% for 2 s, PROPOSAL: weaker than Frost Nova's 40% / 2.5 s).
+  {
+    id: 'heart_of_winter',
+    rarity: 'unique',
+    baseId: 'driftwood_wand',
+    weight: 100,
+    stats: [
+      uline({ stat: 'damage', kind: 'increased', tags: ['spell'] }, DAMAGE_INC_25_55),
+      uline({ stat: 'damage', kind: 'flat', damageType: 'cold' }, ADDED_WEAPON_DAMAGE),
+      uline({ stat: 'castSpeed', kind: 'increased' }, SPEED_5_20),
+    ],
+    mechanics: [
+      {
+        kind: 'skillParams',
+        skillIds: ['fireball'],
+        damageConversion: { to: 'cold', fraction: 1 },
+        addOnHit: [{ status: 'slow', duration: 2, magnitude: 0.3 }],
+      },
+    ],
+  },
+  // #2 Barrow Reaper (sword): Cleave grants 2 of the class resource per enemy hit (designer default 2026-10-25:
+  // "mana" = the class resource; a sword, there are no axes).
+  {
+    id: 'barrow_reaper',
+    rarity: 'unique',
+    baseId: 'rusty_sword',
+    weight: 100,
+    stats: [
+      uline({ stat: 'damage', kind: 'flat', damageType: 'physical' }, ADDED_WEAPON_DAMAGE),
+      uline({ stat: 'damage', kind: 'increased', tags: ['attack'] }, DAMAGE_INC_25_55),
+      uline({ stat: 'life', kind: 'flat' }, int([8, 14], [15, 24], [25, 34], [35, 44], [45, 55])),
+    ],
+    mechanics: [{ kind: 'skillParams', skillIds: ['cleave'], resourcePerHit: 2 }],
+  },
+];
+
 const rules: LootRules = {
-  rarityWeights: { normal: 55, magic: 33, rare: 11 },
+  // items.md PROPOSAL: 55 / 33 / 11 / 1 (unique 1% of chest items; boss loot ×3 on one item, RunRewardRules).
+  rarityWeights: { normal: 55, magic: 33, rare: 11, unique: 1 },
   affixCount: { magic: { min: 1, max: 2 }, rare: { min: 3, max: 6 } },
   maxPrefixes: { magic: 1, rare: 3 },
   maxSuffixes: { magic: 1, rare: 3 },
@@ -135,4 +214,4 @@ const rules: LootRules = {
 
 const byId = <T extends { id: string }>(list: readonly T[]): Record<string, T> => Object.fromEntries(list.map((x) => [x.id, x]));
 
-export const itemsData: ItemsData = { bases: byId(baseList), affixes: byId(affixList), rules };
+export const itemsData: ItemsData = { bases: byId(baseList), affixes: byId(affixList), uniques: byId(uniqueList), rules };

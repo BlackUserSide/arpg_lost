@@ -5,7 +5,7 @@ import type { Item } from '../core/items/types';
 import type { Profile } from '../core/progression/profile';
 import { t, upper } from '../i18n';
 import { AFFIX_OPS, costParts, craftEffect, craftReason, CRAFT_OP_NAME, currencyAmount, currencyWord } from './craftText';
-import { describeItem, rarityLabel } from './itemText';
+import { describeItem, LINE_TONE, rarityLabel } from './itemText';
 import { fitText, label, makeButton, makeFrame, UI } from './ui';
 
 // Crafting tab of the inventory (docs/design/crafting.md): the chosen item with pickable affix lines, the wallet and
@@ -99,15 +99,29 @@ function buildItem(scene: Phaser.Scene, parent: Phaser.GameObjects.Container, o:
     parts.push(oneLine(label(scene, cx, y, tooltip.subtitle, UI.size.small, color).setOrigin(0.5, 0), box.w));
     y += 18;
   }
-  const count = craftCount(item);
-  parts.push(oneLine(label(scene, cx, y, `${upper(rarityLabel(tooltip.rarity))}  ·  ${t('craft.count', { count })}`, 11, UI.muted).setOrigin(0.5, 0), box.w));
-  y += 16;
-  parts.push(oneLine(label(scene, cx, y, t('craft.growth'), 11, '#7a7262').setOrigin(0.5, 0), box.w));
-  y += 20;
+  // Uniques and legendaries are never crafted (the operations column says why): their fixed lines are shown as plain
+  // text instead of pickable affixes, without the craft counter.
+  const fixedLines = tooltip.lines.filter((l) => l.kind === 'unique' || l.kind === 'effect' || l.kind === 'cost');
+  const isUnique = item.unique !== undefined;
+  if (isUnique) {
+    parts.push(oneLine(label(scene, cx, y, upper(rarityLabel(tooltip.rarity)), 11, UI.muted).setOrigin(0.5, 0), box.w));
+    y += 22;
+  } else {
+    const count = craftCount(item);
+    parts.push(oneLine(label(scene, cx, y, `${upper(rarityLabel(tooltip.rarity))}  ·  ${t('craft.count', { count })}`, 11, UI.muted).setOrigin(0.5, 0), box.w));
+    y += 16;
+    parts.push(oneLine(label(scene, cx, y, t('craft.growth'), 11, '#7a7262').setOrigin(0.5, 0), box.w));
+    y += 20;
+  }
+  for (const line of isUnique ? fixedLines : []) {
+    const text = label(scene, box.x + 8, y + 3, line.text, UI.size.small, LINE_TONE[line.kind] ?? UI.text, line.kind !== 'cost').setWordWrapWidth(box.w - 16);
+    parts.push(text);
+    y += text.height + 6;
+  }
 
   const affixLines = tooltip.lines.filter((l) => l.kind === 'affix');
   const flashes: Phaser.GameObjects.Rectangle[] = [];
-  if (affixLines.length === 0) {
+  if (affixLines.length === 0 && !isUnique) {
     parts.push(label(scene, cx, y + 4, t('craft.noAffixes'), UI.size.small, UI.muted).setOrigin(0.5, 0));
     y += 28;
   }

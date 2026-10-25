@@ -166,6 +166,11 @@ export interface ActionDef {
   readonly knockback?: KnockbackDef;
   /** Part of the action's damage converted to another type before scaling (Ignite support: part → fire). */
   readonly damageConversion?: DamageConversion;
+  /**
+   * Class resource gained per mob a damage hit of this action lands on (SkillChangeSet.resourcePerHit), on top of
+   * ResourceDef.onHit and without its per-use cap. Chain bolts, zone ticks and ignite do not grant it.
+   */
+  readonly resourcePerHit?: number;
 }
 
 /**

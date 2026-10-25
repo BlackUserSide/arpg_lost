@@ -1,8 +1,11 @@
+import { tierOf, uniqueDefOf } from '../core/items/generate';
 import type { AffixDef, Item, ItemsData, StatLine, ValueRange } from '../core/items/types';
 import type { Modifier } from '../core/stats/types';
+import { content } from '../data';
 import { t } from '../i18n';
 import { baseName, itemName } from './contentText';
-import { damageTypeText, formatModifier, num, PERCENT_FLAT } from './statText';
+import { damageTypeText, formatModifier, formatModifiers, num, PERCENT_FLAT } from './statText';
+import { uniqueEffectLines } from './uniqueText';
 
 // Human-readable item text for tooltips. Pure functions (tested), no Phaser.
 // `resourceId` (ClassDef.resource.id of the viewing hero) names the resource stats ("Rage"); "Resource" without it.
@@ -25,16 +28,27 @@ export function formatRange(line: StatLine, range: ValueRange): string {
 
 export interface TooltipLine {
   readonly text: string;
-  readonly kind: 'base' | 'implicit' | 'affix' | 'meta';
-  /** e.g. "P · T2 · 10–15%" for affixes. */
+  /** unique: a rolled stat line of a unique / legendary; effect: its signature effect; cost: its drawback ("Ціна"). */
+  readonly kind: 'base' | 'implicit' | 'affix' | 'unique' | 'effect' | 'cost' | 'meta';
+  /** e.g. "P · T2 · 10–15%" for affixes, "T2 · 10–15%" for unique stat lines. */
   readonly detail?: string;
   /** Affix lines: position of the affix in Item.affixes (crafting picks affixes by it). */
   readonly affixIndex?: number;
 }
 
+/** Text colour per line kind (visual only; base lines use the default text colour). */
+export const LINE_TONE: Readonly<Partial<Record<TooltipLine['kind'], string>>> = {
+  implicit: '#b9d4ff',
+  affix: '#8fb3ff',
+  unique: '#8fb3ff',
+  effect: '#f0b46a',
+  cost: '#e07a6a',
+  meta: '#9b917f',
+};
+
 export interface ItemTooltip {
   readonly title: string;
-  /** Base type under a rare's random name. */
+  /** Base type under a rare's random name or a unique's own name. */
   readonly subtitle?: string;
   readonly rarity: Item['rarity'];
   readonly lines: readonly TooltipLine[];
@@ -64,10 +78,27 @@ export function describeItem(item: Item, data: ItemsData, resourceId?: string): 
     if (tier) parts.push(formatRange(affix.line, tier));
     lines.push({ text: formatLine(affix.line, rolled.value, resourceId), kind: 'affix', detail: parts.join(' · '), affixIndex });
   });
+  // Uniques: rolled lines with their tier, then the effect and the costs. An unknown unique id: name + base only.
+  const unique = uniqueDefOf(item, data);
+  if (unique) {
+    unique.stats.forEach((line, i) => {
+      const roll = item.unique?.rolls[i];
+      if (!roll) return;
+      const tier = tierOf(line, roll.tier);
+      const parts = [t('item.tierShort', { tier: roll.tier })];
+      if (tier) parts.push(formatRange(line, tier));
+      lines.push({ text: formatLine(line, roll.value, resourceId), kind: 'unique', detail: parts.join(' · ') });
+    });
+    for (const text of uniqueEffectLines(unique, content, resourceId)) lines.push({ text, kind: 'effect' });
+    for (const text of formatModifiers(unique.costs ?? [], resourceId)) lines.push({ text: t('item.cost', { text }), kind: 'cost' });
+  }
   lines.push({ text: t('item.levelLine', { level: item.level }), kind: 'meta' });
+  const title = itemName(item);
+  // Base type under a rare's or a unique's own name (not under a unique id without text, which shows the base).
+  const subtitle = base && (item.rarity === 'rare' || item.unique) && title !== baseName(base.id) ? baseName(base.id) : undefined;
   return {
-    title: itemName(item),
-    ...(item.rarity === 'rare' && base ? { subtitle: baseName(base.id) } : {}),
+    title,
+    ...(subtitle ? { subtitle } : {}),
     rarity: item.rarity,
     lines,
   };

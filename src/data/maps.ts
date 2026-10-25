@@ -161,6 +161,10 @@ export const mapsData: MapsData = {
         { minTimeLeft: 0.2, extraItems: 1, itemLevelBonus: 1, luck: 0.15 },
         { minTimeLeft: 0.4, extraItems: 2, itemLevelBonus: 2, luck: 0.3 },
       ],
+      // Designer defaults 2026-10-25 (docs/design/overnight-questions.md «Пакет 6»): one boss chest item has ×3 unique
+      // chance; legendaries only from bosses from map 30, ~1 / 500, as an extra item.
+      bossUniqueWeightMultiplier: 3,
+      legendary: { minMapLevel: 30, chance: 0.002 },
     },
     // Designer decision 2026-10-23: a failed run gets shards per room cleared. BALANCE-TBD: 2 per room (a salvaged
     // magic item is 3).

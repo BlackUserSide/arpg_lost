@@ -354,6 +354,40 @@ describe('profile store migrations', () => {
     expect(loaded.characters[0]!.equipment.ring2!.crafts).toBe(4);
   });
 
+  it('round-trips unique items without a version bump; older items load as they were; unknown unique ids are kept', () => {
+    const storage = memoryStorage();
+    const profile = createProfile();
+    createCharacter(profile, { name: 'Aria', classId: 'warrior' }, rules, ['warrior']);
+    const reaper = { id: 'i1', baseId: 'rusty_sword', level: 12, rarity: 'unique' as const, name: '', affixes: [], implicit: 0.12, unique: { id: 'barrow_reaper', rolls: [{ tier: 4, value: 5 }, { tier: 4, value: 0.2 }, { tier: 4, value: 20 }] } };
+    const gone = { id: 'i2', baseId: 'iron_ring', level: 3, rarity: 'unique' as const, name: '', affixes: [], implicit: 9, unique: { id: 'removed_unique', rolls: [{ tier: 5, value: 1 }] } };
+    const plain = { id: 'i3', baseId: 'iron_ring', level: 1, rarity: 'magic' as const, name: '', affixes: [{ affixId: 'life_flat', tier: 5, value: 10 }] };
+    profile.stash.items.push(gone, plain);
+    profile.characters[0]!.equipment.weapon = reaper;
+    saveProfile(storage, profile);
+    expect(JSON.parse(storage.getItem(SAVE_KEY)!).version).toBe(7);
+    const loaded = loadProfile(storage).profile;
+    expect(loaded).toEqual(profile);
+    expect(loaded.stash.items[1]).not.toHaveProperty('unique');
+  });
+
+  it('sanitizes stored unique rolls: no string id → removed, malformed rolls → none, only on unique / legendary items', () => {
+    const item = (id: string, rarity: string, unique: unknown): Record<string, unknown> => ({ id, baseId: 'iron_ring', level: 1, rarity, name: '', affixes: [], unique });
+    const items = [
+      item('a', 'unique', { id: 7, rolls: [] }),
+      item('b', 'unique', null),
+      item('c', 'legendary', { id: 'x', rolls: [{ tier: 1, value: 2 }, { tier: 0, value: 1 }] }),
+      item('d', 'unique', { id: 'x', rolls: 'oops' }),
+      item('e', 'rare', { id: 'x', rolls: [{ tier: 1, value: 2 }] }),
+      item('f', 'unique', { id: 'x', rolls: [{ tier: 2, value: 3, junk: true }] }),
+    ];
+    const storage = memoryStorage();
+    storage.setItem(SAVE_KEY, JSON.stringify({ version: SAVE_VERSION, profile: { ...createProfile(), stash: { items } } }));
+    const loaded = loadProfile(storage).profile.stash.items;
+    expect(loaded.map((i) => i.unique)).toEqual([undefined, undefined, { id: 'x', rolls: [] }, { id: 'x', rolls: [] }, undefined, { id: 'x', rolls: [{ tier: 2, value: 3 }] }]);
+    expect(loaded[0]).not.toHaveProperty('unique');
+    expect(loaded.map((i) => i.rarity)).toEqual(['unique', 'unique', 'legendary', 'unique', 'rare', 'unique']);
+  });
+
   it('falls back to an empty stash when the stored stash has no item array', () => {
     for (const stash of [{}, { items: 'oops' }, { items: null }]) {
       const storage = memoryStorage();

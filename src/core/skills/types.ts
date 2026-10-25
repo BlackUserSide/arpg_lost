@@ -146,6 +146,11 @@ export interface SkillChangeSet {
    * fractions of sources with that type add up (capped at 1), other types are ignored.
    */
   readonly damageConversion?: DamageConversion;
+  /**
+   * Class resource the hero gains per enemy the skill's damage hits (every target, no per-use cap; sources add up;
+   * see ActionDef.resourcePerHit). On top of ResourceDef.onHit.
+   */
+  readonly resourcePerHit?: number;
 }
 
 /** What one source gives a single skill: a SkillChangeSet without the targeting (skill levels, supports). */

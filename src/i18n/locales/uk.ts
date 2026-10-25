@@ -75,6 +75,7 @@ export const uk: LocaleTable = {
   'inv.error.stashFull': 'Сховище повне.',
   'inv.error.noItem': 'Нічого не вибрано.',
   'inv.error.noCharacter': 'Героя не вибрано.',
+  'inv.error.uniqueDuplicate': 'Цей унікальний предмет уже вдягнено.',
   'inv.stat.life': 'Життя',
   'inv.stat.energyShield': 'Енергетичний щит',
   'inv.stat.armour': 'Броня',
@@ -149,6 +150,7 @@ export const uk: LocaleTable = {
   'item.suffixShort': 'С',
   'item.tierShort': 'Т{tier}',
   'item.rareName': '{second} {first}',
+  'item.cost': 'Ціна: {text}',
 
   // ---- Stats and modifier lines (stat names in the genitive: "+4% життя") ----
   'stat.life': 'життя',
@@ -502,6 +504,7 @@ export const uk: LocaleTable = {
   'run.summary': '{time}  ·  {kills}',
   'run.bonusXp': 'з них бонус за карту +{xp} досвіду',
   'run.chest': 'Скриня',
+  'run.legendary': 'Легендарний!',
   'run.consolation': 'Втішна нагорода',
   'run.fastClear': {
     one: 'Швидке проходження: +{count} предмет',
@@ -767,4 +770,17 @@ export const uk: LocaleTable = {
   'item.rare.second.Crown': 'Корона',
   'item.rare.second.Stride': 'Крок',
   'item.rare.second.Whisper': 'Шепіт',
+  'unique.glass_cannon_crown.name': 'Вінець Скляної Гармати',
+  'unique.glass_cannon_crown.effect': 'На {pct} більше урону',
+  'unique.splitter.name': 'Розщеплювач',
+  'unique.splitter.effect': {
+    one: 'Болти пробивають ще {count} ціль',
+    few: 'Болти пробивають ще {count} цілі',
+    many: 'Болти пробивають ще {count} цілей',
+    other: 'Болти пробивають ще {count} цілі',
+  },
+  'unique.heart_of_winter.name': 'Серце Зими',
+  'unique.heart_of_winter.effect': 'Вогняна куля стає крижаною: завдає холодного урону замість вогняного й сповільнює ворогів на {pct} на {seconds} с',
+  'unique.barrow_reaper.name': 'Жнець Курганів',
+  'unique.barrow_reaper.effect': 'Рублячий удар дає {amount} {resGen} за кожного враженого ворога',
 };

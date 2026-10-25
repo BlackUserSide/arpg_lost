@@ -1,6 +1,6 @@
 import { craftCount } from '../core/items/craft';
 import type { Equipment } from '../core/items/equipment';
-import type { Item } from '../core/items/types';
+import type { Item, UniqueRoll, UniqueStatRoll } from '../core/items/types';
 import { createAllocation, validateAllocation } from '../core/passives/allocation';
 import type { PassiveAllocation, PassiveTreeData } from '../core/passives/types';
 import { createProfile, type MapProgress, type Profile } from '../core/progression/profile';
@@ -190,12 +190,39 @@ function normalize(data: unknown, skillRules: SkillLevelRules, supportCheck: Sup
 }
 
 /**
- * The crafting counter (Item.crafts) was added in 0.3 without a version bump: it is optional and a missing counter
- * reads as 0, so older items need no migration. A present counter is sanitized to a non-negative integer.
+ * Optional item fields added without a version bump (older items need no migration):
+ * - the crafting counter (Item.crafts, 0.3): a missing counter reads as 0; a present one is sanitized to a
+ *   non-negative integer;
+ * - the unique roll (Item.unique, 0.4): kept only on unique / legendary items and only with a string id
+ *   (otherwise removed: the item stays, with no unique stats); malformed rolls (not an array, an entry without a
+ *   whole tier ≥ 1 or a finite value) are all dropped, since rolls pair with stat lines by position. A unique id the
+ *   data does not know is kept as is (no stats until it exists again; salvage works either way).
  */
+// Clamping rolled values to their tier range belongs to the save-validation backlog item (roadmap 0.4).
 function normalizeItem(item: Item): Item {
-  if (typeof item !== 'object' || item === null || item.crafts === undefined) return item;
-  return { ...item, crafts: craftCount(item) };
+  if (typeof item !== 'object' || item === null) return item;
+  let out = item;
+  if (item.crafts !== undefined) out = { ...out, crafts: craftCount(item) };
+  if ('unique' in item) {
+    const { unique: raw, ...rest } = out;
+    const unique = item.rarity === 'unique' || item.rarity === 'legendary' ? normalizeUniqueRoll(raw) : undefined;
+    out = unique ? { ...rest, unique } : rest;
+  }
+  return out;
+}
+
+function normalizeUniqueRoll(raw: unknown): UniqueRoll | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { id, rolls } = raw as { id?: unknown; rolls?: unknown };
+  if (typeof id !== 'string') return undefined;
+  const valid = Array.isArray(rolls) && rolls.every(isStatRoll);
+  return { id, rolls: valid ? (rolls as UniqueStatRoll[]).map((r) => ({ tier: r.tier, value: r.value })) : [] };
+}
+
+function isStatRoll(raw: unknown): raw is UniqueStatRoll {
+  if (typeof raw !== 'object' || raw === null) return false;
+  const { tier, value } = raw as { tier?: unknown; value?: unknown };
+  return typeof tier === 'number' && Number.isInteger(tier) && tier >= 1 && typeof value === 'number' && Number.isFinite(value);
 }
 
 function normalizeEquipment(raw: Equipment | undefined): Equipment {

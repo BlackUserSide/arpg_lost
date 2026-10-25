@@ -7,7 +7,7 @@ import { applyLeech } from './experience';
 import { actionReady, spendCharge } from './charges';
 import { actionCost, canPay, counterAttackStats, critStats } from './passiveEffects';
 import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './statuses';
-import { resourceOnHeroHit, startResourceUse } from './resource';
+import { recoverResource, resourceOnHeroHit, startResourceUse } from './resource';
 import { spawnDecoy, spawnZone } from './zones';
 import type { DamageType, Modifier } from '../stats/types';
 import { allModifiers, clampToArena, getMob, heroConditionalModifiers, isImmune, mobDefences, mobRank, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
@@ -376,7 +376,8 @@ export function releaseChain(ctx: Ctx, action: ActionDef, from: MobState, exclud
 
 /** The action a chain bolt hits with: same damage, tags and own modifiers, fully converted, without extras. */
 function chainBoltAction(action: ActionDef, damageType: DamageType): ActionDef {
-  const { onHit, knockback, chainHit, echo, zone, ...rest } = action;
+  const { onHit, knockback, chainHit, echo, zone, resourcePerHit, ...rest } = action;
+  void resourcePerHit;
   void onHit;
   void knockback;
   void chainHit;
@@ -436,6 +437,7 @@ export function explode(ctx: Ctx, action: ActionDef, pos: Vec2, radius: number, 
  * Fill uses the life actually removed (designer decision 2026-10-22).
  * Every damage hit also puts the hero back in combat for resource decay and may grant class resource
  * (ResourceDef.onHit, see resourceOnHeroHit).
+ * The action's resourcePerHit (uniques) is granted for every damage hit, after the onHit gain.
  * Support extras of the action: damageConversion before scaling, its own leech (ActionDef.leech) added to the
  * hero's, its stun bar fill bonus, and knockback last (applyKnockback).
  */
@@ -474,6 +476,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
     events.push({ type: 'hit', targetId: mob.id, pos: mob.pos, amount: hit.total, isCrit: hit.isCrit });
     applyLeech(classDef, world.player, removed, action.leech ?? 0);
     resourceOnHeroHit(classDef, world.player, action);
+    if (action.resourcePerHit) recoverResource(classDef, world.player, action.resourcePerHit);
     raw = hit.raw;
   }
   const hit = { mods, tags: action.tags, raw, before };

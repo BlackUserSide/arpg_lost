@@ -78,6 +78,7 @@ export const pl: LocaleTable = {
   'inv.error.stashFull': 'Skrytka jest pełna.',
   'inv.error.noItem': 'Nic nie wybrano.',
   'inv.error.noCharacter': 'Nie wybrano bohatera.',
+  'inv.error.uniqueDuplicate': 'Masz już na sobie ten unikatowy przedmiot.',
   'inv.stat.life': 'Życie',
   'inv.stat.energyShield': 'Tarcza energetyczna',
   'inv.stat.armour': 'Pancerz',
@@ -152,6 +153,7 @@ export const pl: LocaleTable = {
   'item.suffixShort': 'S',
   'item.tierShort': 'T{tier}',
   'item.rareName': '{second} {first}',
+  'item.cost': 'Cena: {text}',
 
   // ---- Stats and modifier lines (stat names in the genitive: "+4% maks. życia") ----
   'stat.life': 'maks. życia',
@@ -518,6 +520,7 @@ export const pl: LocaleTable = {
   'run.summary': '{time}  ·  {kills}',
   'run.bonusXp': 'w tym premia za mapę +{xp} PD',
   'run.chest': 'Skrzynia',
+  'run.legendary': 'Legendarny!',
   'run.consolation': 'Nagroda pocieszenia',
   'run.fastClear': {
     one: 'Szybkie przejście: +{count} przedmiot',
@@ -784,4 +787,17 @@ export const pl: LocaleTable = {
   'item.rare.second.Crown': 'Korona',
   'item.rare.second.Stride': 'Krok',
   'item.rare.second.Whisper': 'Szept',
+  'unique.glass_cannon_crown.name': 'Korona Szklanego Działa',
+  'unique.glass_cannon_crown.effect': '{pct} więcej obrażeń',
+  'unique.splitter.name': 'Rozszczepiacz',
+  'unique.splitter.effect': {
+    one: 'Bełty przebijają jeszcze {count} cel',
+    few: 'Bełty przebijają jeszcze {count} cele',
+    many: 'Bełty przebijają jeszcze {count} celów',
+    other: 'Bełty przebijają jeszcze {count} celu',
+  },
+  'unique.heart_of_winter.name': 'Serce Zimy',
+  'unique.heart_of_winter.effect': 'Kula ognia staje się lodowa: zadaje obrażenia od zimna zamiast od ognia i spowalnia wrogów o {pct} na {seconds} s',
+  'unique.barrow_reaper.name': 'Żniwiarz Kurhanów',
+  'unique.barrow_reaper.effect': 'Rozpłatanie daje {amount} {resGen} za każdego trafionego wroga',
 };

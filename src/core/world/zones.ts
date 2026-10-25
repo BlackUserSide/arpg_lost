@@ -71,7 +71,8 @@ function snap(t: number): number {
  * One damage tick of a zone: the tick damage is rolled once, then for each living mob inside (+ its radius), in
  * mob order, scaled by the hero's increased / more modifiers (not flat added damage) (live, with the cast snapshot and target conditions, plus the
  * action's own modifiers) with the action's tags, mitigated, no crit. A damage over time: no leech, no resource,
- * no stun bar, no combat-idle reset. The action's ignite on-hit statuses (hero ignite sources) may apply with the
+ * no stun bar, no combat-idle reset. The action's damageConversion applies to the tick too (Heart of Winter: a
+ * converted skill's fire zone deals cold). The action's ignite on-hit statuses (hero ignite sources) may apply with the
  * tick as their hit; other on-hit statuses do not.
  */
 function tickZone(ctx: Ctx, zone: GroundZone): void {
@@ -93,6 +94,7 @@ function tickZone(ctx: Ctx, zone: GroundZone): void {
       rolled,
       mods.filter((m) => m.kind !== 'flat'),
       action.tags,
+      action.damageConversion,
     );
     const amount = totalDamage(mitigate(raw, mobDefences(def, mob), content.combat));
     if (amount > 0) {
