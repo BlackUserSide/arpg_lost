@@ -91,7 +91,7 @@ export interface RunResult {
 }
 
 /** Currency amounts are kept to this many decimals (fractional essence, docs/design/crafting.md); structural. */
-const CURRENCY_DECIMALS = 4;
+export const CURRENCY_DECIMALS = 4;
 
 /** Adds (or with a negative amount, spends) account currency; the total is rounded so fractions never drift. */
 export function addCurrency(profile: Profile, currency: string, amount: number): void {
