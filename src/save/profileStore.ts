@@ -1,22 +1,15 @@
-import { craftCount } from '../core/items/craft';
-import type { Equipment } from '../core/items/equipment';
-import type { Item, LootRules, UniqueRoll, UniqueStatRoll } from '../core/items/types';
-import { createAllocation, validateAllocation } from '../core/passives/allocation';
-import type { PassiveAllocation, PassiveTreeData } from '../core/passives/types';
-import { createProfile, type MapProgress, type Profile } from '../core/progression/profile';
-import { passiveTree } from '../data/passives';
-import { skillLevels } from '../data/skillLevels';
-import { readSkillProgress, type SkillLevelRules, type SkillProgress } from '../core/skills/levels';
-import { validateSockets } from '../core/supports/tab';
-import type { SupportData, SupportItem } from '../core/supports/types';
-import type { ClassDef } from '../core/world/content';
-import { classes } from '../data/classes';
-import { itemsData } from '../data/items';
-import { mapsData } from '../data/maps';
-import { supportsData } from '../data/supports';
+import { createAllocation } from '../core/passives/allocation';
+import { createProfile, type Profile } from '../core/progression/profile';
 import type { KeyValueStorage } from '../platform/platform';
+import { readSigned, writeSigned, type SignedRead } from './integrity';
+import { defaultValidation, validateProfile, type SaveValidation } from './validate';
+
+export type { MapValidation, SaveValidation } from './validate';
 
 // Versioned profile persistence. Bump SAVE_VERSION and add a migration whenever the Profile shape changes.
+//
+// Every save is signed ({data, sig}, see integrity.ts) and written twice: the save and its backup (the last honest
+// save). Loading: signature check → migrations → validation (validate.ts); signing happens on every write.
 
 export const SAVE_KEY = 'arpg.profile';
 export const SAVE_VERSION = 8;
@@ -116,220 +109,131 @@ function v4Item(item: unknown): unknown {
   return { ...item, affixes: affixes.map(v4Affix) };
 }
 
+/** The backup slot: a signed copy of the last save the game wrote. */
+export const BACKUP_KEY = `${SAVE_KEY}.backup`;
+/** Unreadable or rejected stored data is kept here (for support), never loaded. */
+export const BROKEN_KEY = `${SAVE_KEY}.broken`;
+
+/**
+ * How the stored save was accepted:
+ * - `new`: nothing stored; `ok`: signature matches;
+ * - `unsigned`: a save from before signatures, accepted once and signed at once (designer decision 2026-10-22);
+ * - `restored`: the save was edited, broken or missing, the backup was loaded instead;
+ * - `unverified`: the save was edited and no valid backup exists: its validated data was loaded and re-signed;
+ * - `broken`: nothing loadable: a fresh profile (the stored data is kept under BROKEN_KEY; see LoadResult.readOnly).
+ */
+export type SaveIntegrity = 'new' | 'ok' | 'unsigned' | 'restored' | 'unverified' | 'broken';
+
 export interface LoadResult {
   profile: Profile;
-  /** Set when stored data could not be read; the broken copy is kept under this key. */
+  integrity: SaveIntegrity;
+  /** Set when stored data was rejected (unreadable, edited); the rejected copy is kept under this key. */
   backupKey?: string;
-}
-
-/** Highest map a stored ladder may hold (RunRules.maxLinearMap); see normalizeMaps. */
-export interface MapValidation {
-  readonly maxLinearMap: number;
-}
-
-/** Data the supports tab is validated against on load (see normalizeSupports). */
-export interface SupportValidation {
-  readonly classes: Readonly<Record<string, ClassDef>>;
-  readonly supports: SupportData;
+  /**
+   * The storage holds a real save this build cannot load (a newer save version, or a save that fails to decode): the
+   * profile is a fresh stand-in and must NOT be saved (the caller skips saveProfile), so the stored save and its
+   * backup stay intact for the build that can read them. A copy is also kept under preservedKey (never overwritten).
+   */
+  readOnly?: boolean;
+  preservedKey?: string;
 }
 
 /**
- * `tree` is used to validate passive allocations; a character with an invalid one gets a free full reset.
- * `supportCheck`: supports of unknown defs are dropped, tiers clamped, and socketed supports that are no longer valid
- * (unknown skill, bad slot, duplicate, lost compatibility) return to the tab. `overflowCheck`: the stash overflow keeps
- * only its rarities, at most its size (oldest first).
+ * Loads the profile. Signature check first: a save whose signature does not match (hand-edited) rolls back to the
+ * backup; an unsigned save from before signatures is accepted once, unless a signed backup exists (then the backup
+ * wins: unsigned data next to a signed history means the signature was stripped). Then migrations, then validation
+ * against the current data (`check` overrides parts of it, for tests). Any outcome other than `ok` / `new` / `broken`
+ * writes the loaded profile back signed, so the save and the backup agree again.
  */
-export function loadProfile(
-  storage: KeyValueStorage,
-  tree: PassiveTreeData = passiveTree,
-  skillRules: SkillLevelRules = skillLevels.rules,
-  supportCheck: SupportValidation = { classes, supports: supportsData },
-  mapCheck: MapValidation = mapsData.rules,
-  overflowCheck: LootRules['overflow'] = itemsData.rules.overflow,
-): LoadResult {
-  const raw = storage.getItem(SAVE_KEY);
-  if (!raw) return { profile: createProfile() };
-  try {
-    const file = JSON.parse(raw) as SaveFile;
-    if (typeof file.version !== 'number' || file.version > SAVE_VERSION) throw new Error(`Unsupported save version: ${String(file.version)}`);
-    let data = file.profile;
-    for (let v = file.version; v < SAVE_VERSION; v++) {
-      const migrate = migrations[v];
-      if (!migrate) throw new Error(`No migration from version ${v}`);
-      data = migrate(data);
-    }
-    const profile = normalize(data, skillRules, supportCheck, mapCheck, overflowCheck);
-    resetInvalidPassives(profile, tree);
-    return { profile };
-  } catch {
-    const backupKey = `${SAVE_KEY}.broken`;
-    storage.setItem(backupKey, raw);
-    return { profile: createProfile(), backupKey };
+export function loadProfile(storage: KeyValueStorage, check: Partial<SaveValidation> = {}): LoadResult {
+  const rules: SaveValidation = { ...defaultValidation, ...check };
+  const main = readSigned(storage, SAVE_KEY);
+  if (main.kind === 'signed') {
+    const profile = decode(main.data, rules);
+    if (profile) return { profile, integrity: 'ok' };
   }
+  const backup = readSigned(storage, BACKUP_KEY);
+  const restored = backup.kind === 'signed' ? decode(backup.data, rules) : undefined;
+  if (main.kind === 'missing') {
+    if (restored) return accept(storage, restored, 'restored');
+    if (backup.kind !== 'signed') return { profile: createProfile(), integrity: 'new' };
+    // Only a backup this build cannot read (a newer version): keep it untouched.
+    return { profile: createProfile(), integrity: 'broken', readOnly: true, preservedKey: preserve(storage, backup) };
+  }
+  // Edited, unsigned, unreadable, or signed but not decodable (e.g. a newer game version): the backup comes first,
+  // except for an unsigned save with no signed backup (accepted once).
+  if (main.kind === 'unsigned' && !restored) {
+    const profile = decode(main.data, rules);
+    if (profile) return accept(storage, profile, 'unsigned');
+  }
+  const rejected = keepRejected(storage, main);
+  if (restored) return accept(storage, restored, 'restored', rejected);
+  if (main.kind === 'tampered') {
+    const profile = decode(main.data, rules);
+    if (profile) {
+      console.warn('[save] signature mismatch and no valid backup: loading the validated save and re-signing it');
+      return accept(storage, profile, 'unverified', rejected);
+    }
+  }
+  const result: LoadResult = { profile: createProfile(), integrity: 'broken', backupKey: rejected };
+  // A real save that cannot be loaded (rather than garbage) must survive: no saving over it.
+  const real = looksLikeSave(main) ? main : backup.kind === 'signed' ? backup : undefined;
+  if (real) {
+    console.warn('[save] stored save cannot be loaded by this build (newer version?): progress will not be saved');
+    return { ...result, readOnly: true, preservedKey: preserve(storage, real) };
+  }
+  return result;
 }
 
 export function saveProfile(storage: KeyValueStorage, profile: Profile): void {
   const file: SaveFile = { version: SAVE_VERSION, profile };
-  storage.setItem(SAVE_KEY, JSON.stringify(file));
+  writeSigned(storage, [SAVE_KEY, BACKUP_KEY], file);
 }
 
-/** Fills fields missing from older or partial saves with defaults. */
-function normalize(
-  data: unknown,
-  skillRules: SkillLevelRules,
-  supportCheck: SupportValidation,
-  mapCheck: MapValidation,
-  overflowCheck: LootRules['overflow'],
-): Profile {
-  if (typeof data !== 'object' || data === null) throw new Error('Profile is not an object');
-  const base = createProfile();
-  const p = data as Partial<Profile>;
-  if (!Array.isArray(p.characters)) throw new Error('Profile has no characters array');
-  return {
-    characters: p.characters.map((c) => ({
-      ...c,
-      equipment: normalizeEquipment(c.equipment),
-      passives: normalizePassives(c.passives),
-      skills: normalizeSkills(c.skills, skillRules),
-      supports: normalizeSupports(c.supports, supportCheck.classes[c.classId], supportCheck.supports),
-      maps: normalizeMaps(c.maps, mapCheck),
-    })),
-    // A stash without an item array (malformed / tampered) falls back to an empty one; so does a missing or
-    // malformed overflow (its items are not kept: there is no array to read them from).
-    stash:
-      p.stash && Array.isArray(p.stash.items)
-        ? {
-            ...p.stash,
-            items: p.stash.items.map(normalizeItem),
-            overflow: normalizeOverflow(p.stash.overflow, overflowCheck),
-          }
-        : base.stash,
-    currency: p.currency ?? base.currency,
-    records: { ...base.records, ...p.records },
-    nextCharacterId: p.nextCharacterId ?? p.characters.length + 1,
-    nextItemId: p.nextItemId ?? 1,
-  };
+function accept(storage: KeyValueStorage, profile: Profile, integrity: SaveIntegrity, backupKey?: string): LoadResult {
+  saveProfile(storage, profile);
+  return { profile, integrity, ...(backupKey ? { backupKey } : {}) };
+}
+
+/** Copies stored data that is not loaded as is to BROKEN_KEY (latest rejection); returns that key. */
+function keepRejected(storage: KeyValueStorage, read: Exclude<SignedRead, { kind: 'missing' }>): string {
+  storage.setItem(BROKEN_KEY, read.raw);
+  return BROKEN_KEY;
+}
+
+/** Signed by the game, or an unsigned / edited payload with a save version: a real save, not garbage. */
+function looksLikeSave(read: SignedRead): read is Exclude<SignedRead, { kind: 'missing' | 'corrupt' }> {
+  if (read.kind === 'signed') return true;
+  if (read.kind !== 'unsigned' && read.kind !== 'tampered') return false;
+  const data = read.data as { version?: unknown } | null;
+  return typeof data === 'object' && data !== null && typeof data.version === 'number';
 }
 
 /**
- * Optional item fields added without a version bump (older items need no migration):
- * - the crafting counter (Item.crafts, 0.3): a missing counter reads as 0; a present one is sanitized to a
- *   non-negative integer;
- * - the unique roll (Item.unique, 0.4): kept only on unique / legendary items and only with a string id
- *   (otherwise removed: the item stays, with no unique stats); malformed rolls (not an array, an entry without a
- *   whole tier ≥ 1 or a finite value) are all dropped, since rolls pair with stat lines by position. A unique id the
- *   data does not know is kept as is (no stats until it exists again; salvage works either way).
+ * Keeps an unloadable save under `<BROKEN_KEY>.v<version>`, written only once per version (never overwritten), so a
+ * later rejection cannot replace it. Returns the key.
  */
-// Clamping rolled values to their tier range belongs to the save-validation backlog item (roadmap 0.4).
-function normalizeItem(item: Item): Item {
-  if (typeof item !== 'object' || item === null) return item;
-  let out = item;
-  if (item.crafts !== undefined) out = { ...out, crafts: craftCount(item) };
-  if ('unique' in item) {
-    const { unique: raw, ...rest } = out;
-    const unique = item.rarity === 'unique' || item.rarity === 'legendary' ? normalizeUniqueRoll(raw) : undefined;
-    out = unique ? { ...rest, unique } : rest;
-  }
-  return out;
+function preserve(storage: KeyValueStorage, read: Exclude<SignedRead, { kind: 'missing' | 'corrupt' }>): string {
+  const version = (read.data as { version?: unknown } | null)?.version;
+  const key = `${BROKEN_KEY}.v${typeof version === 'number' ? version : 'unknown'}`;
+  if (storage.getItem(key) === null) storage.setItem(key, read.raw);
+  return key;
 }
 
-function normalizeUniqueRoll(raw: unknown): UniqueRoll | undefined {
-  if (typeof raw !== 'object' || raw === null) return undefined;
-  const { id, rolls } = raw as { id?: unknown; rolls?: unknown };
-  if (typeof id !== 'string') return undefined;
-  const valid = Array.isArray(rolls) && rolls.every(isStatRoll);
-  return { id, rolls: valid ? (rolls as UniqueStatRoll[]).map((r) => ({ tier: r.tier, value: r.value })) : [] };
-}
-
-function isStatRoll(raw: unknown): raw is UniqueStatRoll {
-  if (typeof raw !== 'object' || raw === null) return false;
-  const { tier, value } = raw as { tier?: unknown; value?: unknown };
-  return typeof tier === 'number' && Number.isInteger(tier) && tier >= 1 && typeof value === 'number' && Number.isFinite(value);
-}
-
-function normalizeEquipment(raw: Equipment | undefined): Equipment {
-  if (typeof raw !== 'object' || raw === null) return {};
-  return Object.fromEntries(Object.entries(raw).map(([slot, item]) => [slot, item ? normalizeItem(item) : item])) as Equipment;
-}
-
-/**
- * Skill records with level / xp sanitized (readSkillProgress: level clamped to 1..max, XP ≥ 0); malformed entries
- * are dropped (the skill reads as level 1). Other per-skill fields are kept for later additions (support slots).
- */
-function normalizeSkills(raw: unknown, rules: SkillLevelRules): Record<string, SkillProgress> {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
-  const out: Record<string, SkillProgress> = {};
-  for (const [id, record] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof record !== 'object' || record === null || Array.isArray(record)) continue;
-    out[id] = { ...(record as object), ...readSkillProgress(record, rules) };
-  }
-  return out;
-}
-
-/**
- * The supports tab, sanitized: entries without a string id, with an unknown def or duplicated ids are dropped; tiers
- * are clamped to the def's tiers (whole); malformed sockets are removed, then validateSockets returns every socketed
- * support that is no longer valid to the tab (designer decision 2026-10-23). Without class data nothing stays socketed.
- */
-// Over-cap tabs (tampering) are kept as is; trimming them is part of the save-validation backlog item (roadmap 0.4).
-function normalizeSupports(raw: unknown, classDef: ClassDef | undefined, data: SupportData): SupportItem[] {
-  if (!Array.isArray(raw)) return [];
-  const out: SupportItem[] = [];
-  const ids = new Set<string>();
-  for (const entry of raw) {
-    if (typeof entry !== 'object' || entry === null) continue;
-    const e = entry as Partial<Record<keyof SupportItem, unknown>>;
-    if (typeof e.id !== 'string' || ids.has(e.id) || typeof e.defId !== 'string') continue;
-    const def = data.supports[e.defId];
-    if (!def || def.tiers.length === 0) continue;
-    const rawTier = typeof e.tier === 'number' && Number.isFinite(e.tier) ? Math.floor(e.tier) : 1;
-    const item: SupportItem = { id: e.id, defId: e.defId, tier: Math.min(def.tiers.length, Math.max(1, rawTier)) };
-    const socket = e.socket as { skillId?: unknown; slot?: unknown } | undefined;
-    if (classDef && typeof socket === 'object' && socket !== null && typeof socket.skillId === 'string' && typeof socket.slot === 'number') {
-      item.socket = { skillId: socket.skillId, slot: socket.slot };
+/** A stored save file → a migrated, validated profile; undefined if it is not a readable save. */
+function decode(data: unknown, rules: SaveValidation): Profile | undefined {
+  try {
+    const file = data as Partial<SaveFile> | null;
+    if (typeof file !== 'object' || file === null) return undefined;
+    if (typeof file.version !== 'number' || file.version > SAVE_VERSION) return undefined;
+    let profile = file.profile;
+    for (let v = file.version; v < SAVE_VERSION; v++) {
+      const migrate = migrations[v];
+      if (!migrate) return undefined;
+      profile = migrate(profile);
     }
-    ids.add(e.id);
-    out.push(item);
+    return validateProfile(profile, rules);
+  } catch {
+    return undefined;
   }
-  if (classDef) validateSockets({ supports: out }, classDef, data);
-  return out;
-}
-
-/**
- * The map ladder, sanitized: `unlocked` is a whole number in 1..maxLinearMap (missing / malformed → 1). Other fields
- * are kept for later additions (keys).
- */
-function normalizeMaps(raw: unknown, check: MapValidation): MapProgress {
-  const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  const value = typeof record.unlocked === 'number' && Number.isFinite(record.unlocked) ? Math.floor(record.unlocked) : 1;
-  return { ...record, unlocked: Math.min(Math.max(1, check.maxLinearMap), Math.max(1, value)) };
-}
-
-/** Fills a partial or malformed allocation with defaults (missing / non-array fields become empty). */
-function normalizePassives(raw: unknown): PassiveAllocation {
-  const p = { ...createAllocation(), ...(typeof raw === 'object' && raw !== null ? (raw as Partial<PassiveAllocation>) : {}) };
-  return {
-    nodes: Array.isArray(p.nodes) ? p.nodes.filter((id) => typeof id === 'string') : [],
-    spec: typeof p.spec === 'string' ? p.spec : null,
-    specNodes: Array.isArray(p.specNodes) ? p.specNodes.filter((id) => typeof id === 'string') : [],
-  };
-}
-
-/** Allocations that no longer fit the tree (data change, tampering) are reset for free: wheel and spec. */
-function resetInvalidPassives(profile: Profile, tree: PassiveTreeData): void {
-  for (const character of profile.characters) {
-    if (validateAllocation(tree, character) !== null) character.passives = createAllocation();
-  }
-}
-
-/**
- * The stash overflow, sanitized (tampering / data change): not an array → empty; items of a rarity the overflow does
- * not keep (LootRules.overflow.rarities) are dropped; at most LootRules.overflow.size items, the oldest kept.
- */
-function normalizeOverflow(raw: unknown, check: LootRules['overflow']): Item[] {
-  if (!Array.isArray(raw)) return [];
-  return (raw as Item[])
-    .filter((item) => typeof item === 'object' && item !== null && check.rarities.includes(item.rarity))
-    .slice(0, Math.max(0, check.size))
-    .map(normalizeItem);
 }

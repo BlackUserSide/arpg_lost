@@ -6,6 +6,7 @@ import { loadProfile, SAVE_KEY, SAVE_VERSION, saveProfile } from './profileStore
 import { classSkillProgress } from '../core/skills/levels';
 import { content } from '../data/index';
 import { skillLevels } from '../data/skillLevels';
+import { writeSigned } from './integrity';
 
 function memoryStorage(): KeyValueStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -15,6 +16,16 @@ function memoryStorage(): KeyValueStorage & { data: Map<string, string> } {
     setItem: (k, v) => void data.set(k, v),
     removeItem: (k) => void data.delete(k),
   };
+}
+
+/** The stored save file (the signed envelope's data). */
+function readSave(storage: KeyValueStorage): unknown {
+  return (JSON.parse(storage.getItem(SAVE_KEY)!) as { data: unknown }).data;
+}
+
+/** Stores a save file signed, as the game would (values the game could not produce still get validated). */
+function writeSave(storage: KeyValueStorage, file: unknown): void {
+  writeSigned(storage, [SAVE_KEY], file);
 }
 
 const rules = { maxCharacters: 5, nameMinLength: 2, nameMaxLength: 16 };
@@ -108,7 +119,7 @@ describe('profile store migrations', () => {
     const helmet = {
       id: 'i1',
       baseId: 'iron_cap',
-      level: 10,
+      level: 15,
       rarity: 'magic',
       name: 'Cap',
       implicit: 6,
@@ -147,7 +158,8 @@ describe('profile store migrations', () => {
       { affixId: 'resource_regen', tier: 1, value: 2.8 },
       { affixId: 'resource_regen', tier: 1, value: 3.6 },
     ]);
-    expect(profile.nextItemId).toBe(3);
+    // The stored counter (3) was behind the stored ids (i5): it moves past them.
+    expect(profile.nextItemId).toBe(6);
   });
 
   it('v3 → v4 puts every old resource regen roll inside its new tier', () => {
@@ -218,14 +230,14 @@ describe('profile store migrations', () => {
     saveProfile(storage, profile);
     expect(loadProfile(storage).profile).toEqual(profile);
 
-    const raw = JSON.parse(storage.getItem(SAVE_KEY)!) as { profile: { characters: Array<Record<string, unknown>> } };
+    const raw = readSave(storage) as { profile: { characters: Array<Record<string, unknown>> } };
     raw.profile.characters[0]!.skills = {
       fireball: { level: 9, xp: 50 },
       frost_nova: { level: 2.7, xp: -4, supports: ['pierce'] },
       teleport: 'broken',
       volley: { xp: 30 },
     };
-    storage.setItem(SAVE_KEY, JSON.stringify(raw));
+    writeSave(storage, raw);
     expect(loadProfile(storage).profile.characters[0]!.skills).toEqual({
       fireball: { level: 3, xp: 0 },
       frost_nova: { level: 2, xp: 0, supports: ['pierce'] },
@@ -272,10 +284,11 @@ describe('profile store migrations', () => {
       { id: 's1', defId: 'chain_lightning', tier: 2, socket: { skillId: 'fireball', slot: 0 } },
       { id: 's2', defId: 'echo', tier: 1 },
     ];
+    profile.nextItemId = 3;
     saveProfile(storage, profile);
     expect(loadProfile(storage).profile).toEqual(profile);
 
-    const raw = JSON.parse(storage.getItem(SAVE_KEY)!) as { profile: { characters: Array<Record<string, unknown>> } };
+    const raw = readSave(storage) as { profile: { characters: Array<Record<string, unknown>> } };
     raw.profile.characters[0]!.supports = [
       { id: 's1', defId: 'chain_lightning', tier: 7, socket: { skillId: 'fireball', slot: 0 } },
       { id: 's2', defId: 'echo', tier: 1, socket: { skillId: 'teleport', slot: 0 } },
@@ -285,7 +298,7 @@ describe('profile store migrations', () => {
       { id: 's5', defId: 'pure_power', tier: 3, socket: 'broken' },
       'garbage',
     ];
-    storage.setItem(SAVE_KEY, JSON.stringify(raw));
+    writeSave(storage, raw);
     expect(loadProfile(storage).profile.characters[0]!.supports).toEqual([
       { id: 's1', defId: 'chain_lightning', tier: 3, socket: { skillId: 'fireball', slot: 0 } },
       // Echo does not fit movement skills; Pierce does not fit an exploding projectile: both back to the tab.
@@ -363,8 +376,9 @@ describe('profile store migrations', () => {
     const plain = { id: 'i3', baseId: 'iron_ring', level: 1, rarity: 'magic' as const, name: '', affixes: [{ affixId: 'life_flat', tier: 5, value: 10 }] };
     profile.stash.items.push(gone, plain);
     profile.characters[0]!.equipment.weapon = reaper;
+    profile.nextItemId = 4;
     saveProfile(storage, profile);
-    expect(JSON.parse(storage.getItem(SAVE_KEY)!).version).toBe(SAVE_VERSION);
+    expect((readSave(storage) as { version: number }).version).toBe(SAVE_VERSION);
     const loaded = loadProfile(storage).profile;
     expect(loaded).toEqual(profile);
     expect(loaded.stash.items[1]).not.toHaveProperty('unique');
@@ -453,12 +467,12 @@ describe('profile store: map ladder (v7)', () => {
     const profile = createProfile();
     for (const name of ['Aa', 'Bb', 'Cc', 'Dd', 'Ee']) createCharacter(profile, { name, classId: 'mage' }, rules, ['mage']);
     saveProfile(storage, profile);
-    const raw = JSON.parse(storage.getItem(SAVE_KEY)!) as { profile: { characters: Array<Record<string, unknown>> } };
+    const raw = readSave(storage) as { profile: { characters: Array<Record<string, unknown>> } };
     const stored: unknown[] = [{ unlocked: 7.8 }, { unlocked: 999 }, { unlocked: -3 }, 'broken', { unlocked: 3, key: 2 }];
     raw.profile.characters.forEach((c, i) => (c.maps = stored[i]));
     delete raw.profile.characters[2]!.maps;
-    storage.setItem(SAVE_KEY, JSON.stringify(raw));
-    const loaded = loadProfile(storage, undefined, undefined, undefined, { maxLinearMap: 40 }).profile;
+    writeSave(storage, raw);
+    const loaded = loadProfile(storage, { maps: { maxLinearMap: 40 } }).profile;
     expect(loaded.characters.map((c) => c.maps)).toEqual([{ unlocked: 7 }, { unlocked: 40 }, { unlocked: 1 }, { unlocked: 1 }, { unlocked: 3, key: 2 }]);
   });
 });
@@ -472,7 +486,7 @@ describe('profile store: stash overflow (v8)', () => {
     name: '',
     affixes: [],
     implicit: 9,
-    ...(rarity === 'rare' ? {} : { unique: { id: 'bloody_pupil', rolls: [{ tier: 5, value: 1 }] } }),
+    ...(rarity === 'rare' ? {} : { unique: { id: 'bloody_pupil', rolls: [{ tier: 5, value: 0.15 }] } }),
   });
   const v7 = (stash: unknown): string =>
     JSON.stringify({
@@ -491,7 +505,7 @@ describe('profile store: stash overflow (v8)', () => {
     expect(backupKey).toBeUndefined();
     expect(profile.stash.overflow).toEqual([]);
     expect(profile.stash.items.map((i) => i.id)).toEqual(['i1', 'i2']);
-    expect(profile.stash.items[1]!.unique).toEqual({ id: 'bloody_pupil', rolls: [{ tier: 5, value: 1 }] });
+    expect(profile.stash.items[1]!.unique).toEqual({ id: 'bloody_pupil', rolls: [{ tier: 5, value: 0.15 }] });
     expect(profile.currency).toEqual({ shards: 4 });
     expect(profile.nextItemId).toBe(3);
   });
@@ -500,24 +514,29 @@ describe('profile store: stash overflow (v8)', () => {
     const storage = memoryStorage();
     const profile = createProfile();
     profile.stash.overflow.push(ring('i7', 'legendary') as never, ring('i5', 'unique') as never);
+    profile.nextItemId = 8;
     saveProfile(storage, profile);
     expect(loadProfile(storage).profile).toEqual(profile);
-    const raw = JSON.parse(storage.getItem(SAVE_KEY)!) as { profile: { stash: { overflow: unknown[] } } };
+    const raw = readSave(storage) as { profile: { stash: { overflow: unknown[] } } };
     raw.profile.stash.overflow.push({ ...ring('i8', 'unique'), unique: { id: 3 } });
-    storage.setItem(SAVE_KEY, JSON.stringify(raw));
+    writeSave(storage, raw);
     const loaded = loadProfile(storage).profile.stash.overflow;
     expect(loaded.map((i) => i.id)).toEqual(['i7', 'i5', 'i8']);
     expect(loaded[2]).not.toHaveProperty('unique');
   });
 
   it('the overflow keeps only its rarities and at most its size, oldest first', () => {
-    const storage = memoryStorage();
     const overflow = [ring('i1', 'rare'), ring('i2', 'unique'), ring('i3', 'legendary'), ring('i4', 'unique'), ring('i5', 'unique')];
-    storage.setItem(SAVE_KEY, JSON.stringify({ version: SAVE_VERSION, profile: { ...createProfile(), stash: { items: [], overflow } } }));
-    const loaded = loadProfile(storage, undefined, undefined, undefined, undefined, { size: 2, rarities: ['unique', 'legendary'] }).profile;
+    // Each load writes the validated profile back, so every check starts from its own storage.
+    const stored = (): KeyValueStorage => {
+      const storage = memoryStorage();
+      storage.setItem(SAVE_KEY, JSON.stringify({ version: SAVE_VERSION, profile: { ...createProfile(), stash: { items: [], overflow } } }));
+      return storage;
+    };
+    const loaded = loadProfile(stored(), { items: { ...itemsData, rules: { ...itemsData.rules, overflow: { size: 2, rarities: ['unique', 'legendary'] } } } }).profile;
     expect(loaded.stash.overflow.map((i) => i.id)).toEqual(['i2', 'i3']);
     // Real data (size 20): only the rare item is dropped.
-    expect(loadProfile(storage).profile.stash.overflow.map((i) => i.id)).toEqual(['i2', 'i3', 'i4', 'i5']);
+    expect(loadProfile(stored()).profile.stash.overflow.map((i) => i.id)).toEqual(['i2', 'i3', 'i4', 'i5']);
   });
 
   it('a missing or malformed overflow loads as empty', () => {

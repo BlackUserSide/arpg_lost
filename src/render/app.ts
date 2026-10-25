@@ -50,17 +50,22 @@ export async function createApp(platform: Platform): Promise<App> {
   await platform.init();
   const settings = loadSettings(platform.storage);
   await applySettings(platform, settings);
+  // A save this build cannot read (newer version) loads read-only: never save over it.
+  let loaded = loadProfile(platform.storage);
   const app: App = {
     platform,
     user: await platform.getUser(),
-    profile: loadProfile(platform.storage).profile,
+    profile: loaded.profile,
     settings,
     selectedCharacterId: undefined,
     loginHint: 'none',
-    save: () => saveProfile(platform.storage, app.profile),
+    save: () => {
+      if (!loaded.readOnly) saveProfile(platform.storage, app.profile);
+    },
     // After login the portal may sync cloud data into storage, so re-read it (settings too).
     reloadProfile: async () => {
-      app.profile = loadProfile(platform.storage).profile;
+      loaded = loadProfile(platform.storage);
+      app.profile = loaded.profile;
       app.settings = loadSettings(platform.storage);
       await applySettings(platform, app.settings);
     },
