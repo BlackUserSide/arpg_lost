@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
 import type { Content, MobRank } from '../core/world/content';
-import { distanceDamageMore, getClass, getMob, maxResource, mobRank, PLAYER_ID, setLoadoutModifiers, type WorldEvent, type WorldState } from '../core/world/world';
+import { distanceDamageMore, eliteModifierDef, getClass, getMob, maxResource, mobMoveSpeed, mobRank, PLAYER_ID, setLoadoutModifiers, type WorldEvent, type WorldState } from '../core/world/world';
 import { unspentPoints } from '../core/passives/allocation';
 import { equippedWeapon } from '../core/items/equipment';
 import { heroMechanics, heroModifiers } from '../core/progression/hero';
@@ -27,7 +27,7 @@ import { supportIcon, tierColor, tierColorNum } from './supportIcons';
 import { supportsWord, supportTitle } from './supportText';
 import { shardsWord } from './passiveText';
 import { resourceText } from './resourceText';
-import { baseName, itemName, mobName } from './contentText';
+import { baseName, eliteModifierName, itemName, mobName } from './contentText';
 import { currencyWord } from './craftText';
 import { ESSENCE_CURRENCY } from '../core/items/craft';
 import { SALVAGE_CURRENCY } from '../core/items/inventory';
@@ -36,9 +36,10 @@ import { PointsBadge } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
-import { screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
+import { ISO_K, screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, textureKey } from './sprites';
 import { BossFx } from './bossFx';
+import { EliteFx, eliteLook } from './eliteFx';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
 // Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
@@ -157,6 +158,17 @@ interface Actor {
   pose: { anim: string; progress: number } | undefined;
   /** Minions: the mob that raised them (MobState.summonerId). */
   summonerId: number | undefined;
+  /** Elites with a modifier (MobState.eliteModifier): its name over the life bar and the coloured glow outline. */
+  elite: EliteMark | undefined;
+}
+
+interface EliteMark {
+  readonly modifier: string;
+  /** Its def converts damage to fire (fiery visuals) / makes it walk faster (speed streaks). */
+  readonly fire: boolean;
+  readonly fast: boolean;
+  readonly label: Phaser.GameObjects.Text;
+  readonly glow: Phaser.Filters.Glow | undefined;
 }
 
 interface Corpse {
@@ -187,7 +199,7 @@ type OverlayKind = 'pause' | 'end';
 /** Lift of Chain Lightning bolts above the floor (screen px): roughly mid-body. */
 const CHAIN_HEIGHT = 30;
 
-type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot' | 'bleed';
+type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot' | 'playerDot' | 'bleed';
 
 /** Visual-only damage number looks. */
 const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: number; rise: number; duration: number }> = {
@@ -195,6 +207,8 @@ const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: numb
   crit: { color: '#ffd23f', size: 26, rise: 30, duration: 600 },
   player: { color: '#ff5050', size: 18, rise: 30, duration: 600 },
   dot: { color: '#ff9a3c', size: 14, rise: 20, duration: 700 },
+  /** Damage over time on the hero (a fiery elite's burn): the incoming red, small like other DoT numbers. */
+  playerDot: { color: '#ff5050', size: 14, rise: 20, duration: 700 },
   bleed: { color: '#ff6a6a', size: 14, rise: 20, duration: 700 },
 };
 
@@ -252,6 +266,10 @@ export class RunScene extends Phaser.Scene {
   private skillFx!: SkillFx;
   /** Boss / mob ability visuals (wind-up telegraphs, grave circles, nova, roar, crumbling minions). */
   private bossFx!: BossFx;
+  /** Elite modifier visuals (glow, death circle and blast, fiery projectiles, hero burn, fast streaks). */
+  private eliteFx!: EliteFx;
+  /** The hero sprite carries the burning tint (cleared once when the burn ends). */
+  private heroTinted = false;
   /** Mob id → world time of its last "Immune" label. */
   private readonly immuneShown = new Map<number, number>();
   /** Ground zones and decoys alive in core (a room change drops them without expire events). */
@@ -354,6 +372,8 @@ export class RunScene extends Phaser.Scene {
     this.combatFx = new CombatFx(this);
     this.skillFx = new SkillFx(this);
     this.bossFx = new BossFx(this);
+    this.eliteFx = new EliteFx(this);
+    this.heroTinted = false;
     this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
     const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
@@ -428,7 +448,10 @@ export class RunScene extends Phaser.Scene {
 
   /** Everything of the previous room is gone in core: drop its sprites and effects too, without interpolation. */
   private enterRoom(): void {
-    for (const actor of this.mobs.values()) actor.sprite.destroy();
+    for (const actor of this.mobs.values()) {
+      actor.elite?.label.destroy();
+      actor.sprite.destroy();
+    }
     this.mobs.clear();
     for (const corpse of this.corpses) corpse.actor.sprite.destroy();
     this.corpses = [];
@@ -442,6 +465,7 @@ export class RunScene extends Phaser.Scene {
     this.counterShot = undefined;
     this.supportFx.clearRoom();
     this.bossFx.clear();
+    this.eliteFx.clear();
     this.immuneShown.clear();
     this.buildRoom();
     this.cameras.main.fadeIn(ROOM_FADE, 7, 7, 10);
@@ -981,6 +1005,11 @@ export class RunScene extends Phaser.Scene {
         break;
       }
       case 'status':
+        if (event.targetId === PLAYER_ID) {
+          // The hero caught fire (a fiery elite's hit): a puff of embers; the burn itself is drawn from player.ignite.
+          if (event.status === 'ignite') this.eliteFx.ignited(this.hero.sprite.x, this.hero.sprite.y, BODY_PX);
+          break;
+        }
         if (event.source === 'stunBar') {
           const actor = this.mobs.get(event.targetId);
           if (actor) {
@@ -1047,7 +1076,17 @@ export class RunScene extends Phaser.Scene {
         break;
       case 'mobAttack': {
         const actor = this.mobs.get(event.id);
-        if (actor) this.playOneShot(actor, ATTACK_ANIMS[actor.set] ?? 'attack');
+        if (actor) {
+          this.playOneShot(actor, ATTACK_ANIMS[actor.set] ?? 'attack');
+          if (actor.elite?.fire) {
+            const mob = this.world.mobs.find((m) => m.id === event.id);
+            if (mob) {
+              const ahead = toScreen(vec(mob.pos.x + mob.facing.x, mob.pos.y + mob.facing.y));
+              const here = toScreen(mob.pos);
+              this.eliteFx.fireSwing(actor.sprite.x, actor.sprite.y, ahead.x - here.x, ahead.y - here.y, BODY_PX * actor.scale);
+            }
+          }
+        }
         if (event.decoyId !== undefined) this.skillFx.decoyStruck(event.decoyId);
         break;
       }
@@ -1071,6 +1110,10 @@ export class RunScene extends Phaser.Scene {
         if (actor) {
           const shot = this.playOneShot(actor, 'death');
           actor.pose = undefined;
+          if (actor.elite) {
+            this.eliteFx.removeGlow(actor.sprite, actor.elite.glow);
+            actor.elite.label.destroy();
+          }
           actor.sprite.clearTint();
           actor.sprite.setDepth(toScreen(actor.display).y - 40);
           // A minion whose summoner fell this step (its death event came first): it crumbles to dust (core gives
@@ -1086,10 +1129,11 @@ export class RunScene extends Phaser.Scene {
           this.immuneShown.delete(event.id);
           if (actor.rank !== 'normal') {
             // A ranked mob falls: a ring in its colour.
-            const look = RANK_LOOKS[actor.rank];
-            this.areas.push({ origin: event.pos, facing: vec(1, 0), radius: actor.rank === 'boss' ? 160 : 80, angleDeg: 360, color: look.ring, ttl: AREA_TTL * 3 });
+            const color = actor.elite ? eliteLook(actor.elite.modifier).color : RANK_LOOKS[actor.rank].ring;
+            this.areas.push({ origin: event.pos, facing: vec(1, 0), radius: actor.rank === 'boss' ? 160 : 80, angleDeg: 360, color, ttl: AREA_TTL * 3 });
           }
           if (actor.rank === 'boss') this.bossFall = event.pos;
+          actor.elite = undefined;
         }
         break;
       }
@@ -1177,13 +1221,23 @@ export class RunScene extends Phaser.Scene {
         break;
       }
       case 'hostileZoneSpawn': {
+        // An exploding elite's death circle grows in on its own (drawDeathZone); the violet pop is the grave circles'.
+        if (event.source === 'eliteDeath') break;
         const s = toScreen(event.pos);
         this.bossFx.zoneDropped(s.x, s.y, event.radius);
         break;
       }
       case 'hostileZoneErupt': {
         const s = toScreen(event.pos);
-        this.bossFx.erupt(s.x, s.y, event.radius);
+        if (event.source === 'eliteDeath') {
+          this.eliteFx.blast(s.x, s.y, event.radius);
+          this.combatFx.deathExplosion('fire', s.x, s.y, event.radius);
+          this.cameras.main.shake(event.hit ? 220 : 140, event.hit ? 0.009 : 0.004);
+          break;
+        }
+        const fire = this.firesWith(event.eliteModifier);
+        this.bossFx.erupt(s.x, s.y, event.radius, fire);
+        if (fire) this.eliteFx.fireErupt(s.x, s.y);
         if (event.hit) this.cameras.main.shake(120, 0.005);
         break;
       }
@@ -1207,7 +1261,7 @@ export class RunScene extends Phaser.Scene {
       .sprite(0, 0, textureKey(set, 'idle'), 0)
       .setOrigin(0.5, layout.originY)
       .setScale(scale / layout.nativeScale);
-    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0, rank, scale, pose: undefined, summonerId: undefined };
+    return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0, rank, scale, pose: undefined, summonerId: undefined, elite: undefined };
   }
 
   /** Remembers where everything was before a sim step, for interpolation. */
@@ -1250,6 +1304,15 @@ export class RunScene extends Phaser.Scene {
     this.hero.display = this.interpolated(PLAYER_ID, player.pos);
     this.updateActor(this.hero, dt, this.speedOf(PLAYER_ID, player.pos), classDef.baseStats.movementSpeed ?? 200);
     this.hero.sprite.setAlpha(player.invulnerable > 0 ? 0.55 : 1);
+    // Burning (a fiery elite's ignite): the same flickering warm glow as an ignited mob.
+    const burn = player.ignite > 0 && !player.dead ? statusLook(0, 0, player.ignite, 0, this.world.time, PLAYER_ID) : undefined;
+    if (burn) {
+      this.hero.sprite.setTint(burn.color).setTintMode(burn.mode);
+      this.heroTinted = true;
+    } else if (this.heroTinted) {
+      this.hero.sprite.clearTint();
+      this.heroTinted = false;
+    }
 
     for (const mob of this.world.mobs) {
       let actor = this.mobs.get(mob.id);
@@ -1260,6 +1323,7 @@ export class RunScene extends Phaser.Scene {
         const bodyScale = def.radius > 0 ? mob.radius / def.radius : 1;
         actor = this.createActor(set, mob.pos, mobRank(def, mob), bodyScale * spriteLayout(set).nativeScale);
         actor.summonerId = mob.summonerId;
+        if (mob.eliteModifier !== undefined) actor.elite = this.createEliteMark(actor, mob.eliteModifier);
         // The boss and raised minions climb out of the floor.
         if ((actor.rank === 'boss' || mob.summonerId !== undefined) && SPRITE_SETS[set]?.spawn) this.playOneShot(actor, 'spawn');
         this.mobs.set(mob.id, actor);
@@ -1292,7 +1356,8 @@ export class RunScene extends Phaser.Scene {
       }
       // A frozen mob holds its pose; a boss under freeze (freezeSlow) only looks frozen and keeps moving.
       actor.frozen = mob.freeze > 0;
-      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), def.moveSpeed, actor.frozen);
+      // Reference speed with the elite modifier (fast elites): the run cycle keeps pace with the feet.
+      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), mobMoveSpeed(this.content, def, mob), actor.frozen);
       // Likewise a boss under an ordinary stun (stunSlow) looks stunned but keeps moving.
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
       const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, Math.max(mob.slow, mob.auraSlow), this.world.time, mob.id);
@@ -1322,6 +1387,17 @@ export class RunScene extends Phaser.Scene {
    */
   private updateDotNumbers(dt: number): void {
     if (this.dotTallies.size === 0) return;
+    // The hero's own burn (fiery elites) is summed like a mob's ignite.
+    const heroTally = this.dotTallies.get(PLAYER_ID);
+    if (heroTally) {
+      heroTally.timer -= dt;
+      if (this.world.player.ignite <= 0) this.flushDotTally(PLAYER_ID);
+      else if (heroTally.timer <= 0) {
+        this.showDotTally(heroTally, PLAYER_ID);
+        heroTally.amount = 0;
+        heroTally.timer = DOT_NUMBER_INTERVAL;
+      }
+    }
     for (const mob of this.world.mobs) {
       const tally = this.dotTallies.get(mob.id);
       if (!tally) continue;
@@ -1330,7 +1406,7 @@ export class RunScene extends Phaser.Scene {
       if (mob.ignite <= 0 && (mob.bleed ?? 0) <= 0) this.flushDotTally(mob.id);
       else if (tally.timer <= 0) {
         // Still burning: show the sum and keep counting in the same tally.
-        this.showDotTally(tally);
+        this.showDotTally(tally, mob.id);
         tally.amount = 0;
         tally.timer = DOT_NUMBER_INTERVAL;
       }
@@ -1341,12 +1417,13 @@ export class RunScene extends Phaser.Scene {
   private flushDotTally(id: number): void {
     const tally = this.dotTallies.get(id);
     if (!tally) return;
-    this.showDotTally(tally);
+    this.showDotTally(tally, id);
     this.dotTallies.delete(id);
   }
 
-  private showDotTally(tally: DotTally): void {
-    if (tally.amount >= 0.5) this.spawnDamageNumber(tally.pos, tally.amount, tally.bleed ? 'bleed' : 'dot');
+  /** `id`: whose tally it is; the hero's own damage over time shows in the incoming-damage colour. */
+  private showDotTally(tally: DotTally, id: number): void {
+    if (tally.amount >= 0.5) this.spawnDamageNumber(tally.pos, tally.amount, id === PLAYER_ID ? 'playerDot' : tally.bleed ? 'bleed' : 'dot');
   }
 
   private updateActor(actor: Actor, dt: number, speed: number, referenceSpeed: number, frozen = false): void {
@@ -1438,12 +1515,14 @@ export class RunScene extends Phaser.Scene {
     // Grave circles (hostile zones): warning discs filling up until they erupt.
     for (const zone of this.world.hostileZones) {
       const p = toScreen(zone.pos);
-      this.bossFx.drawHostileZone(g, zone, p.x, p.y, this.world.time);
+      if (zone.source === 'eliteDeath') this.eliteFx.drawDeathZone(g, top, zone, p.x, p.y, this.world.time, dt);
+      else this.bossFx.drawHostileZone(g, zone, p.x, p.y, this.world.time, this.firesWith(zone.eliteModifier));
     }
 
     // Ring under the hero so they never get lost in a crowd; orange while buffed.
     const hero = toScreen(this.hero.display);
     g.lineStyle(2, player.buffs.length > 0 ? 0xff9a3c : 0xe8c15a, 0.9).strokeEllipse(hero.x, hero.y, 46, 23);
+    if (player.ignite > 0 && !player.dead) this.eliteFx.drawHeroBurn(g, top, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, this.world.time, dt, Math.min(1, player.ignite / 0.4));
 
     for (const trap of this.world.traps) {
       // Slow auras first, under every trigger ring; only while armed (that is when core applies them).
@@ -1485,6 +1564,20 @@ export class RunScene extends Phaser.Scene {
       // Core body radius (rank scaled): rings and status marks match what hits land on.
       const radius = mob.radius;
       if (actor.rank !== 'normal') this.drawRankMarks(g, top, actor, mob.life / mob.maxLife, radius);
+      if (actor.elite) {
+        // Screen velocity over the last sim step (fast elites trail speed streaks).
+        const prev = this.prevPositions.get(mob.id);
+        let vx = 0;
+        let vy = 0;
+        if (prev) {
+          const dx = (mob.pos.x - prev.x) / DT;
+          const dy = (mob.pos.y - prev.y) / DT;
+          vx = (dx - dy) * ISO_K;
+          vy = ((dx + dy) * ISO_K) / 2;
+        }
+        if (actor.elite.glow) this.eliteFx.pulseGlow(actor.elite.glow, this.world.time, mob.id);
+        if (!actor.frozen) this.eliteFx.drawElite(top, actor.elite, actor.sprite.x, actor.sprite.y, radius, BODY_PX * actor.scale, vx, vy, this.world.time, dt);
+      }
       // Ability telegraphs, the immune roar and the later-phase mark (mobs with abilities).
       const bodyHeight = BODY_PX * actor.scale;
       if (mob.phaseTransition) {
@@ -1519,6 +1612,7 @@ export class RunScene extends Phaser.Scene {
     this.combatFx.drawBursts(g, top, dt);
     this.skillFx.drawBursts(g, top, dt);
     this.bossFx.drawBursts(g, top, dt);
+    this.eliteFx.drawBursts(g, top, dt);
     this.supportFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y);
 
     for (const p of this.world.projectiles) {
@@ -1528,9 +1622,15 @@ export class RunScene extends Phaser.Scene {
       const color = p.owner === 'mob' ? MOB_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
       g.fillStyle(0x000000, 0.35).fillEllipse(s.x, s.y, p.radius * 2, p.radius);
       const mobBasic = p.owner === 'mob' && p.abilityId === undefined;
+      const thrownBone = p.owner === 'mob' && (p.abilityId !== undefined ? THROWN_BONE_ABILITIES.has(p.abilityId) : THROWN_BONE_MOBS.has(p.sourceId));
+      if (p.owner === 'mob' && this.firesWith(p.eliteModifier)) {
+        // A fiery elite's shots burn: a fire bolt, or a flaming halo round a thrown bone (its shape still reads).
+        this.eliteFx.drawFireBolt(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius, dt, thrownBone);
+        if (!thrownBone) continue;
+      }
       if (p.owner === 'mob' && p.abilityId !== undefined && BONE_SPEAR_ABILITIES.has(p.abilityId)) {
         this.bossFx.drawBoneSpear(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
-      } else if (p.owner === 'mob' && (p.abilityId !== undefined ? THROWN_BONE_ABILITIES.has(p.abilityId) : THROWN_BONE_MOBS.has(p.sourceId))) {
+      } else if (thrownBone) {
         // Spin on the render clock (smooth between fixed core ticks); the id offsets the start angle.
         const spin = (this.time.now / 1000) * THROWN_BONE_SPIN * Math.PI * 2 + p.id;
         this.bossFx.drawThrownBone(top, s.x, s.y - PROJECTILE_HEIGHT, p.radius, spin);
@@ -1561,9 +1661,11 @@ export class RunScene extends Phaser.Scene {
     const { x, y } = actor.sprite;
     const pulse = 0.5 + 0.5 * Math.sin(this.world.time * 4 + x * 0.01);
     const rx = radius * 2.6;
-    g.fillStyle(look.ring, 0.14 + 0.08 * pulse).fillEllipse(x, y, rx, rx / 2);
-    g.lineStyle(2, look.ring, 0.75 + 0.2 * pulse).strokeEllipse(x, y, rx, rx / 2);
-    g.lineStyle(1, look.ring, 0.45).strokeEllipse(x, y, rx * 1.25, rx * 0.625);
+    // An elite's ring takes its modifier's colour (the life bar stays the elite gold).
+    const ring = actor.elite ? eliteLook(actor.elite.modifier).color : look.ring;
+    g.fillStyle(ring, 0.14 + 0.08 * pulse).fillEllipse(x, y, rx, rx / 2);
+    g.lineStyle(2, ring, 0.75 + 0.2 * pulse).strokeEllipse(x, y, rx, rx / 2);
+    g.lineStyle(1, ring, 0.45).strokeEllipse(x, y, rx * 1.25, rx * 0.625);
     if (actor.rank !== 'elite') return;
     const w = 44;
     const h = 5;
@@ -1571,6 +1673,27 @@ export class RunScene extends Phaser.Scene {
     top.fillStyle(0x000000, 0.75).fillRect(x - w / 2 - 1, by - 1, w + 2, h + 2);
     top.fillStyle(0x3a0a08, 1).fillRect(x - w / 2, by, w, h);
     top.fillStyle(look.ring, 1).fillRect(x - w / 2, by, w * Phaser.Math.Clamp(life, 0, 1), h);
+    // Coloured edge on the bar and the modifier's name right above it.
+    if (actor.elite) {
+      top.lineStyle(1, ring, 0.9).strokeRect(x - w / 2 - 1.5, by - 1.5, w + 3, h + 3);
+      actor.elite.label.setPosition(x, by - 3);
+    }
+  }
+
+  /** An elite's modifier marks: its localized name (positioned with the life bar every frame) and the glow outline. */
+  private createEliteMark(actor: Actor, modifier: string): EliteMark {
+    const look = eliteLook(modifier);
+    const label = this.add
+      .text(actor.sprite.x, actor.sprite.y, eliteModifierName(modifier), { fontFamily: UI.bodyFont, fontStyle: 'bold', fontSize: `${UI.size.small}px`, color: look.css, stroke: '#000', strokeThickness: 4 })
+      .setOrigin(0.5, 1)
+      .setDepth(4001);
+    const def = eliteModifierDef(this.content, modifier);
+    return { modifier, fire: this.firesWith(modifier), fast: (def?.moveSpeed ?? 1) > 1, label, glow: this.eliteFx.addGlow(actor.sprite, modifier) };
+  }
+
+  /** The elite modifier converts its damage to fire (core data): fire looks for its projectiles, zones and swings. */
+  private firesWith(modifier: string | undefined): boolean {
+    return modifier !== undefined && eliteModifierDef(this.content, modifier)?.damageConversion?.to === 'fire';
   }
 
   /**
@@ -1673,7 +1796,7 @@ export class RunScene extends Phaser.Scene {
     const screen = toScreen(pos);
     const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
     // Damage over time numbers (ignite, bleed) sit a bit lower and to the side so they do not cover hit numbers.
-    const small = kind === 'dot' || kind === 'bleed';
+    const small = kind === 'dot' || kind === 'playerDot' || kind === 'bleed';
     const dx = small ? 14 + Math.random() * 10 : (Math.random() - 0.5) * 16;
     text
       .setText(String(small ? Math.max(1, Math.round(amount)) : Math.round(amount)))

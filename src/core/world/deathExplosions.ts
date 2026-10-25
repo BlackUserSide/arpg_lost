@@ -1,6 +1,6 @@
 // Death explosions (docs/design/passives-wheel.md: Погребальне вогнище, Розбиття). Hero-side only: the explosion
-// hits mobs. The elite «Вибуховий» (0.4) will need a hostile-side variant (target: the hero) and an ignite strength
-// owned by the explosion def instead of the hero's ignite mechanic; not implemented yet.
+// hits mobs. The elite «Вибуховий» is the hostile-side variant: a telegraphed hostile zone (EliteModifierDef.deathZone,
+// spawnDeathZone in eliteModifiers.ts), not an instant explosion, so the hero can step out.
 // Processed by removeDeadMobs: every mob that dies explodes at most once, explosion kills are queued and
 // processed in the same step, so chains are deterministic and always terminate (each mob dies once).
 

@@ -1,4 +1,4 @@
-import { applyDamageTaken, rollBaseDamage, scaleDamage, totalDamage, type BaseDamage } from '../combat/damage';
+import { applyDamageTaken, convertedDamage, rollBaseDamage, scaleDamage, totalDamage, type BaseDamage } from '../combat/damage';
 import { initialAbilityState, interruptCast, updateMobAbilities, updateMobPhase, updatePhaseTransition } from './abilities';
 import { applyDamage, resolveHit } from '../combat/hit';
 import type { Defences } from '../combat/mitigation';
@@ -9,6 +9,7 @@ import type { SupportData } from '../supports/types';
 import type { Content, MobDef, MobRank } from './content';
 import { counterAttack } from './actions';
 import { heroDeathExplosions } from './deathExplosions';
+import { applyHeroStatuses, eliteModifierDef, mobActionSpeedMultiplier, mobMoveSpeed, spawnDeathZone } from './eliteModifiers';
 import { gainKillXp } from './experience';
 import { decayStunBar, tickBleed, tickIgnite } from './statuses';
 import { resourceOnHeroHitTaken } from './resource';
@@ -58,11 +59,12 @@ export function updateMobs(ctx: Ctx, dt: number): void {
     // Busy with an ability (its start, wind-up or resolve step): the mob stands still, does not use its basic attack,
     // and the basic attack timer waits.
     if (def.abilities && updateMobAbilities(ctx, mob, def, target, speedFactor, dt)) continue;
-    mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor);
+    // Fast elites (actionSpeed) attack more often.
+    mob.attackTimer = Math.max(0, mob.attackTimer - dt * speedFactor * mobActionSpeedMultiplier(content, mob));
     const toTarget = normalize(sub(target.pos, mob.pos));
     if (toTarget.x !== 0 || toTarget.y !== 0) mob.facing = toTarget;
     const gap = distance(target.pos, mob.pos) - target.radius - mob.radius;
-    const maxStep = def.moveSpeed * speedFactor * dt;
+    const maxStep = mobMoveSpeed(content, def, mob) * speedFactor * dt;
 
     if (def.preferredRange !== undefined) {
       // Ranged: close in to preferred range, back off if the player gets too close.
@@ -91,10 +93,11 @@ export function updateMobs(ctx: Ctx, dt: number): void {
           hitIds: [],
           castModifiers: [],
           ...(mob.damageScale !== undefined ? { damageScale: mob.damageScale } : {}),
+          ...(mob.eliteModifier !== undefined ? { eliteModifier: mob.eliteModifier } : {}),
         });
       } else if (!target.decoy) {
         // A melee swing at a decoy does nothing (it has no life): the mob just wastes its attack.
-        hitPlayer(ctx, def, mob.damageScale ?? 1, mob);
+        hitPlayer(ctx, def, { damageScale: mob.damageScale, meleeAttacker: mob, eliteModifier: mob.eliteModifier });
       }
     }
   }
@@ -123,23 +126,33 @@ export function slowFraction(mob: MobState, content: Content): number {
   return Math.min(1, Math.max(0, slow, mob.auraSlow, freezeSlow, stunSlow));
 }
 
-/**
- * A mob attack lands on the hero. `damageScale`: the attacker's rank scaling (MobState.damageScale), applied to the
- * rolled base damage before mitigation. `meleeAttacker`: the attacking mob, for melee hits only (mob projectiles pass
- * nothing); a melee hit that the hero survives may trigger counterAttack against it.
- */
-export function hitPlayer(ctx: Ctx, mobDef: MobDef, damageScale = 1, meleeAttacker?: MobState): void {
-  damagePlayer(ctx, mobDef.attack.damage, mobDef.attack.critChance, damageScale, meleeAttacker);
+/** Where a hostile hit comes from (see damagePlayer). */
+export interface HostileHitSource {
+  /** The source's rank × area level scaling (MobState.damageScale / its snapshot); absent = 1. */
+  readonly damageScale?: number | undefined;
+  /** The attacking mob, for melee hits only: a melee hit the hero survives may trigger counterAttack against it. */
+  readonly meleeAttacker?: MobState | undefined;
+  /** The source's elite modifier (MobState.eliteModifier / its snapshot): damage conversion and hero statuses. */
+  readonly eliteModifier?: string | undefined;
+}
+
+/** A mob's basic attack lands on the hero (melee, or its projectile: pass the projectile's snapshots). */
+export function hitPlayer(ctx: Ctx, mobDef: MobDef, source: HostileHitSource = {}): void {
+  damagePlayer(ctx, mobDef.attack.damage, mobDef.attack.critChance, source);
 }
 
 /**
- * A hostile hit on the hero: `base` rolled, × damageScale, crit, mitigated by the hero's defences, then damage taken
- * modifiers. Returns false when nothing landed (hero dead or invulnerable).
+ * A hostile hit on the hero: `base` rolled, × damageScale, converted by the source's elite modifier (fiery: all fire),
+ * crit, mitigated by the hero's defences, then damage taken modifiers. If the hero survives: the modifier's hero
+ * statuses (onHitHero, chance rolled after the hit), resource from damage taken, then counterAttack (melee).
+ * Returns false when nothing landed (hero dead or invulnerable).
  */
-export function damagePlayer(ctx: Ctx, base: BaseDamage, critChance: number, damageScale = 1, meleeAttacker?: MobState): boolean {
+export function damagePlayer(ctx: Ctx, base: BaseDamage, critChance: number, source: HostileHitSource = {}): boolean {
   const { world, content, classDef, rng, events } = ctx;
   const player = world.player;
   if (player.dead || player.invulnerable > 0) return false;
+  const damageScale = source.damageScale ?? 1;
+  const mod = eliteModifierDef(content, source.eliteModifier);
   const defences: Defences = {
     armour: playerStat(classDef, player, 'armour'),
     resistances: {
@@ -149,7 +162,9 @@ export function damagePlayer(ctx: Ctx, base: BaseDamage, critChance: number, dam
     },
   };
   const rolled = rollBaseDamage(rng, base);
-  const damage = damageScale === 1 ? rolled : scaleDamage(rolled, damageScale);
+  const scaled = damageScale === 1 ? rolled : scaleDamage(rolled, damageScale);
+  // Converted after rolling, so a fiery elite draws the same numbers as its plain version.
+  const damage = mod?.damageConversion ? convertedDamage(scaled, mod.damageConversion) : scaled;
   const hit = resolveHit(
     rng,
     { damage, critChance, critMultiplier: content.combat.critMultiplierBase },
@@ -165,11 +180,15 @@ export function damagePlayer(ctx: Ctx, base: BaseDamage, critChance: number, dam
   if (result.isDead) {
     player.dead = true;
     player.motion = undefined;
+    // A dead hero does not keep burning (render reads player.ignite).
+    player.ignite = 0;
+    player.igniteDps = 0;
     events.push({ type: 'playerDeath' });
     return true;
   }
+  if (mod) applyHeroStatuses(ctx, mod, hit.raw);
   resourceOnHeroHitTaken(classDef, player, result.shieldLost + result.lifeLost);
-  if (meleeAttacker) counterAttack(ctx, meleeAttacker);
+  if (source.meleeAttacker) counterAttack(ctx, source.meleeAttacker);
   return true;
 }
 
@@ -222,6 +241,8 @@ export function removeDeadMobs(ctx: Ctx): void {
       if (loot && content.supports) dropSupport(ctx, loot, content.supports, mob, def);
     }
     queue.push(...heroDeathExplosions(ctx, mob));
+    // An exploding elite («Вибуховий») leaves its telegraphed death zone (hits the hero ~1 s later).
+    spawnDeathZone(ctx, mob);
     // Its minions die with it (designer decision 2026-10-24): ordinary deaths, still giving nothing.
     for (const minion of world.mobs) {
       if (minion.summonerId !== mob.id || minion.life <= 0) continue;
@@ -257,6 +278,11 @@ export interface MobSpawn {
   readonly radiusScale?: number;
   /** A minion raised by this mob (MobState.summonerId): it gives no rewards. */
   readonly summonerId?: number;
+  /**
+   * Elite modifier id (Content.eliteModifiers, rolled by the map run for elites only): MobState.eliteModifier; its
+   * life multiplier applies at spawn.
+   */
+  readonly eliteModifier?: string;
 }
 
 /** Body radius a spawn will have (MobDef.radius × MobSpawn.radiusScale); use it to place the spawn. */
@@ -267,12 +293,14 @@ export function spawnRadius(content: Content, spawn: MobSpawn): number {
 /**
  * Adds a fresh mob at `pos` (full life, no statuses) with a 'spawn' event. Returns it. Life and damage are the def's
  * × the spawn's rank scaling × the world's area level scaling (WorldState.mobScale), armour the def's × the area
- * level scaling, so waves, elites, the boss and minions raised by any mob all grow with the map level.
+ * level scaling, so waves, elites, the boss and minions raised by any mob all grow with the map level. An elite
+ * modifier (MobSpawn.eliteModifier) multiplies life too (fat).
  */
 export function spawnMob(world: WorldState, content: Content, spawn: MobSpawn, pos: Vec2, events: { push(event: WorldEvent): unknown }): MobState {
   const def = getMob(content, spawn.defId);
   const level = world.mobScale;
-  const life = def.life * (spawn.lifeScale ?? 1) * (level?.life ?? 1);
+  const modifier = eliteModifierDef(content, spawn.eliteModifier);
+  const life = def.life * (spawn.lifeScale ?? 1) * (modifier?.life ?? 1) * (level?.life ?? 1);
   const damageScale = (spawn.damageScale ?? 1) * (level?.damage ?? 1);
   // Armour grows with the area level only (designer decision 2026-10-25); ranks do not change it.
   const armourScale = level?.armour ?? 1;
@@ -301,6 +329,7 @@ export function spawnMob(world: WorldState, content: Content, spawn: MobSpawn, p
     ...(armourScale !== 1 ? { armour: def.armour * armourScale } : {}),
     ...(spawn.xpScale !== undefined ? { xpScale: spawn.xpScale } : {}),
     ...(spawn.summonerId !== undefined ? { summonerId: spawn.summonerId } : {}),
+    ...(modifier ? { eliteModifier: modifier.id } : {}),
     ...initialAbilityState(def),
   };
   world.mobs.push(mob);

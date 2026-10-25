@@ -41,10 +41,11 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
     const player = world.player;
     if (!player.dead && distance(p.pos, player.pos) <= p.radius + player.radius) {
       const def = getMob(content, p.sourceId);
-      if (p.abilityId === undefined) hitPlayer(ctx, def, p.damageScale ?? 1);
+      const source = { damageScale: p.damageScale, eliteModifier: p.eliteModifier };
+      if (p.abilityId === undefined) hitPlayer(ctx, def, source);
       else {
         const { damage, critChance } = abilityHit(def, p.abilityId);
-        damagePlayer(ctx, damage, critChance, p.damageScale ?? 1);
+        damagePlayer(ctx, damage, critChance, source);
       }
       return false;
     }

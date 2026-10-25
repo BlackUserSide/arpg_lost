@@ -17,6 +17,7 @@ export const contentKey = {
   specName: (id: string): string => `spec.${id}.name`,
   baseName: (id: string): string => `base.${id}.name`,
   mobName: (id: string): string => `mob.${id}.name`,
+  eliteModifierName: (id: string): string => `eliteModifier.${id}.name`,
   resource: (id: string, form: 'name' | 'gen' | 'acc'): string => `resource.${id}.${form}`,
   rareWord: (position: 'first' | 'second', word: string): string => `item.rare.${position}.${word}`,
 } as const;
@@ -29,6 +30,7 @@ export const supportDescription = (id: string): string => tx(contentKey.supportD
 export const specName = (id: string): string => tx(contentKey.specName(id), undefined, id);
 export const baseName = (id: string): string => tx(contentKey.baseName(id), undefined, id);
 export const mobName = (id: string): string => tx(contentKey.mobName(id), undefined, id);
+export const eliteModifierName = (id: string): string => tx(contentKey.eliteModifierName(id), undefined, id);
 
 /** A passive node's name; a class start node is named after its class. */
 export function passiveName(node: Pick<PassiveNodeDef, 'id' | 'type' | 'classId'>): string {
@@ -67,6 +69,7 @@ export function requiredContentKeys(content: Content, tree: PassiveTreeData, ite
     for (const form of ['name', 'gen', 'acc'] as const) keys.push(contentKey.resource(cls.resource.id, form));
   }
   for (const mob of Object.values(content.mobs)) keys.push(contentKey.mobName(mob.id));
+  for (const mod of Object.values(content.eliteModifiers ?? {})) keys.push(contentKey.eliteModifierName(mod.id));
   for (const node of Object.values(tree.nodes)) if (node.type !== 'start') keys.push(contentKey.passiveName(node.id));
   for (const spec of Object.values(tree.specs)) keys.push(contentKey.specName(spec.id));
   for (const base of Object.values(items.bases)) keys.push(contentKey.baseName(base.id));

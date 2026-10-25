@@ -98,6 +98,7 @@ locale falls back to English.
 | Hub | Hub | Хаб | Lager | Obóz |
 | Loot | Loot | Здобич | Beute | Łupy |
 | Elite / Boss | Elite / Boss | Еліта / бос | Elite / Boss | Elita / boss |
+| Elite modifiers (fast / fat / fiery / explosive) | Fast / Fat / Fiery / Explosive | Швидкий / Товстий / Вогняний / Вибуховий | Schnell / Massig / Feurig / Explosiv | Szybki / Gruby / Ognisty / Wybuchowy |
 | XP | XP | Досвід | EP | PD |
 | Level Up | Level Up | Новий рівень | Stufenaufstieg (Level = Stufe) | Nowy poziom |
 | Hero / Character | Hero | Герой | Held | Bohater |

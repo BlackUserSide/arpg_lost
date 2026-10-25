@@ -49,8 +49,8 @@ export interface StatusEffect {
 /**
  * An explosion when a mob dies: lifeFraction × the dead mob's max life as `damageType` damage to the enemies
  * around it (mitigated by their defences; no crit, not scaled by hero damage modifiers). Used by passive
- * death explosions (Pyre, Shatter). The elite «Вибуховий» (0.4) will need a hostile-side target (the hero) and
- * an ignite strength owned by the def; not supported yet.
+ * death explosions (Pyre, Shatter). The hostile-side variant (elite «Вибуховий») is EliteModifierDef.deathZone: a
+ * telegraphed hostile zone, so the hero can step out.
  */
 export interface DeathExplosionDef {
   readonly radius: number;
@@ -472,6 +472,57 @@ export interface GroundZonesAbilityDef extends MobAbilityBase, MobAbilityDamage 
 
 export type MobAbilityDef = ProjectileFanAbilityDef | NovaAbilityDef | SummonAbilityDef | GroundZonesAbilityDef;
 
+/**
+ * A status a hostile hit can put on the hero (EliteModifierDef.onHitHero). Only ignite today (see heroIgnite in
+ * eliteModifiers.ts): `magnitude` × the hit's damage (after crit, before the hero's defences) dealt as fire over
+ * `duration`, reduced by the hero's fire resistance and damage taken modifiers; strongest only, no stacking.
+ * Omit `chance` for every landed hit.
+ */
+export interface HeroStatusEffect {
+  readonly status: 'ignite';
+  readonly duration: number;
+  readonly magnitude: number;
+  readonly chance?: number;
+}
+
+/**
+ * A hostile ground zone left where the mob died (EliteModifierDef.deathZone): it appears as a telegraph
+ * (WorldState.hostileZones, 'hostileZoneSpawn' with source 'eliteDeath') and erupts `delay` seconds later, hitting
+ * the hero if inside (radius + hero radius) for `damage` × the dead mob's damageScale (rank × area level).
+ */
+export interface DeathZoneDef {
+  readonly radius: number;
+  readonly delay: number;
+  readonly damage: BaseDamage;
+  /** Default 0. */
+  readonly critChance?: number;
+}
+
+/**
+ * An elite modifier (docs/design/mobs.md «Еліти»): every elite of a map run gets exactly one, rolled from
+ * RunRules.elites.modifiers; it applies on top of the elite's rank scaling. Every field is optional and generic, so a
+ * new modifier is a data entry combining them. Bosses and minions never get one.
+ */
+export interface EliteModifierDef {
+  /** Also the key of its display name in the locale files (`eliteModifier.<id>.name`). */
+  readonly id: string;
+  /** Multiplier on life at spawn (on top of the rank and area level scaling). */
+  readonly life?: number;
+  /** Multiplier on movement speed. */
+  readonly moveSpeed?: number;
+  /**
+   * Multiplier on how fast the basic attack timer, ability cooldowns and the ability recovery run (1.5 = 50% more
+   * attacks / casts). Wind-ups (telegraphs) are not shortened.
+   */
+  readonly actionSpeed?: number;
+  /** Converts the damage of every hostile hit of the mob (attacks, projectiles, abilities, its zones) after rolling. */
+  readonly damageConversion?: DamageConversion;
+  /** Statuses every hostile hit of the mob that lands may put on the hero. */
+  readonly onHitHero?: readonly HeroStatusEffect[];
+  /** Hostile zone left where it died. */
+  readonly deathZone?: DeathZoneDef;
+}
+
 export interface ArenaDef {
   readonly width: number;
   readonly height: number;
@@ -496,4 +547,6 @@ export interface Content {
   readonly skillLevels?: SkillLevelData;
   /** Skill modifiers (docs/design/skill-modifiers.md). Absent: socketed supports do nothing and none drop. */
   readonly supports?: SupportData;
+  /** Elite modifiers by id (docs/design/mobs.md «Еліти»). Absent: no mob can have one. */
+  readonly eliteModifiers?: Readonly<Record<string, EliteModifierDef>>;
 }

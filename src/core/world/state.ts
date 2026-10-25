@@ -2,6 +2,7 @@ import { clamp, distance, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
 import type { Defences } from '../combat/mitigation';
 import type { PassiveMechanic } from '../passives/types';
+import type { BaseDamage } from '../combat/damage';
 import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
 import type { ActionDef, ClassDef, Content, MobAbilityKind, MobDef, MobRank, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
 import { resolveActions, type ActionSet } from '../skills/params';
@@ -146,6 +147,13 @@ export interface PlayerState {
   weapon: WeaponDef;
   buffs: Buff[];
   invulnerable: number;
+  /**
+   * Hero ignite (a fiery elite's hits, EliteModifierDef.onHitHero): remaining seconds (0 = not burning) and fire
+   * damage per second after the hero's fire resistance and damage taken modifiers (0 when not burning). Like mob
+   * ignite: strongest only, no stacking. See applyHeroIgnite / tickHeroIgnite (eliteModifiers.ts).
+   */
+  ignite: number;
+  igniteDps: number;
   motion: Motion | undefined;
   dead: boolean;
 }
@@ -251,6 +259,12 @@ export interface MobState {
    * supports, no kill count (designer decision 2026-10-24).
    */
   readonly summonerId?: number;
+  /**
+   * Elites only: id of their elite modifier (EliteModifierDef, Content.eliteModifiers; docs/design/mobs.md «Еліти»),
+   * rolled by the map run. Render: outline colour and the modifier name (`eliteModifier.<id>.name`) over the life bar.
+   * Never set on bosses or minions.
+   */
+  readonly eliteModifier?: string;
 }
 
 /**
@@ -295,6 +309,16 @@ export interface HostileZone {
   readonly total: number;
   /** The caster's MobState.damageScale when placed (absent = 1). */
   readonly damageScale?: number;
+  /** The caster's MobState.eliteModifier when placed: its damage conversion and hero statuses apply to the eruption. */
+  readonly eliteModifier?: string;
+  /**
+   * 'eliteDeath': left where an elite with a death zone died (EliteModifierDef.deathZone, «Вибуховий»); `abilityId`
+   * is then the modifier id and `damage` / `critChance` its own. Absent: placed by a groundZones ability.
+   */
+  readonly source?: 'eliteDeath';
+  /** Own hit (death zones); absent: the source ability's damage (abilityHit). */
+  readonly damage?: BaseDamage;
+  readonly critChance?: number;
 }
 
 export interface Projectile {
@@ -330,6 +354,8 @@ export interface Projectile {
    * ability's damage instead of the basic attack's. Render may pick the projectile's look by it.
    */
   readonly abilityId?: string;
+  /** Mob projectiles: the shooter's MobState.eliteModifier when fired (fiery: the hit is fire and may ignite the hero). */
+  readonly eliteModifier?: string;
 }
 
 export interface Trap {
@@ -484,7 +510,7 @@ export type WorldEvent =
   /** A hero trap vanished without exploding: the oldest one, removed because the active-trap cap was reached. */
   | { type: 'trapRemoved'; trapId: number; pos: Vec2; reason: 'limit' }
   /**
-   * A status was applied to (or refreshed on) a living mob; `duration` is its new remaining time. `source`
+   * A status was applied to (or refreshed on) a living mob, or (targetId PLAYER_ID, 'ignite' only) to the hero;`duration` is its new remaining time. `source`
    * 'stunBar': the stun of a full stun bar (omitted for statuses from hits).
    */
   | { type: 'status'; targetId: number; pos: Vec2; status: StatusId; duration: number; source?: 'stunBar'; stacks?: number }
@@ -492,7 +518,10 @@ export type WorldEvent =
   | { type: 'stunBar'; targetId: number; value: number }
   /** The hero retaliated (counterAttack) with `actionId` (the basic attack) at `targetId`; `facing` points at it. */
   | { type: 'counter'; actionId: string; targetId: number; facing: Vec2 }
-  /** Damage over time dealt this step (one event per mob per step; aggregate for damage numbers). */
+  /**
+   * Damage over time dealt this step (one event per mob per step; aggregate for damage numbers). targetId PLAYER_ID:
+   * the hero's own ignite (fiery elites).
+   */
   | { type: 'dot'; targetId: number; pos: Vec2; amount: number; status: StatusId }
   | { type: 'teleport'; from: Vec2; to: Vec2 }
   /** Mob `id` attacked; `decoyId` is set when its target was a decoy (not the hero). */
@@ -550,9 +579,21 @@ export type WorldEvent =
   /** A hero hit reached an immune mob (isImmune) and did nothing. */
   | { type: 'immune'; targetId: number; pos: Vec2 }
   /** A hostile zone appeared; it erupts `delay` seconds later. */
-  | { type: 'hostileZoneSpawn'; zoneId: number; sourceId: number; abilityId: string; pos: Vec2; radius: number; delay: number }
+  | {
+      type: 'hostileZoneSpawn';
+      zoneId: number;
+      sourceId: number;
+      abilityId: string;
+      pos: Vec2;
+      radius: number;
+      delay: number;
+      /** 'eliteDeath': an exploding elite's death zone (abilityId = its modifier id). */
+      source?: 'eliteDeath';
+      /** The source mob's elite modifier, if any. */
+      eliteModifier?: string;
+    }
   /** A hostile zone erupted and is gone; `hit`: the hero was inside and was hit. */
-  | { type: 'hostileZoneErupt'; zoneId: number; abilityId: string; pos: Vec2; radius: number; hit: boolean }
+  | { type: 'hostileZoneErupt'; zoneId: number; abilityId: string; pos: Vec2; radius: number; hit: boolean; source?: 'eliteDeath'; eliteModifier?: string }
   | { type: 'playerDeath' };
 
 /** Everything a system needs during one step. */

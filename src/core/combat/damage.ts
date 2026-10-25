@@ -57,6 +57,16 @@ export function computeDamage(
   return result;
 }
 
+/** A copy of `damage` with `fraction` (clamped to 0..1) of every other type moved into `to` (e.g. mob hits of a fiery elite). */
+export function convertedDamage(damage: DamageByType, conversion: { readonly to: DamageType; readonly fraction: number }): DamageByType {
+  const result: DamageByType = { ...damage };
+  const fraction = Math.min(1, Math.max(0, conversion.fraction));
+  if (fraction > 0) convertDamage(result, conversion.to, fraction);
+  // Fully converted types are dropped, so the result lists only the types the hit still deals.
+  for (const type of DAMAGE_TYPES) if (result[type] === 0 && damage[type] !== undefined && type !== conversion.to) delete result[type];
+  return result;
+}
+
 /** Moves `fraction` of every damage type other than `to` into `to` (in place). */
 function convertDamage(damage: DamageByType, to: DamageType, fraction: number): void {
   for (const type of DAMAGE_TYPES) {

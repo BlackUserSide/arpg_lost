@@ -544,6 +544,12 @@ export const de: LocaleTable = {
   'mob.gravedigger.name': 'Totengräber',
   'mob.cultist.name': 'Kultist-Beschwörer',
 
+  // ---- Content: elite modifiers (name over an elite's life bar) ----
+  'eliteModifier.fast.name': 'Schnell',
+  'eliteModifier.fat.name': 'Massig',
+  'eliteModifier.fiery.name': 'Feurig',
+  'eliteModifier.explosive.name': 'Explosiv',
+
   // ---- Content: supports ----
   'support.wider_swing.name': 'Weiter Schwung',
   'support.wider_swing.description': 'Breiterer Bogen und größere Trefferfläche, etwas weniger Schaden.',

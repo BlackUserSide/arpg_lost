@@ -1,7 +1,7 @@
 // Sanity of the map run data (src/data/maps.ts): every reference resolves and every point is reachable.
 import { describe, expect, it } from 'vitest';
 import { distance, type Vec2 } from '../core/math';
-import { mobLevelScaling, mobPoolAt } from '../core/run/run';
+import { eliteModifierPoolAt, mobLevelScaling, mobPoolAt } from '../core/run/run';
 import { content } from './index';
 import { mapsData } from './maps';
 
@@ -35,6 +35,26 @@ describe('map data', () => {
     expect(content.mobs[boss.mobId]).toBeDefined();
     for (const r of [waves.count, waves.mobs, elites.count]) expect(r.min).toBeLessThanOrEqual(r.max);
     expect(waves.mobPool.some((e) => (e.minMapLevel ?? 1) <= 1 && e.weight > 0)).toBe(true);
+  });
+
+  it('elite modifiers (mobs.md «Еліти»): fast / fat / fiery / explosive, all defined, available from map 1', () => {
+    const pool = mapsData.rules.elites.modifiers ?? [];
+    expect(pool.map((e) => e.id)).toEqual(['fast', 'fat', 'fiery', 'explosive']);
+    for (const e of pool) {
+      expect(content.eliteModifiers?.[e.id]?.id, e.id).toBe(e.id);
+      expect(e.weight, e.id).toBeGreaterThan(0);
+    }
+    expect(eliteModifierPoolAt(mapsData.rules, 1).map((e) => e.id)).toEqual(['fast', 'fat', 'fiery', 'explosive']);
+    for (const [id, def] of Object.entries(content.eliteModifiers ?? {})) expect(def.id).toBe(id);
+    // The explosion must be escapable: the slowest hero leaves the circle well within its delay.
+    const zone = content.eliteModifiers?.explosive?.deathZone;
+    if (!zone) throw new Error('explosive has no death zone');
+    const slowest = Math.min(...Object.values(content.classes).map((c) => c.baseStats.movementSpeed ?? 0));
+    const maxHeroRadius = Math.max(...Object.values(content.classes).map((c) => c.radius));
+    expect((zone.radius + maxHeroRadius) / slowest).toBeLessThan(zone.delay * 0.75);
+    // A fast elite never outruns the heroes (fastest mob × moveSpeed below the slowest hero).
+    const fastest = Math.max(...Object.values(content.mobs).filter((m) => !m.boss).map((m) => m.moveSpeed));
+    expect(fastest * (content.eliteModifiers?.fast?.moveSpeed ?? 1)).toBeLessThan(slowest);
   });
 
   it('a new mob type every 5 map levels (mobs.md 2026-10-25): ordinary mobs, unlocked at 5 / 10 / 15 / 20', () => {

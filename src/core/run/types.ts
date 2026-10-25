@@ -47,6 +47,15 @@ export interface MobPoolEntry {
   readonly minMapLevel?: number;
 }
 
+/** An elite modifier that can be rolled from `minMapLevel` on. */
+export interface EliteModifierPoolEntry {
+  /** Content.eliteModifiers key. */
+  readonly id: string;
+  readonly weight: number;
+  /** First map level it can roll on; absent = 1. */
+  readonly minMapLevel?: number;
+}
+
 /** How a rank changes an ordinary mob def (multipliers over MobDef life / attack damage / XP / body radius). */
 export interface RankScaling {
   readonly life: number;
@@ -86,6 +95,12 @@ export interface RunRules {
     /** Elites per combat room; each joins a random wave, its mob type from the wave pool. */
     readonly count: IntRange;
     readonly scaling: RankScaling;
+    /**
+     * Elite modifier pool (docs/design/mobs.md «Еліти»): every elite gets exactly one, picked by weight among the
+     * entries available on the map level (rollEliteModifier). Ids are Content.eliteModifiers keys. Absent or nothing
+     * available: elites have no modifier.
+     */
+    readonly modifiers?: readonly EliteModifierPoolEntry[];
   };
   readonly boss: {
     /** Mob def of the boss (the necromancer: its own MobDef with boss: true, rank scaling 1). */

@@ -106,11 +106,18 @@ export const mapsData: MapsData = {
       ],
     },
     elites: {
-      // Designer decision: 1–2 elites per room. Their modifiers (fast / fat / fiery / explosive) are package 4;
-      // until then an elite is its mob with more life, damage and XP. BALANCE-TBD.
+      // Designer decision: 1–2 elites per room, each with exactly 1 modifier on top of this rank scaling. BALANCE-TBD.
       count: { min: 1, max: 2 },
       // radius: matches the size render drew elites at before the body radius lived in core.
       scaling: { life: 4, damage: 1.5, xp: 5, radius: 1.3 },
+      // Modifier pool (defs: eliteModifiers.ts). PROPOSAL / BALANCE-TBD: all four equally likely from map 1;
+      // minMapLevel is there for later modifiers.
+      modifiers: [
+        { id: 'fast', weight: 1 },
+        { id: 'fat', weight: 1 },
+        { id: 'fiery', weight: 1 },
+        { id: 'explosive', weight: 1 },
+      ],
     },
     boss: {
       // The necromancer (mobs.md «Бос»): its def holds its real numbers, so the rank scaling is 1. It grows with the
