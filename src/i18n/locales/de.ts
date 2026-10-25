@@ -277,6 +277,7 @@ export const de: LocaleTable = {
   'cond.stationaryFor': 'Nach {seconds} s oder mehr Stillstand',
   'cond.lifeBelow': 'Solange Leben unter {pct} ist',
   'cond.soulsAtMost': 'Solange du höchstens {value} Seelen hast',
+  'cond.cheatDeathRecharging': 'Solange die Uhr sich aufzieht',
   'cond.targetHasStatus': 'Gegen {status} Gegner',
   'mech.bloodMagic.cost': 'Fertigkeiten kosten Leben statt {resGen} ({life} Leben pro 1 {resAcc})',
   'mech.bloodMagic.noResource': 'Max. {resGen} ist 0',
@@ -457,6 +458,9 @@ export const de: LocaleTable = {
   'hud.souls': 'Seelen',
   'hud.soulsReady': 'Bereit',
   'hud.soulsPenalty': '−{pct} Schaden',
+  'hud.clock': 'Letzter Augenblick',
+  'hud.clockReady': 'Bereit',
+  'hud.clockPenalty': '+{pct} erlittener Schaden',
   'arena.talents': 'Talente',
   'arena.talentsKey': 'Talente (P)',
   'arena.pause': 'Pause',
@@ -479,6 +483,7 @@ export const de: LocaleTable = {
   'arena.hintPause': 'Esc — weiter',
   'arena.hintRetry': 'R — nochmal   ·   Esc — zum Lager',
   'arena.levelUp': 'Stufenaufstieg',
+  'arena.lastMoment': 'Letzter Augenblick!',
   'arena.levelUpLine': 'Stufe {level}  ·  {restored}',
   'arena.restoredBoth': 'Leben und {resName} wiederhergestellt',
   'arena.restoredLife': 'Leben wiederhergestellt',
@@ -794,4 +799,7 @@ export const de: LocaleTable = {
   'unique.devourer_crown.name': 'Krone des Verschlingers',
   'unique.devourer_crown.effect':
     'Jeder Kill gewährt eine Seele (bis zu {max}). Bei {max} Seelen löst deine nächste schadensverursachende Fertigkeit zweimal aus (Echo), und die Seelen werden verbraucht. Ohne Seelen verursachst du {pct} weniger Schaden',
+  'unique.clock_last_moment.name': 'Uhr des Letzten Augenblicks',
+  'unique.clock_last_moment.effect':
+    'Ein tödlicher Treffer tötet dich nicht: Du behältst {life} Leben und die Zeit bleibt für Gegner {seconds} s lang stehen. Einmal alle {cooldown} s. Solange die Uhr sich aufzieht, erleidest du {pct} mehr Schaden',
 };

@@ -30,7 +30,9 @@ export type PassiveCondition =
   /** The hit's target has this status. */
   | { readonly kind: 'targetHasStatus'; readonly status: PassiveStatusId }
   /** The hero holds at most `value` souls (PlayerState.souls; the souls mechanic, Devourer's Crown). */
-  | { readonly kind: 'soulsAtMost'; readonly value: number };
+  | { readonly kind: 'soulsAtMost'; readonly value: number }
+  /** The hero's cheatDeath is recharging (PlayerState.cheatDeathCooldown > 0; Clock of the Last Moment). */
+  | { readonly kind: 'cheatDeathRecharging' };
 
 /** Statuses passives refer to (all implemented by combat). */
 export type PassiveStatusId = StatusId;
@@ -150,7 +152,16 @@ export type PassiveMechanic =
    * guaranteed echo, see updateEchoes; it replaces that use's Echo support roll). The souls are spent (back to 0) when
    * that echo fires, so the use and its echo both hit while the souls are held. Several sources: the first one counts.
    */
-  | { readonly kind: 'souls'; readonly max: number; readonly echoDelay: number; readonly echoFor: SupportCompatibility };
+  | { readonly kind: 'souls'; readonly max: number; readonly echoDelay: number; readonly echoFor: SupportCompatibility }
+  /**
+   * Cheat death (Clock of the Last Moment): a hit or damage over time that would kill the hero (life + ES pool at 0)
+   * leaves them at `life` instead (capped at max life; ES stays as the hit left it, i.e. empty), clears the hero's
+   * ignite and stops time for the enemies for `stopDuration` seconds (WorldState.timeStop: mobs, mob projectiles,
+   * hostile zones and wave spawns freeze; the hero acts normally). Then it recharges for `cooldown` seconds of world
+   * time (PlayerState.cheatDeathCooldown; not shortened by cooldown recovery); ready at the start of every run.
+   * Several sources: the first one counts. See cheatDeath.ts.
+   */
+  | { readonly kind: 'cheatDeath'; readonly life: number; readonly stopDuration: number; readonly cooldown: number };
 
 export type PassiveMechanicKind = PassiveMechanic['kind'];
 

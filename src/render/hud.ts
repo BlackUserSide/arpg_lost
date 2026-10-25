@@ -15,6 +15,7 @@ import {
 import { t, upper } from '../i18n';
 import { skillIcon } from './hudIcons';
 import { formatCost, resourceText } from './resourceText';
+import { ClockBadge } from './clockHud';
 import { SoulsBadge } from './soulsHud';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
@@ -181,6 +182,11 @@ export class Hud {
   private readonly resourceNote: Phaser.GameObjects.Text;
   /** Devourer's Crown souls counter above the resource orb (hidden without the souls mechanic). */
   private readonly souls: SoulsBadge;
+  /** Clock of the Last Moment recharge badge: in the souls spot, or stacked above the souls pill when both show. */
+  private readonly clock: ClockBadge;
+  /** Where the clock badge goes (bottom edge, screen px) alone / above the souls pill; which one it has now. */
+  private clockSpot = { x: 0, alone: 0, stacked: 0, maxRight: 0 };
+  private clockStacked: boolean | undefined;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -240,6 +246,7 @@ export class Hud {
     this.resourceNote = label(scene, 0, 0, t('hud.skillsCostLife'), 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
     this.resourceNote.setStroke('#000', 3);
     this.souls = new SoulsBadge(scene, DEPTH + 2);
+    this.clock = new ClockBadge(scene, DEPTH + 2);
   }
 
   layout(width: number, height: number): void {
@@ -275,7 +282,10 @@ export class Hud {
     });
     this.resourceNote.setPosition(this.resource.x, this.resource.y);
     // Souls pill above the resource name (its caption on top), clear of the skill bar on narrow phones.
-    this.souls.layout(this.resource.x, this.resourceName.y - this.resourceName.height - (compact ? 6 : 8), compact);
+    const soulsBottom = this.resourceName.y - this.resourceName.height - (compact ? 6 : 8);
+    this.souls.layout(this.resource.x, soulsBottom, compact);
+    this.clockSpot = { x: this.resource.x, alone: soulsBottom, stacked: soulsBottom - this.souls.stackHeight - (compact ? 2 : 4), maxRight: width - 4 };
+    this.clockStacked = undefined;
     // XP bar spans the skill bar, just above it; level number to its left.
     const barH = compact ? 6 : 8;
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - levelStrip - size - (compact ? 10 : 14) - barH, w: total, h: barH };
@@ -372,6 +382,13 @@ export class Hud {
     }
 
     this.souls.update(p, dt);
+    const stacked = this.souls.visible;
+    if (stacked !== this.clockStacked) {
+      this.clockStacked = stacked;
+      const spot = this.clockSpot;
+      this.clock.layout(spot.x, stacked ? spot.stacked : spot.alone, this.compact, spot.maxRight);
+    }
+    this.clock.update(p, dt);
     this.drawXp(world, dt);
     this.drawSkillLevels(world, dt);
     this.updateBuffs(world);

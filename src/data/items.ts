@@ -333,7 +333,7 @@ const uniqueList: UniqueDef[] = [
     id: 'devourer_crown',
     rarity: 'legendary',
     baseId: 'warded_helm',
-    // The only legendary for now: its weight only matters against later ones.
+    // Equal weights for all legendaries (designer default).
     weight: 100,
     stats: [
       uline({ stat: 'damage', kind: 'increased' }, pct([0.12, 0.16], [0.17, 0.23], [0.24, 0.31], [0.32, 0.4], [0.41, 0.5])),
@@ -345,6 +345,32 @@ const uniqueList: UniqueDef[] = [
       { kind: 'conditionalModifiers', condition: { kind: 'soulsAtMost', value: 0 }, modifiers: [{ stat: 'damage', kind: 'more', value: -0.3 }] },
     ],
     effectParams: { max: { path: 'mechanics.0.max' }, pct: { path: 'mechanics.1.modifiers.0.value', format: 'percent' } },
+  },
+  // L2 Clock of the Last Moment (amulet): a lethal hit or burn leaves the hero at 1 life (hero ignite cleared) and stops
+  // the enemies' time for 3 s (mobs, their projectiles and zones, wave spawns; the hero acts, the map timer runs);
+  // ready at run start, then once per 90 s. Cost: 20% more damage taken while it recharges (designer defaults
+  // 2026-10-25). Level 15 like the crown's base, so both legendaries share one gate; equal weights.
+  {
+    id: 'clock_last_moment',
+    rarity: 'legendary',
+    baseId: 'amber_amulet',
+    level: 15,
+    weight: 100,
+    stats: [
+      uline({ stat: 'life', kind: 'flat' }, int([12, 20], [21, 32], [33, 46], [47, 60], [61, 75])),
+      uline({ stat: 'damage', kind: 'increased' }, pct([0.12, 0.16], [0.17, 0.23], [0.24, 0.31], [0.32, 0.4], [0.41, 0.5])),
+      uline({ stat: 'cooldownRecovery', kind: 'increased' }, pct([0.05, 0.07], [0.08, 0.11], [0.12, 0.15], [0.16, 0.19], [0.2, 0.24])),
+    ],
+    mechanics: [
+      { kind: 'cheatDeath', life: 1, stopDuration: 3, cooldown: 90 },
+      { kind: 'conditionalModifiers', condition: { kind: 'cheatDeathRecharging' }, modifiers: [{ stat: 'damageTaken', kind: 'more', value: 0.2 }] },
+    ],
+    effectParams: {
+      life: { path: 'mechanics.0.life' },
+      seconds: { path: 'mechanics.0.stopDuration' },
+      cooldown: { path: 'mechanics.0.cooldown' },
+      pct: { path: 'mechanics.1.modifiers.0.value', format: 'percent' },
+    },
   },
 ];
 

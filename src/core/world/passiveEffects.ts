@@ -22,6 +22,7 @@
 // - lifeOnCrit: crits heal with an internal cooldown (lifeOnCritStats; damageMob in actions.ts).
 // - critAfterSkill: the next attack use after these skills crits (armsNextAttackCrit; performAction in actions.ts).
 // - souls: kills fill PlayerState.souls, a full count gives the next fitting use a free echo (souls.ts).
+// - cheatDeath: a lethal hit / DoT leaves the hero alive and stops the enemies' time (cheatDeath.ts).
 // Glass Cannon needs no mechanic: it is plain `more` damage / damageTaken modifiers.
 
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveStatusId } from '../passives/types';
@@ -29,7 +30,7 @@ import { computeStat } from '../stats/modifiers';
 import type { SkillChangeSet } from '../skills/types';
 import type { Modifier, StatId, Tag } from '../stats/types';
 
-type MechanicOf<K extends PassiveMechanicKind> = Extract<PassiveMechanic, { kind: K }>;
+export type MechanicOf<K extends PassiveMechanicKind> = Extract<PassiveMechanic, { kind: K }>;
 
 /** What stat derivation needs to know about the hero (PlayerState satisfies it; so can a hub character sheet). */
 export interface StatSource {
@@ -109,6 +110,8 @@ export interface ConditionState {
   readonly maxEnergyShield: number;
   /** Souls held (PlayerState.souls). */
   readonly souls: number;
+  /** Seconds until cheatDeath is ready again (PlayerState.cheatDeathCooldown); 0 = ready. */
+  readonly cheatDeathCooldown: number;
 }
 
 /**
@@ -142,6 +145,8 @@ export function conditionHolds(condition: PassiveCondition, state: ConditionStat
       return state.life < condition.fraction * state.maxLife;
     case 'soulsAtMost':
       return state.souls <= condition.value;
+    case 'cheatDeathRecharging':
+      return state.cheatDeathCooldown > 0;
     case 'targetHasStatus':
       return target ? targetHasStatus(target, condition.status) : false;
   }

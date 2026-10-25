@@ -16,6 +16,7 @@ import { updateProjectiles, updateTraps } from './projectiles';
 import { updateDecoys, updateZones } from './zones';
 import { updateHostileZones } from './abilities';
 import { tickHeroIgnite } from './eliteModifiers';
+import { advanceTimeStop, tickCheatDeathCooldown } from './cheatDeath';
 import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Bounds, type Ctx, type MobScale, type Obstacle, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
@@ -23,6 +24,7 @@ export { applyLeech, grantBonusXp, recoverLife, setLoadoutModifiers } from './ex
 export { spawnMob, spawnRadius, type MobSpawn } from './mobs';
 export { inCombat, maxResource, recoverResource } from './resource';
 export { canAfford } from './actions';
+export { cheatDeathReady, cheatDeathStats, timeStopped } from './cheatDeath';
 export { eliteModifierDef, mobMoveSpeed } from './eliteModifiers';
 export { supportChangeSets, supportFits, supportTier } from '../supports/rules';
 export type { SupportRef } from '../supports/types';
@@ -140,6 +142,7 @@ export function createWorld(
     critHealCooldown: 0,
     nextAttackCrit: false,
     souls: 0,
+    cheatDeathCooldown: 0,
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
@@ -166,6 +169,7 @@ export function createWorld(
     zones: [],
     decoys: [],
     hostileZones: [],
+    timeStop: 0,
     spawn: { timer: content.arena.spawn.firstDelay, wave: 0 },
     kills: 0,
     areaLevel,
@@ -175,7 +179,12 @@ export function createWorld(
   };
 }
 
-/** Advances the simulation by a fixed dt. Mutates `world`, returns what happened for the view. */
+/**
+ * Advances the simulation by a fixed dt. Mutates `world`, returns what happened for the view.
+ * Time stop (cheatDeath, WorldState.timeStop): it runs down first (so the step it ends in is a normal one); while it
+ * lasts the mob, mob projectile, hostile zone and spawner systems skip themselves (they check it live: a stop that
+ * starts mid-step freezes what comes after it); the hero, hero projectiles, traps, zones, decoys and mob deaths run.
+ */
 export function step(world: WorldState, input: PlayerInput, content: Content, dt: number): WorldEvent[] {
   const events: WorldEvent[] = [];
   world.time += dt;
@@ -184,6 +193,7 @@ export function step(world: WorldState, input: PlayerInput, content: Content, dt
   const rng = createRng(world.rngState);
   const ctx: Ctx = { world, content, classDef: getClass(content, world.player.classId), rng, events, input };
 
+  advanceTimeStop(ctx, dt);
   updatePlayer(ctx, dt);
   updateMobs(ctx, dt);
   updateProjectiles(ctx, dt);
@@ -210,6 +220,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   // Snap float leftovers (1 − 60 × 1/60) so a 1 s internal cooldown ends after exactly 60 steps.
   player.counterCooldown = player.counterCooldown - dt > TIME_EPSILON ? player.counterCooldown - dt : 0;
   player.critHealCooldown = player.critHealCooldown - dt > TIME_EPSILON ? player.critHealCooldown - dt : 0;
+  tickCheatDeathCooldown(player, dt);
 
   const maxLife = playerStat(classDef, player, 'life');
   const maxShield = playerStat(classDef, player, 'energyShield');
@@ -217,7 +228,7 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   player.energyShield = clamp(player.energyShield + playerStat(classDef, player, 'energyShieldRegen') * dt, 0, maxShield);
   tickResource(classDef, player, dt);
   decayLeech(classDef, player, dt);
-  // The hero's own ignite (fiery elites); a burn that kills ends the hero's step here.
+  // The hero's own ignite (fiery elites); a burn that kills ends the hero's step here (a cheated one does not).
   tickHeroIgnite(ctx, dt);
   if (player.dead) return;
 

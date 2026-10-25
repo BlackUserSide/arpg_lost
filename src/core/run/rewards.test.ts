@@ -169,14 +169,21 @@ describe('uniques and legendaries in the chest', () => {
     expect(got.legendaryId).toBeUndefined();
   });
 
-  it("real data: a boss kill on map 30 with the legendary roll won drops Devourer's Crown (6c), T1 lines", () => {
+  it('real data: a boss kill on map 30 with the legendary roll won drops one of the two legendaries, T1 lines', () => {
     const plan = planRunRewards(won(0.1, { mapLevel: 30 }), mapsData.rewards);
     expect(plan.legendary).toEqual({ itemLevel: 31, chance: 0.002 });
     expect(planRunRewards(won(0.1, { mapLevel: 29 }), mapsData.rewards).legendary).toBeUndefined();
     // A forced rng: every chance draw succeeds (the 1 / 500 legendary roll included); the rest stays seeded.
     const forced = { ...createRng(42), chance: (): boolean => true };
     const got = grantRunRewards(createProfile(), forced, plan, itemsData);
-    const crown = got.items.find((i) => i.id === got.legendaryId)!;
+    const legendary = got.items.find((i) => i.id === got.legendaryId)!;
+    // Seed 42 picks the Clock (6d); equal weights, so the crown is the other half.
+    expect(legendary).toMatchObject({ rarity: 'legendary', level: 31, baseId: 'amber_amulet', unique: { id: 'clock_last_moment' } });
+    expect(legendary.unique!.rolls.map((r) => r.tier)).toEqual([1, 1, 1]);
+    // With the crown alone in the pool the same roll drops the crown.
+    const crownOnly: ItemsData = { ...itemsData, uniques: Object.fromEntries(Object.entries(itemsData.uniques).filter(([id]) => id !== 'clock_last_moment')) };
+    const withCrown = grantRunRewards(createProfile(), { ...createRng(42), chance: (): boolean => true }, plan, crownOnly);
+    const crown = withCrown.items.find((i) => i.id === withCrown.legendaryId)!;
     expect(crown).toMatchObject({ rarity: 'legendary', level: 31, baseId: 'warded_helm', unique: { id: 'devourer_crown' } });
     expect(crown.unique!.rolls.map((r) => r.tier)).toEqual([1, 1, 1]);
     // The same rolls without the forced chance give no legendary.

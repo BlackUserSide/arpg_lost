@@ -146,3 +146,7 @@ A unique's drawback lines read `item.cost` ("Cost: …" / "Ціна: …"); the 
 | rift_ring | Rift Ring | Перстень Розлому | Ring des Risses | Pierścień Szczeliny |
 | devourer_crown (legendary) | Devourer's Crown | Корона Пожирача | Krone des Verschlingers | Korona Pożeracza |
 | Soul (crown resource) | Soul | Душа | Seele | Dusza |
+| clock_last_moment (legendary) | Clock of the Last Moment | Годинник Останньої Миті | Uhr des Letzten Augenblicks | Zegar Ostatniej Chwili |
+| Last Moment (clock name part) | Last Moment | Остання мить | Letzter Augenblick | Ostatnia chwila |
+| Time stop (clock effect) | Time stops | Час зупиняється | Die Zeit bleibt stehen | Czas się zatrzymuje |
+| "rewinding" (clock recharge) | rewinding | «заводиться» | sich aufziehen | nakręcać się |

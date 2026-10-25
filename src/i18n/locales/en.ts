@@ -276,6 +276,7 @@ export const en = {
   'cond.stationaryFor': 'While standing still for {seconds} s or longer',
   'cond.lifeBelow': 'While Life is below {pct}',
   'cond.soulsAtMost': 'While you have at most {value} Souls',
+  'cond.cheatDeathRecharging': 'While the Clock is rewinding',
   'cond.targetHasStatus': 'Against {status} enemies',
   'mech.bloodMagic.cost': 'Skills cost Life instead of {resGen} ({life} Life per 1 {resAcc})',
   'mech.bloodMagic.noResource': 'Maximum {resGen} is 0',
@@ -453,6 +454,9 @@ export const en = {
   'hud.souls': 'Souls',
   'hud.soulsReady': 'Ready',
   'hud.soulsPenalty': '−{pct} Damage',
+  'hud.clock': 'Last Moment',
+  'hud.clockReady': 'Ready',
+  'hud.clockPenalty': '+{pct} damage taken',
   'arena.talents': 'Talents',
   'arena.talentsKey': 'Talents (P)',
   'arena.pause': 'Pause',
@@ -475,6 +479,7 @@ export const en = {
   'arena.hintPause': 'Esc — resume',
   'arena.hintRetry': 'R — try again   ·   Esc — to the hub',
   'arena.levelUp': 'Level Up',
+  'arena.lastMoment': 'Last Moment!',
   'arena.levelUpLine': 'Level {level}  ·  {restored}',
   'arena.restoredBoth': 'Life and {resName} restored',
   'arena.restoredLife': 'Life restored',
@@ -791,4 +796,7 @@ export const en = {
   'unique.devourer_crown.name': "Devourer's Crown",
   'unique.devourer_crown.effect':
     'Every kill grants a Soul (up to {max}). At {max} Souls your next damaging skill fires twice (echo) and the Souls are spent. Without Souls you deal {pct} less Damage',
+  'unique.clock_last_moment.name': 'Clock of the Last Moment',
+  'unique.clock_last_moment.effect':
+    'A lethal hit does not kill you: you are left at {life} Life and time stops for enemies for {seconds} s. Once every {cooldown} s. While the Clock is rewinding you take {pct} more Damage',
 } satisfies Record<string, Message>;

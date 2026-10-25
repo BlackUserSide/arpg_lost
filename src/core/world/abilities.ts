@@ -26,6 +26,7 @@ import type { BaseDamage } from '../combat/damage';
 import type { MobAbilitiesDef, MobAbilityDef, MobDef } from './content';
 import { damagePlayer, spawnMob } from './mobs';
 import { mobActionSpeedMultiplier } from './eliteModifiers';
+import { timeStopped } from './cheatDeath';
 import { clampToArena, getMob, type Ctx, type HostileZone, type MobState, type WorldState } from './state';
 import type { MobTarget } from './zones';
 
@@ -284,6 +285,8 @@ export function updateHostileZones(ctx: Ctx, dt: number): void {
   if (world.hostileZones.length === 0) return;
   const erupted: number[] = [];
   for (const zone of world.hostileZones) {
+    // Time stop (cheatDeath): the zones wait; a stop started by an earlier zone this step holds the rest at once.
+    if (timeStopped(world)) break;
     zone.remaining = snap(zone.remaining - dt);
     if (zone.remaining > 0) continue;
     erupted.push(zone.id);

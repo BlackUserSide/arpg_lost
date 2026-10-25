@@ -739,3 +739,76 @@ describe('souls (Devourer\'s Crown) across rooms', () => {
     expect(run.world.player.souls).toBe(30);
   });
 });
+
+describe('time stop (Clock of the Last Moment) in a map run', () => {
+  const clock: PassiveMechanic[] = [
+    { kind: 'cheatDeath', life: 1, stopDuration: 3, cooldown: 90 },
+    { kind: 'conditionalModifiers', condition: { kind: 'cheatDeathRecharging' }, modifiers: [{ stat: 'damageTaken', kind: 'more', value: 0.2 }] },
+  ];
+
+  it('a lethal hit does not fail the run; the next wave waits out the stop while the map timer runs on', () => {
+    const run = createRun(content, maps, 'hero', 7, { mechanics: clock }, 1);
+    stepUntil(run, 'waveStart');
+    expect(run.wavesSpawned).toBe(1);
+    const hero = run.world.player;
+    spawnMob(run.world, content, { defId: 'biter' }, vec(hero.pos.x + 20, hero.pos.y), []);
+    const bitten = steps(run, 1);
+    expect(bitten.some((e) => e.type === 'cheatDeath')).toBe(true);
+    expect(bitten.some((e) => e.type === 'runFailed')).toBe(false);
+    expect(run.status).toBe('active');
+    expect(hero.life).toBe(1);
+
+    // The hero clears the room during the stop: the second wave's timer does not run, the map timer does.
+    killAll(run);
+    const elapsed = run.elapsed;
+    const during = steps(run, 179);
+    expect(run.world.mobs).toEqual([]);
+    expect(during.some((e) => e.type === 'waveStart')).toBe(false);
+    expect(run.waveTimer).toBe(maps.rules.waves.nextDelay);
+    expect(run.elapsed).toBeCloseTo(elapsed + 179 * DT, 9);
+    expect(run.phase).toBe('waves');
+
+    // The stop ends at the start of the next step; the 1 s wave delay then runs as usual (60 steps).
+    const ended = steps(run, 59);
+    expect(ended.filter((e) => e.type === 'timeStopEnd')).toHaveLength(1);
+    expect(ended.some((e) => e.type === 'waveStart')).toBe(false);
+    expect(steps(run, 1).some((e) => e.type === 'waveStart')).toBe(true);
+    expect(run.wavesSpawned).toBe(2);
+  });
+
+  it('a stop carries through the door: the first wave of the next room waits for it', () => {
+    const run = createRun(content, maps, 'hero', 7, { mechanics: clock }, 1);
+    clearRoom(run);
+    run.world.timeStop = 3;
+    // The door step is the first step of the stop (it runs down by one dt, then the room changes).
+    walkThroughDoor(run);
+    expect(run.room).toBe(1);
+    expect(run.world.timeStop).toBeCloseTo(3 - DT, 9);
+    expect(steps(run, 178).some((e) => e.type === 'waveStart')).toBe(false);
+    expect(run.waveTimer).toBe(maps.rules.waves.firstDelay);
+    // The stop ends at the start of the next step; then the 0.5 s first delay runs (30 steps).
+    const ended = steps(run, 29);
+    expect(ended.filter((e) => e.type === 'timeStopEnd')).toHaveLength(1);
+    expect(ended.some((e) => e.type === 'waveStart')).toBe(false);
+    expect(steps(run, 1).some((e) => e.type === 'waveStart')).toBe(true);
+  });
+
+  it('the boss summon waits out a stop too', () => {
+    const run = createRun(content, maps, 'hero', 7, { mechanics: clock }, 1);
+    for (let room = 0; room < maps.rules.combatRooms; room++) {
+      clearRoom(run);
+      walkThroughDoor(run);
+    }
+    expect(run.phase).toBe('altar');
+    const altar = (currentTemplate(run, maps) as { altar: { x: number; y: number } }).altar;
+    run.world.player.pos = vec(altar.x, altar.y);
+    steps(run, 1, interact);
+    expect(run.phase).toBe('summoning');
+    run.world.timeStop = 3;
+    expect(steps(run, 179).some((e) => e.type === 'bossSpawned')).toBe(false);
+    expect(run.waveTimer).toBe(maps.rules.boss.spawnDelay);
+    // 0.5 s summon = 30 steps once the stop is over (it ends at the start of the first of them).
+    expect(steps(run, 29).some((e) => e.type === 'bossSpawned')).toBe(false);
+    expect(steps(run, 1).some((e) => e.type === 'bossSpawned')).toBe(true);
+  });
+});
