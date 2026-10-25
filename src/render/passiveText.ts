@@ -155,6 +155,8 @@ export function formatMechanic(m: PassiveMechanic, resourceId?: string): string[
     case 'critAfterSkill':
     case 'souls':
     case 'cheatDeath':
+    case 'raiseAllies':
+    case 'allyOnlyResource':
       return [];
   }
 }

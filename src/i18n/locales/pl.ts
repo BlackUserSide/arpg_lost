@@ -484,6 +484,7 @@ export const pl: LocaleTable = {
   'hud.clock': 'Ostatnia chwila',
   'hud.clockReady': 'Gotowe',
   'hud.clockPenalty': '+{pct} otrzymanych obrażeń',
+  'hud.allies': 'Szkielety',
   'hud.potion': 'Mikstura życia',
   'hud.potionHeal': 'Leczy {amount} życia przez {seconds} s',
   'hud.potionHealShield': 'Odnawia {amount} tarczy energetycznej przez {seconds} s',
@@ -517,6 +518,7 @@ export const pl: LocaleTable = {
   'arena.lastMoment': 'Ostatnia chwila!',
   'arena.levelUpLine': 'Poziom {level}  ·  {restored}',
   'arena.restoredBoth': 'Przywrócono życie i {resAcc}',
+  'arena.allyResource': '+{amount} {resGen}',
   'arena.restoredLife': 'Przywrócono życie',
   // ---- Map run ----
   'run.map': 'Mapa {map}',
@@ -846,4 +848,7 @@ export const pl: LocaleTable = {
   'unique.clock_last_moment.name': 'Zegar Ostatniej Chwili',
   'unique.clock_last_moment.effect':
     'Śmiertelne trafienie cię nie zabija: zostajesz z {life} pkt. życia, a czas dla wrogów zatrzymuje się na {seconds} s. Raz na {cooldown} s. Gdy zegar się nakręca, otrzymujesz o {pct} więcej obrażeń',
+  'unique.abyss_eye.name': 'Oko Otchłani',
+  'unique.abyss_eye.effect':
+    'Zabici wrogowie (poza bossami) powstają jako twoje szkielety na {seconds} s, maksymalnie {max} naraz. Wrogowie atakują szkielety. Twój zasób nie regeneruje się i nie rośnie od trafień ani otrzymanych obrażeń: każde zabójstwo przez twoje szkielety przywraca {pct} zasobu',
 };

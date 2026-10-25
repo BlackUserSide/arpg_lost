@@ -87,10 +87,10 @@ describe('unique generation', () => {
     expect(ids('legendary', 1)).toEqual(['test_legend']);
     const realUniques = Object.values(itemsData.uniques).filter((u) => u.rarity === 'unique').map((u) => u.id);
     expect(ids('unique', 1)).toEqual([...realUniques, 'test_ring']);
-    // The real legendaries (6c: Devourer's Crown on a level-15 helmet base; 6d: the Clock on an amulet, gated at 15
-    // too) never enter the unique pool.
-    expect(uniquePool(itemsData, 'legendary', 99).map((u) => u.id)).toEqual(['devourer_crown', 'clock_last_moment']);
-    expect(uniquePool(itemsData, 'legendary', 15).map((u) => u.id)).toEqual(['devourer_crown', 'clock_last_moment']);
+    // The real legendaries (6c: Devourer's Crown on a level-15 helmet base; 6d: the Clock and 6e: the Eye on amulets,
+    // gated at 15 too) never enter the unique pool.
+    expect(uniquePool(itemsData, 'legendary', 99).map((u) => u.id)).toEqual(['devourer_crown', 'clock_last_moment', 'abyss_eye']);
+    expect(uniquePool(itemsData, 'legendary', 15).map((u) => u.id)).toEqual(['devourer_crown', 'clock_last_moment', 'abyss_eye']);
     expect(uniquePool(itemsData, 'legendary', 14)).toEqual([]);
   });
 });
@@ -119,7 +119,7 @@ describe('unique drops', () => {
     // Without a slot: every non-weapon unique stays, only the other classes' weapons go.
     const all = uniquePool(itemsData, 'unique', 30).map((u) => u.id);
     expect(uniquePool(itemsData, 'unique', 30, undefined, 'wand').map((u) => u.id)).toEqual(all.filter((id) => id !== 'splitter' && id !== 'barrow_reaper'));
-    expect(uniquePool(itemsData, 'legendary', 30, undefined, 'sword').map((u) => u.id)).toEqual(['devourer_crown', 'clock_last_moment']);
+    expect(uniquePool(itemsData, 'legendary', 30, undefined, 'sword').map((u) => u.id)).toEqual(['devourer_crown', 'clock_last_moment', 'abyss_eye']);
 
     // A unique weapon roll for a mage: always the wand; with no wand unique the item becomes rare.
     for (let seed = 0; seed < 30; seed++) {

@@ -6,7 +6,7 @@ import { mitigate } from '../combat/mitigation';
 import { distance, type Vec2 } from '../math';
 import type { Modifier } from '../stats/types';
 import type { ActionDef, SelfEffect } from './content';
-import { allModifiers, getMob, isImmune, mobDefences, type Ctx, type Decoy, type GroundZone, type MobState, type WorldState } from './state';
+import { allModifiers, getMob, isImmune, mobDefences, type Ally, type Ctx, type Decoy, type GroundZone, type MobState, type PlayerState, type WorldState } from './state';
 import { applyStatus, conditionTarget, updateAuraSlows } from './statuses';
 
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
@@ -137,19 +137,37 @@ export function updateDecoys(ctx: Ctx, dt: number): void {
   for (const decoyId of expired) events.push({ type: 'decoyExpire', decoyId });
 }
 
-/** What a mob chases and attacks: the hero, or a decoy taunting it. */
-export interface MobTarget {
+/** A decoy as a mob's target. */
+export interface DecoyTarget {
   readonly pos: Vec2;
   readonly radius: number;
-  /** Set when the target is a decoy. */
-  readonly decoy?: Decoy;
+  readonly decoy: Decoy;
+}
+
+/**
+ * What a mob chases and attacks: the hero itself, a raised ally itself (Ally.kind 'ally'; no wrapper, so picking one
+ * allocates nothing), or a decoy taunting it. Read them with targetDecoy / targetAlly.
+ */
+export type MobTarget = PlayerState | Ally | DecoyTarget;
+
+/** The decoy a mob targets, if it targets one. */
+export function targetDecoy(target: MobTarget): Decoy | undefined {
+  return 'decoy' in target ? target.decoy : undefined;
+}
+
+/** The raised ally a mob targets, if it targets one. */
+export function targetAlly(target: MobTarget): Ally | undefined {
+  return 'kind' in target && target.kind === 'ally' ? target : undefined;
 }
 
 /**
  * The mob's target: the closest decoy whose tauntRadius reaches the mob (centre distance; ties: lower id), else
- * the hero. Bosses (`isBoss`) are taunted only while the decoy's bossTauntRemaining > 0.
+ * the closest of the hero and the living allies (centre distance; ties: the hero, then the older ally). Bosses
+ * (`isBoss`) are taunted by a decoy only while its bossTauntRemaining > 0, and never pick allies (they keep to the
+ * hero; their area attacks still hurt allies caught in them).
  */
 // Bosses are taunted, but only for the first bossTauntDuration seconds (designer decision 2026-10-23).
+// Allies (Eye of the Abyss, designer 2026-10-26): enemies hit the skeletons, which draw them off the hero.
 export function mobTarget(world: WorldState, mob: MobState, isBoss = false): MobTarget {
   let best: Decoy | undefined;
   let bestDist = Infinity;
@@ -163,6 +181,19 @@ export function mobTarget(world: WorldState, mob: MobState, isBoss = false): Mob
     }
   }
   if (best) return { pos: best.pos, radius: best.radius, decoy: best };
+  if (!isBoss && world.allies.length > 0) {
+    let ally: Ally | undefined;
+    let allyDist = distance(world.player.pos, mob.pos);
+    for (const a of world.allies) {
+      if (a.life <= 0) continue;
+      const d = distance(a.pos, mob.pos);
+      if (d < allyDist) {
+        ally = a;
+        allyDist = d;
+      }
+    }
+    if (ally) return ally;
+  }
   // The hero itself (pos + radius), no per-step allocation.
   return world.player;
 }

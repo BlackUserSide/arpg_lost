@@ -20,6 +20,7 @@ const EXTRA_PARAMS: Readonly<Record<string, readonly string[]>> = {
   'mod.addedDamage': ['sign'],
   'mech.deathExplosion': ['statusAcc'],
   'arena.restoredBoth': ['resAcc'],
+  'arena.allyResource': ['resGen'],
   'unit.targets': ['count'],
   'supportLine.projectiles': ['count'],
 };

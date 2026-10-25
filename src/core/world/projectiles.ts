@@ -7,6 +7,7 @@ import { damagePlayer, hitPlayer } from './mobs';
 import { abilityHit } from './abilities';
 import { distanceDamageModifier } from './passiveEffects';
 import { timeStopped } from './cheatDeath';
+import { allyAt, damageAlly } from './allies';
 import { getMob, insideArena, type Ctx, type Projectile } from './state';
 
 
@@ -42,6 +43,13 @@ function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
   if (p.owner === 'mob') {
     // A decoy in the way absorbs the shot (whoever it was aimed at).
     if (world.decoys.some((d) => distance(p.pos, d.pos) <= p.radius + d.radius)) return false;
+    // A raised ally in the way takes the shot (whoever it was aimed at): the skeletons body-block for the hero.
+    const ally = allyAt(world, p.pos, p.radius);
+    if (ally) {
+      const { damage, critChance } = p.abilityId === undefined ? getMob(content, p.sourceId).attack : abilityHit(getMob(content, p.sourceId), p.abilityId);
+      damageAlly(ctx, ally, damage, critChance, { damageScale: p.damageScale, eliteModifier: p.eliteModifier });
+      return false;
+    }
     const player = world.player;
     if (!player.dead && distance(p.pos, player.pos) <= p.radius + player.radius) {
       const def = getMob(content, p.sourceId);

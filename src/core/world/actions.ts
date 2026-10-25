@@ -7,7 +7,7 @@ import { applyLeech, recoverLife } from './experience';
 import { actionReady, spendCharge } from './charges';
 import { actionCost, armsNextAttackCrit, canPay, counterAttackStats, critStats, lifeOnCritStats, lifeRecoveryPool } from './passiveEffects';
 import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './statuses';
-import { recoverResource, resourceOnHeroHit, startResourceUse } from './resource';
+import { ownResourceGainsBlocked, recoverResource, resourceOnHeroHit, startResourceUse } from './resource';
 import { soulEchoDelay, spendSouls } from './souls';
 import { spawnDecoy, spawnZone } from './zones';
 import type { DamageType, Modifier } from '../stats/types';
@@ -560,7 +560,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
     events.push({ type: 'hit', targetId: mob.id, pos: mob.pos, amount: hit.total, isCrit: hit.isCrit });
     applyLeech(classDef, world.player, removed, action.leech ?? 0);
     resourceOnHeroHit(classDef, world.player, action);
-    if (action.resourcePerHit) recoverResource(classDef, world.player, action.resourcePerHit);
+    if (action.resourcePerHit && !ownResourceGainsBlocked(world.player)) recoverResource(classDef, world.player, action.resourcePerHit);
     if (hit.isCrit) critHeal(ctx);
     raw = hit.raw;
   }

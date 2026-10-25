@@ -22,6 +22,12 @@ import {
 
 export const PLAYER_ID = 0;
 
+/**
+ * A melee body (mob or raised ally) walks until its gap to the target is within this fraction of its attack range,
+ * so it stops a little inside its reach. Structural, not balance.
+ */
+export const MELEE_APPROACH = 0.8;
+
 export interface Buff {
   readonly id: string;
   readonly modifiers: readonly Modifier[];
@@ -307,6 +313,43 @@ export interface MobState {
    * Never set on bosses or minions.
    */
   readonly eliteModifier?: string;
+  /**
+   * 'ally': the killing blow came from a raised ally (raiseAllies, allies.ts); set by the ally hit that brought life to
+   * 0 or below. The kill restores class resource (resourcePerKill) and otherwise counts like any kill.
+   */
+  killedBy?: 'ally';
+}
+
+/**
+ * A raised ally (raiseAllies mechanic, Eye of the Abyss; allies.ts): a hero-side copy of a mob def that fights the
+ * mobs for a while. Enemies target it like the hero (except bosses), so it has life and can die. Plain JSON.
+ */
+export interface Ally {
+  /** Discriminates an ally from the hero / a decoy as a mob's target (MobTarget) without wrapping it. */
+  readonly kind: 'ally';
+  readonly id: number;
+  /** Mob def it copies (attack, radius, defences); render draws it as an ally version of that mob. */
+  readonly defId: string;
+  pos: Vec2;
+  facing: Vec2;
+  readonly radius: number;
+  life: number;
+  /** Def life × lifeMultiplier × the area's mob life scale (WorldState.mobScale). */
+  readonly maxLife: number;
+  /** Multiplier on its def attack damage: damageMultiplier × the area's mob damage scale. */
+  readonly damageScale: number;
+  /** Armour against enemy hits: def armour × the area's armour scale. Resistances: the def's. */
+  readonly armour: number;
+  /** Movement speed, units per second (def moveSpeed × moveSpeedMultiplier). */
+  readonly moveSpeed: number;
+  /** AI ranges locked at raise time (the mechanic's leashRadius / followDistance). */
+  readonly leashRadius: number;
+  readonly followDistance: number;
+  /** Seconds left before it crumbles ('allyExpire' timeout); `duration` = its full lifetime. */
+  remaining: number;
+  readonly duration: number;
+  /** Seconds until its next attack (def attack interval); 0 = ready. */
+  attackTimer: number;
 }
 
 /**
@@ -503,11 +546,13 @@ export interface WorldState {
   decoys: Decoy[];
   /** Hostile ground zones waiting to erupt (mob abilities), in placement order. */
   hostileZones: HostileZone[];
+  /** Raised allies (raiseAllies mechanic), oldest first; dead ones are removed later in the step they die. */
+  allies: Ally[];
   /**
    * Seconds left of a time stop (cheatDeath): while > 0 the enemies' time stands still: mobs (movement, attacks,
    * casts, ability and phase timers, statuses and DoTs on them, knockback), mob projectiles, hostile zones, the arena
-   * spawner and a map run's wave / boss summon timers. The hero, hero projectiles, traps, hero zones, decoys and mob
-   * deaths keep going; so does the run timer. 0 = time runs. Render: freeze mob animations, tint the scene.
+   * spawner and a map run's wave / boss summon timers. The hero, hero projectiles, traps, hero zones, decoys, allies
+   * and mob deaths keep going; so does the run timer. 0 = time runs. Render: freeze mob animations, tint the scene.
    */
   timeStop: number;
   spawn:{ timer: number; wave: number };
@@ -589,10 +634,26 @@ export type WorldEvent =
   | { type: 'critHeal'; amount: number; pos: Vec2 }
   /** A use of `actionId` cost `amount` life (ActionDef.lifeCostFraction: Rift Ring), on top of its resource cost. */
   | { type: 'lifeCost'; actionId: string; amount: number; pos: Vec2 }
-  /** Mob `id` attacked; `decoyId` is set when its target was a decoy (not the hero). */
-  | { type: 'mobAttack'; id: number; decoyId?: number }
-  /** `source` 'zone': a ground zone damage tick (`zoneId`); omitted for ordinary hits. */
-  | { type: 'hit'; targetId: number; pos: Vec2; amount: number; isCrit: boolean; source?: 'zone'; zoneId?: number }
+  /** Mob `id` attacked; `decoyId` / `allyId` is set when its target was a decoy / an ally (not the hero). */
+  | { type: 'mobAttack'; id: number; decoyId?: number; allyId?: number }
+  /**
+   * `source` 'zone': a ground zone damage tick (`zoneId`); 'ally': an ally's melee hit on a mob (`allyId`); omitted for
+   * ordinary hits.
+   */
+  | { type: 'hit'; targetId: number; pos: Vec2; amount: number; isCrit: boolean; source?: 'zone' | 'ally'; zoneId?: number; allyId?: number }
+  /**
+   * A dead mob (`mobId`, at `pos`) rose as ally `allyId` of def `defId` (raiseAllies) for `duration` seconds with
+   * `life` life. An 'allyExpire' with reason 'cap' for the oldest ally comes right before it when the cap was full.
+   */
+  | { type: 'allySpawn'; allyId: number; mobId: number; defId: string; pos: Vec2; duration: number; life: number }
+  /** Ally `allyId` swung at mob `targetId` (its 'hit' event with source 'ally' follows); `facing` points at it. */
+  | { type: 'allyAttack'; allyId: number; targetId: number; facing: Vec2 }
+  /** An enemy hit (melee, projectile, nova, zone) damaged ally `allyId` by `amount`. */
+  | { type: 'allyHit'; allyId: number; pos: Vec2; amount: number; isCrit: boolean }
+  /** Ally `allyId` crumbled at `pos`: its time ran out, enemies killed it, or a newer ally pushed it over the cap. */
+  | { type: 'allyExpire'; allyId: number; pos: Vec2; reason: 'timeout' | 'killed' | 'cap' }
+  /** An ally's killing blow on mob `mobId` restored `resource` class resource (raiseAllies resourcePerKill; may be 0 at max). */
+  | { type: 'allyKill'; mobId: number; pos: Vec2; resource: number }
   /** A ground zone appeared; it lasts `duration` seconds (see GroundZone). */
   | { type: 'zoneSpawn'; zoneId: number; kind: string; actionId: string; pos: Vec2; radius: number; duration: number }
   | { type: 'zoneExpire'; zoneId: number }

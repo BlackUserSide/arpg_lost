@@ -211,6 +211,8 @@ function enterRoom(run: RunState, maps: MapsData, index: number, events: RunStep
   world.zones = [];
   world.decoys = [];
   world.hostileZones = [];
+  // Raised allies stay behind (Eye of the Abyss): the next room starts without them.
+  world.allies = [];
   world.player.echoes = [];
   world.player.motion = undefined;
   world.player.pos = vec(t.entry.x, t.entry.y);

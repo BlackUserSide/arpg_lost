@@ -465,6 +465,7 @@ export const de: LocaleTable = {
   'hud.clock': 'Letzter Augenblick',
   'hud.clockReady': 'Bereit',
   'hud.clockPenalty': '+{pct} erlittener Schaden',
+  'hud.allies': 'Skelette',
   'hud.potion': 'Lebenstrank',
   'hud.potionHeal': 'Heilt {amount} Leben über {seconds} s',
   'hud.potionHealShield': 'Stellt {amount} Energieschild über {seconds} s wieder her',
@@ -498,6 +499,7 @@ export const de: LocaleTable = {
   'arena.lastMoment': 'Letzter Augenblick!',
   'arena.levelUpLine': 'Stufe {level}  ·  {restored}',
   'arena.restoredBoth': 'Leben und {resName} wiederhergestellt',
+  'arena.allyResource': '+{amount} {resName}',
   'arena.restoredLife': 'Leben wiederhergestellt',
   // ---- Map run ----
   'run.map': 'Karte {map}',
@@ -815,4 +817,7 @@ export const de: LocaleTable = {
   'unique.clock_last_moment.name': 'Uhr des Letzten Augenblicks',
   'unique.clock_last_moment.effect':
     'Ein tödlicher Treffer tötet dich nicht: Du behältst {life} Leben und die Zeit bleibt für Gegner {seconds} s lang stehen. Einmal alle {cooldown} s. Solange die Uhr sich aufzieht, erleidest du {pct} mehr Schaden',
+  'unique.abyss_eye.name': 'Auge des Abgrunds',
+  'unique.abyss_eye.effect':
+    'Getötete Gegner (außer Bossen) erheben sich {seconds} s lang als deine Skelette, bis zu {max} gleichzeitig. Gegner greifen die Skelette an. Deine Ressource regeneriert sich nicht und wird nicht durch Treffer oder erlittenen Schaden gewonnen: Jeder Kill deiner Skelette stellt {pct} davon wieder her',
 };
