@@ -68,6 +68,8 @@ interface Burst {
   dy: number;
   /** Streak length (knockback), px. */
   len: number;
+  /** Ring colour (echo). */
+  color: number;
   age: number;
   ttl: number;
 }
@@ -161,23 +163,24 @@ export class SupportFx {
 
   /**
    * Echo repeat: an afterimage of the hero (copy of `hero`'s current frame) drifting back from screen facing
-   * (fx, fy), and a violet ring at the feet.
+   * (fx, fy), and a violet ring at the feet. `tint` / `ring` recolour the ghost and the ring (Devourer's Crown echo).
    */
-  echo(hero: Phaser.GameObjects.Sprite, fx: number, fy: number): void {
+  echo(hero: Phaser.GameObjects.Sprite, fx: number, fy: number, tint: number = ECHO_TINT, ring: number = ECHO_RING): void {
     const sprite = this.ghostPool.pop() ?? this.scene.add.sprite(0, 0, hero.texture.key);
     sprite
       .setTexture(hero.texture.key, hero.frame.name)
       .setOrigin(hero.originX, hero.originY)
       .setPosition(hero.x, hero.y)
       .setDepth(hero.depth - 1)
-      .setTint(ECHO_TINT)
+      .setTint(tint)
       .setTintMode(Phaser.TintModes.SCREEN)
       .setAlpha(0.7)
       .setScale(1)
       .setVisible(true);
     const len = Math.hypot(fx, fy) || 1;
     this.ghosts.push({ sprite, age: 0, dx: -fx / len, dy: -fy / len });
-    this.startBurst('echo', hero.x, hero.y, 0, 0, 0, ECHO_TTL);
+    const burst = this.startBurst('echo', hero.x, hero.y, 0, 0, 0, ECHO_TTL);
+    if (burst) burst.color = ring;
   }
 
   /** Knockback at screen (x, y) (mob feet) along screen direction (dx, dy) over about `len` px: dust and streaks. */
@@ -294,11 +297,11 @@ export class SupportFx {
     for (const drop of this.drops) if (drop.active) this.updateDrop(drop, dt, heroX, heroY);
   }
 
-  private startBurst(kind: Burst['kind'], x: number, y: number, dx: number, dy: number, len: number, ttl: number): void {
+  private startBurst(kind: Burst['kind'], x: number, y: number, dx: number, dy: number, len: number, ttl: number): Burst | undefined {
     let burst = this.bursts.find((b) => !b.active);
     if (!burst) {
-      if (this.bursts.length >= MAX_BURSTS) return;
-      burst = { active: false, kind, x: 0, y: 0, dx: 0, dy: 0, len: 0, age: 0, ttl: 1 };
+      if (this.bursts.length >= MAX_BURSTS) return undefined;
+      burst = { active: false, kind, x: 0, y: 0, dx: 0, dy: 0, len: 0, color: ECHO_RING, age: 0, ttl: 1 };
       this.bursts.push(burst);
     }
     burst.active = true;
@@ -310,6 +313,8 @@ export class SupportFx {
     burst.len = len;
     burst.age = 0;
     burst.ttl = ttl;
+    burst.color = ECHO_RING;
+    return burst;
   }
 
   /** Jagged bolt: re-jittered every frame so it crackles; a wide soft glow under a thin white core. */
@@ -346,7 +351,7 @@ export class SupportFx {
     const t = b.age / b.ttl;
     const fade = 1 - t;
     const r = 18 + 34 * (1 - (1 - t) ** 2);
-    ground.lineStyle(3 * fade + 1, ECHO_RING, 0.85 * fade).strokeEllipse(b.x, b.y, r * 2, r);
+    ground.lineStyle(3 * fade + 1, b.color, 0.85 * fade).strokeEllipse(b.x, b.y, r * 2, r);
     ground.lineStyle(1.5, 0xffffff, 0.5 * fade).strokeEllipse(b.x, b.y, r * 1.4, r * 0.7);
   }
 

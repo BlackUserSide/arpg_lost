@@ -275,6 +275,7 @@ export const en = {
   'cond.movedWithin': 'While moving (moved in the last {seconds} s)',
   'cond.stationaryFor': 'While standing still for {seconds} s or longer',
   'cond.lifeBelow': 'While Life is below {pct}',
+  'cond.soulsAtMost': 'While you have at most {value} Souls',
   'cond.targetHasStatus': 'Against {status} enemies',
   'mech.bloodMagic.cost': 'Skills cost Life instead of {resGen} ({life} Life per 1 {resAcc})',
   'mech.bloodMagic.noResource': 'Maximum {resGen} is 0',
@@ -448,6 +449,10 @@ export const en = {
   'hud.key.rmb': 'RMB',
   'hud.skillsCostLife': 'skills\ncost life',
   'hud.buffSeconds': '{seconds}s',
+  /** Devourer's Crown souls counter: caption, caption at the max, caption while the no-souls penalty applies. */
+  'hud.souls': 'Souls',
+  'hud.soulsReady': 'Ready',
+  'hud.soulsPenalty': '−{pct} Damage',
   'arena.talents': 'Talents',
   'arena.talentsKey': 'Talents (P)',
   'arena.pause': 'Pause',
@@ -783,4 +788,7 @@ export const en = {
   'unique.shadow_boots.effect': 'After a Roll, your next attack is a guaranteed critical strike',
   'unique.rift_ring.name': 'Rift Ring',
   'unique.rift_ring.effect': 'Teleport has no cooldown and leaves a blast where it started ({min}–{max} Lightning damage); every Teleport costs {pct} of your current Life',
+  'unique.devourer_crown.name': "Devourer's Crown",
+  'unique.devourer_crown.effect':
+    'Every kill grants a Soul (up to {max}). At {max} Souls your next damaging skill fires twice (echo) and the Souls are spent. Without Souls you deal {pct} less Damage',
 } satisfies Record<string, Message>;

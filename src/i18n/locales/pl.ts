@@ -277,6 +277,7 @@ export const pl: LocaleTable = {
   'cond.movedWithin': 'W ruchu (ruch w ciągu ostatnich {seconds} s)',
   'cond.stationaryFor': 'Gdy stoisz w miejscu co najmniej {seconds} s',
   'cond.lifeBelow': 'Gdy życie spada poniżej {pct}',
+  'cond.soulsAtMost': 'Gdy masz najwyżej {value} dusz',
   'cond.targetHasStatus': 'Przeciw {status} wrogom',
   'mech.bloodMagic.cost': 'Umiejętności kosztują życie zamiast {resGen} ({life} życia za 1 {resAcc})',
   'mech.bloodMagic.noResource': 'Maksimum {resGen} wynosi 0',
@@ -471,6 +472,10 @@ export const pl: LocaleTable = {
   'hud.key.rmb': 'PPM',
   'hud.skillsCostLife': 'koszt:\nżycie',
   'hud.buffSeconds': '{seconds}s',
+  /** Devourer's Crown souls counter: caption, caption at the max, caption while the no-souls penalty applies. */
+  'hud.souls': 'Dusze',
+  'hud.soulsReady': 'Gotowe',
+  'hud.soulsPenalty': '−{pct} obrażeń',
   'arena.talents': 'Talenty',
   'arena.talentsKey': 'Talenty (P)',
   'arena.pause': 'Pauza',
@@ -817,4 +822,7 @@ export const pl: LocaleTable = {
   'unique.shadow_boots.effect': 'Po przewrocie twój następny atak jest gwarantowanym trafieniem krytycznym',
   'unique.rift_ring.name': 'Pierścień Szczeliny',
   'unique.rift_ring.effect': 'Teleportacja nie ma odnowienia i zostawia wybuch w miejscu startu ({min}–{max} obrażeń od błyskawic); każda teleportacja kosztuje {pct} obecnego życia',
+  'unique.devourer_crown.name': 'Korona Pożeracza',
+  'unique.devourer_crown.effect':
+    'Każde zabójstwo daje duszę (do {max}). Przy {max} duszach twoja następna umiejętność zadająca obrażenia działa dwa razy (echo), a dusze przepadają. Bez dusz zadajesz o {pct} mniej obrażeń',
 };

@@ -322,6 +322,30 @@ const uniqueList: UniqueDef[] = [
       max: { path: 'mechanics.0.grants.originBlast.damage.lightning.max' },
     },
   },
+  // Legendaries (6c–6e): bosses of map 30+ only (RunRewardRules.chest.legendary), so in practice they always roll at
+  // item level 31+ (T1); the lower tiers only keep the lines consistent with the uniques. Stat lines are a step above
+  // the uniques' (PROPOSAL, balance-analyst to confirm).
+  // L1 Devourer's Crown (helmet): every kill (any source, minions excluded) is a soul, up to 30; at 30 the next attack /
+  // damaging skill use (not movement, buffs or self skills; the basic attack counts) fires twice: a free echo after the
+  // Echo support's delay (0.25 s), then the souls are spent. Cost: 30% less damage while holding no souls (souls start
+  // at 0 every run, designer default 2026-10-25).
+  {
+    id: 'devourer_crown',
+    rarity: 'legendary',
+    baseId: 'warded_helm',
+    // The only legendary for now: its weight only matters against later ones.
+    weight: 100,
+    stats: [
+      uline({ stat: 'damage', kind: 'increased' }, pct([0.12, 0.16], [0.17, 0.23], [0.24, 0.31], [0.32, 0.4], [0.41, 0.5])),
+      uline({ stat: 'life', kind: 'flat' }, int([12, 20], [21, 32], [33, 46], [47, 60], [61, 75])),
+      uline({ stat: 'critChance', kind: 'increased' }, pct([0.15, 0.24], [0.25, 0.36], [0.37, 0.49], [0.5, 0.62], [0.63, 0.75])),
+    ],
+    mechanics: [
+      { kind: 'souls', max: 30, echoDelay: 0.25, echoFor: { damaging: true, excludeDeliveries: ['dash', 'teleport', 'self'] } },
+      { kind: 'conditionalModifiers', condition: { kind: 'soulsAtMost', value: 0 }, modifiers: [{ stat: 'damage', kind: 'more', value: -0.3 }] },
+    ],
+    effectParams: { max: { path: 'mechanics.0.max' }, pct: { path: 'mechanics.1.modifiers.0.value', format: 'percent' } },
+  },
 ];
 
 const rules: LootRules = {

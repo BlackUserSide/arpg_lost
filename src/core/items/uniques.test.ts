@@ -85,9 +85,11 @@ describe('unique generation', () => {
     expect(ids('unique', 1, 'ring')).toEqual(['bloody_pupil', 'rift_ring', 'test_ring']);
     expect(ids('unique', 20, 'ring')).toEqual(['bloody_pupil', 'rift_ring', 'test_ring', 'late_ring']);
     expect(ids('legendary', 1)).toEqual(['test_legend']);
-    expect(ids('unique', 1)).toEqual([...Object.keys(itemsData.uniques), 'test_ring']);
-    // The real data has no legendaries yet (6c–6e).
-    expect(uniquePool(itemsData, 'legendary', 99)).toEqual([]);
+    const realUniques = Object.values(itemsData.uniques).filter((u) => u.rarity === 'unique').map((u) => u.id);
+    expect(ids('unique', 1)).toEqual([...realUniques, 'test_ring']);
+    // The real legendaries (6c: Devourer's Crown on a level-15 helmet base) never enter the unique pool.
+    expect(uniquePool(itemsData, 'legendary', 99).map((u) => u.id)).toEqual(['devourer_crown']);
+    expect(uniquePool(itemsData, 'legendary', 14)).toEqual([]);
   });
 });
 

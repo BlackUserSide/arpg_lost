@@ -41,6 +41,8 @@ export interface PendingEcho {
   readonly aim: Vec2;
   /** Arc actions: the use it repeats was an every-N-th special swing (the echo swings the same angle). */
   readonly special?: boolean;
+  /** The guaranteed echo of a full souls count (souls mechanic): firing it spends the souls. */
+  readonly souls?: boolean;
 }
 
 /** A mob being pushed (Knockback support): it moves `remaining` more units along `dir` at `speed`. */
@@ -150,6 +152,11 @@ export interface PlayerState {
    * skills, cleared by the next use of an 'attack' action (no time limit). Render: the "next attack crits" indicator.
    */
   nextAttackCrit: boolean;
+  /**
+   * Souls held (souls mechanic, Devourer's Crown): 0 at run start, +1 per non-minion mob death up to the mechanic's
+   * max, back to 0 when the free echo they grant fires. Stays 0 without the mechanic. Render: the souls counter.
+   */
+  souls: number;
   /** Equipped weapon, or the class default. */
   weapon: WeaponDef;
   buffs: Buff[];
@@ -556,8 +563,18 @@ export type WorldEvent =
   | { type: 'spawn'; id: number }
   | { type: 'death'; id: number; pos: Vec2 }
   | { type: 'levelUp'; level: number }
-  /** An Echo repeat of `actionId` fired now (free); its delivery events follow. `pos`: the hero. */
-  | { type: 'echo'; actionId: string; pos: Vec2; facing: Vec2 }
+  /**
+   * An Echo repeat of `actionId` fired now (free); its delivery events follow. `pos`: the hero. `souls`: the echo of a
+   * full souls count; the souls are spent (PlayerState.souls is 0 once it fired).
+   */
+  | { type: 'echo'; actionId: string; pos: Vec2; facing: Vec2; souls?: boolean }
+  /** Mob `mobId` dying at `pos` gave the hero a soul (souls mechanic); `souls`: held now. Not sent at the cap. */
+  | { type: 'soulGain'; mobId: number; pos: Vec2; souls: number }
+  /**
+   * A use of `actionId` took the full souls count: its free echo fires `delay` seconds later (an 'echo' event with
+   * `souls`), which spends the souls. `pos`: the hero.
+   */
+  | { type: 'soulEcho'; actionId: string; pos: Vec2; delay: number }
   /**
    * A Chain Lightning bolt (ActionDef.chainHit) of `actionId`: it started at the impact target `fromId` and hopped
    * through `targetIds` in order; `points` are the positions from the start target through every hop (bolt line).
@@ -669,6 +686,7 @@ function conditionState(classDef: ClassDef, player: PlayerState, base: readonly 
   return {
     stillTime: player.stillTime,
     life: player.life,
+    souls: player.souls,
     energyShield: player.energyShield,
     get maxLife(): number {
       return deriveStat(source, 'life');

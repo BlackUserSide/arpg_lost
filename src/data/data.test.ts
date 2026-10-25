@@ -176,10 +176,20 @@ describe('unique data validation', () => {
       madman_gloves: 'gloves',
       shadow_boots: 'boots',
       rift_ring: 'ring',
+      devourer_crown: 'helmet',
     });
+    const legendaries = new Set(['devourer_crown']);
     const skillIds = new Set(allActions().map((a) => a.id));
     for (const u of Object.values(itemsData.uniques)) {
-      expect(u.rarity).toBe('unique');
+      expect(u.rarity).toBe(legendaries.has(u.id) ? 'legendary' : 'unique');
+      for (const m of u.mechanics ?? []) {
+        if (m.kind !== 'souls') continue;
+        expect(m.max).toBeGreaterThan(0);
+        expect(m.echoDelay).toBeGreaterThanOrEqual(0);
+        // A souls echo of a movement / buff skill would move the hero again or do nothing (designer default 2026-10-25).
+        expect(m.echoFor.damaging).toBe(true);
+        expect(m.echoFor.excludeDeliveries).toEqual(expect.arrayContaining(['dash', 'teleport', 'self']));
+      }
       for (const m of u.mechanics ?? []) {
         if (m.kind !== 'skillParams' && m.kind !== 'critAfterSkill') continue;
         for (const id of m.skillIds ?? []) expect(skillIds.has(id), `${u.id}: ${id}`).toBe(true);

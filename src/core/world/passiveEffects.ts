@@ -5,7 +5,7 @@
 // - bloodMagic: skills cost life, max resource / resource regen are 0 (so no class gains resource, Rage included).
 // - alwaysCrit: hits always crit with a fixed multiplier (see critStats).
 // - lifeToEnergyShield: base life (class + levels) becomes flat ES, max life is fixed, life regen feeds ES.
-// - conditionalModifiers: movedWithin / stationaryFor / lifeBelow / targetHasStatus (stun, slow, ignite, freeze).
+// - conditionalModifiers: movedWithin / stationaryFor / lifeBelow / soulsAtMost / targetHasStatus (stun, slow, ignite, freeze).
 // - moreDamagePerMissingLife: hero-state "more" damage from missing life (see missingLifeModifier).
 // - skillParams: converted to SkillChangeSets (skillChangeSets) and resolved once per loadout (core/skills).
 // - stunBonus: stun duration (skill stuns via skillChangeSets, the stun bar via stunDurationMultiplier) and stun bar fill.
@@ -21,6 +21,7 @@
 // - elementalArmour: hero armour vs elemental hits (elementalArmourEffectiveness; damagePlayer in mobs.ts).
 // - lifeOnCrit: crits heal with an internal cooldown (lifeOnCritStats; damageMob in actions.ts).
 // - critAfterSkill: the next attack use after these skills crits (armsNextAttackCrit; performAction in actions.ts).
+// - souls: kills fill PlayerState.souls, a full count gives the next fitting use a free echo (souls.ts).
 // Glass Cannon needs no mechanic: it is plain `more` damage / damageTaken modifiers.
 
 import type { PassiveCondition, PassiveMechanic, PassiveMechanicKind, PassiveStatusId } from '../passives/types';
@@ -106,6 +107,8 @@ export interface ConditionState {
   readonly energyShield: number;
   /** Max energy shield computed without conditional modifiers. */
   readonly maxEnergyShield: number;
+  /** Souls held (PlayerState.souls). */
+  readonly souls: number;
 }
 
 /**
@@ -137,6 +140,8 @@ export function conditionHolds(condition: PassiveCondition, state: ConditionStat
       return state.stillTime >= condition.seconds;
     case 'lifeBelow':
       return state.life < condition.fraction * state.maxLife;
+    case 'soulsAtMost':
+      return state.souls <= condition.value;
     case 'targetHasStatus':
       return target ? targetHasStatus(target, condition.status) : false;
   }

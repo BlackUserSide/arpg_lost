@@ -139,6 +139,7 @@ export function createWorld(
     counterCooldown: 0,
     critHealCooldown: 0,
     nextAttackCrit: false,
+    souls: 0,
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,

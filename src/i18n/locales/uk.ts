@@ -274,6 +274,7 @@ export const uk: LocaleTable = {
   'cond.movedWithin': 'Поки рухаєтеся (рух за останні {seconds} с)',
   'cond.stationaryFor': 'Якщо стоїте на місці ≥ {seconds} с',
   'cond.lifeBelow': 'Поки життя нижче {pct}',
+  'cond.soulsAtMost': 'Поки у вас не більше {value} душ',
   'cond.targetHasStatus': 'Проти {status} ворогів',
   'mech.bloodMagic.cost': 'Скіли коштують життя замість {resGen} ({life} життя за 1 {resAcc})',
   'mech.bloodMagic.noResource': 'Максимум {resGen} = 0',
@@ -455,6 +456,10 @@ export const uk: LocaleTable = {
   'hud.key.rmb': 'ПКМ',
   'hud.skillsCostLife': 'скіли за\nжиття',
   'hud.buffSeconds': '{seconds}с',
+  /** Devourer's Crown souls counter: caption, caption at the max, caption while the no-souls penalty applies. */
+  'hud.souls': 'Душі',
+  'hud.soulsReady': 'Готово',
+  'hud.soulsPenalty': '−{pct} урону',
   'arena.talents': 'Таланти',
   'arena.talentsKey': 'Таланти (P)',
   'arena.pause': 'Пауза',
@@ -800,4 +805,7 @@ export const uk: LocaleTable = {
   'unique.shadow_boots.effect': 'Після перекату наступна атака — гарантований критичний удар',
   'unique.rift_ring.name': 'Перстень Розлому',
   'unique.rift_ring.effect': 'Телепорт без кулдауну, на місці старту — вибух ({min}–{max} урону блискавкою); кожен телепорт коштує {pct} поточного життя',
+  'unique.devourer_crown.name': 'Корона Пожирача',
+  'unique.devourer_crown.effect':
+    'Кожне вбивство дає душу (до {max}). На {max} душах наступний скіл з уроном спрацьовує двічі (луна), душі витрачаються. Без душ урон на {pct} менший',
 };

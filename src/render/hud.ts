@@ -15,6 +15,7 @@ import {
 import { t, upper } from '../i18n';
 import { skillIcon } from './hudIcons';
 import { formatCost, resourceText } from './resourceText';
+import { SoulsBadge } from './soulsHud';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
 // In-run HUD: Diablo-style life / class-resource orbs, skill bar with cooldown shutters, XP bar, buffs. The map run's
@@ -178,6 +179,8 @@ export class Hud {
   private actionsFor: ActionSet | undefined;
   /** Caption on the resource orb when skills cost life instead (max resource 0). */
   private readonly resourceNote: Phaser.GameObjects.Text;
+  /** Devourer's Crown souls counter above the resource orb (hidden without the souls mechanic). */
+  private readonly souls: SoulsBadge;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -236,6 +239,7 @@ export class Hud {
     });
     this.resourceNote = label(scene, 0, 0, t('hud.skillsCostLife'), 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
     this.resourceNote.setStroke('#000', 3);
+    this.souls = new SoulsBadge(scene, DEPTH + 2);
   }
 
   layout(width: number, height: number): void {
@@ -270,6 +274,8 @@ export class Hud {
       slot.chargeText.setPosition(bx, by).setFontSize(compact ? 12 : 14);
     });
     this.resourceNote.setPosition(this.resource.x, this.resource.y);
+    // Souls pill above the resource name (its caption on top), clear of the skill bar on narrow phones.
+    this.souls.layout(this.resource.x, this.resourceName.y - this.resourceName.height - (compact ? 6 : 8), compact);
     // XP bar spans the skill bar, just above it; level number to its left.
     const barH = compact ? 6 : 8;
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - levelStrip - size - (compact ? 10 : 14) - barH, w: total, h: barH };
@@ -365,6 +371,7 @@ export class Hud {
       }
     }
 
+    this.souls.update(p, dt);
     this.drawXp(world, dt);
     this.drawSkillLevels(world, dt);
     this.updateBuffs(world);
