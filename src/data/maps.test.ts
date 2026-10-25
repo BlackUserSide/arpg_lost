@@ -50,7 +50,8 @@ describe('map data', () => {
     const zone = content.eliteModifiers?.explosive?.deathZone;
     if (!zone) throw new Error('explosive has no death zone');
     const slowest = Math.min(...Object.values(content.classes).map((c) => c.baseStats.movementSpeed ?? 0));
-    expect((zone.radius + 20) / slowest).toBeLessThan(zone.delay * 0.75);
+    const maxHeroRadius = Math.max(...Object.values(content.classes).map((c) => c.radius));
+    expect((zone.radius + maxHeroRadius) / slowest).toBeLessThan(zone.delay * 0.75);
     // A fast elite never outruns the heroes (fastest mob × moveSpeed below the slowest hero).
     const fastest = Math.max(...Object.values(content.mobs).filter((m) => !m.boss).map((m) => m.moveSpeed));
     expect(fastest * (content.eliteModifiers?.fast?.moveSpeed ?? 1)).toBeLessThan(slowest);

@@ -180,6 +180,9 @@ export function damagePlayer(ctx: Ctx, base: BaseDamage, critChance: number, sou
   if (result.isDead) {
     player.dead = true;
     player.motion = undefined;
+    // A dead hero does not keep burning (render reads player.ignite).
+    player.ignite = 0;
+    player.igniteDps = 0;
     events.push({ type: 'playerDeath' });
     return true;
   }

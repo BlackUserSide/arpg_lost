@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createRng } from '../rng';
 import type { Modifier } from '../stats/types';
 import type { CombatConfig } from './config';
-import { computeDamage, rollBaseDamage, totalDamage } from './damage';
+import { computeDamage, convertedDamage, rollBaseDamage, totalDamage } from './damage';
 import { applyDamage, resolveHit } from './hit';
 import { armourReduction, mitigate, resistanceMultiplier, type Defences } from './mitigation';
 
@@ -43,6 +43,20 @@ describe('computeDamage', () => {
   it('applies more multipliers per portion', () => {
     const mods: Modifier[] = [{ stat: 'damage', kind: 'more', value: 0.5, tags: ['area'] }];
     expect(totalDamage(computeDamage({ fire: 40 }, mods, ['spell', 'area']))).toBeCloseTo(60, 10);
+  });
+});
+
+describe('convertedDamage', () => {
+  it('moves the fraction of every other type into the target type (copy, input untouched)', () => {
+    const input = { physical: 10, cold: 4, fire: 2 };
+    expect(convertedDamage(input, { to: 'fire', fraction: 0.5 })).toEqual({ physical: 5, cold: 2, fire: 9 });
+    expect(input).toEqual({ physical: 10, cold: 4, fire: 2 });
+  });
+
+  it('full conversion drops the emptied types; the fraction is clamped to 0..1', () => {
+    expect(convertedDamage({ physical: 10, cold: 4 }, { to: 'fire', fraction: 1 })).toEqual({ fire: 14 });
+    expect(convertedDamage({ physical: 10, cold: 4 }, { to: 'fire', fraction: 2 })).toEqual({ fire: 14 });
+    expect(convertedDamage({ physical: 10, cold: 4 }, { to: 'fire', fraction: -1 })).toEqual({ physical: 10, cold: 4 });
   });
 });
 

@@ -101,6 +101,8 @@ export function tickHeroIgnite(ctx: Ctx, dt: number): void {
     if (result.isDead) {
       player.dead = true;
       player.motion = undefined;
+      player.ignite = 0;
+      player.igniteDps = 0;
       events.push({ type: 'playerDeath' });
       return;
     }

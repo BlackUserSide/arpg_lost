@@ -265,6 +265,17 @@ describe('hero ignite', () => {
     const events = run(world, 1);
     expect(world.player.dead).toBe(true);
     expect(events).toContainEqual({ type: 'playerDeath' });
+    expect(world.player).toMatchObject({ ignite: 0, igniteDps: 0 });
+  });
+
+  it('a hit that kills a burning hero clears the burn', () => {
+    const world = newWorld();
+    ignite(world, 12, 2);
+    world.player.life = 1;
+    add(world, 'brute', vec(520, 500), 'fiery');
+    const events = run(world, 1);
+    expect(events).toContainEqual({ type: 'playerDeath' });
+    expect(world.player).toMatchObject({ dead: true, ignite: 0, igniteDps: 0 });
   });
 });
 

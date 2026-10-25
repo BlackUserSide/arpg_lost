@@ -27,6 +27,16 @@ const EARTH = 0x5a3f26;
 const EARTH_LIGHT = 0x8a6a46;
 const EARTH_DUST = 0x9a8466;
 
+/** Grave circle palettes: necrotic violet, or fire for zones placed by a fire-converting elite. */
+interface ZonePalette {
+  readonly base: number;
+  readonly fill: number;
+  readonly late: number;
+  readonly rim: number;
+}
+const GRAVE_ZONE: ZonePalette = { base: 0x12040c, fill: 0x8a2ac0, late: 0xe070ff, rim: GRAVE_RIM };
+const FIERY_ZONE: ZonePalette = { base: 0x1a0600, fill: 0xd04a10, late: 0xffb040, rim: 0xff7a1a };
+
 const NOVA_TTL = 0.55;
 const RAISE_TTL = 0.75;
 const ERUPT_TTL = 0.5;
@@ -54,6 +64,8 @@ interface Burst {
   age: number;
   ttl: number;
   spin: number;
+  /** 'erupt' of a zone placed by a fiery elite: fire colours instead of the grave violet. */
+  fiery: boolean;
 }
 
 /** Hashes a number into 0..1 (stable per zone / glyph, so shapes do not jump between frames). */
@@ -255,23 +267,27 @@ export class BossFx {
     }
   }
 
-  /** A grave circle at screen (x, y): a dark warning disc filling up over its delay, flashing just before it erupts. */
-  drawHostileZone(g: Phaser.GameObjects.Graphics, zone: HostileZone, x: number, y: number, time: number): void {
+  /**
+   * A grave circle at screen (x, y): a dark warning disc filling up over its delay, flashing just before it erupts.
+   * `fiery`: placed by an elite whose modifier converts its damage to fire: the same shape in fire colours.
+   */
+  drawHostileZone(g: Phaser.GameObjects.Graphics, zone: HostileZone, x: number, y: number, time: number, fiery = false): void {
+    const pal = fiery ? FIERY_ZONE : GRAVE_ZONE;
     const p = zone.total > 0 ? Phaser.Math.Clamp(1 - zone.remaining / zone.total, 0, 1) : 1;
     const r = zone.radius;
     const appear = Math.min(1, p * 6);
     const late = zone.remaining < 0.2;
     const flicker = late && Math.floor(time * 24) % 2 === 0;
-    g.fillStyle(0x12040c, 0.45 * appear).fillEllipse(x, y, r * 2, r);
-    g.fillStyle(late ? 0xe070ff : 0x8a2ac0, (0.25 + 0.3 * p) * appear).fillEllipse(x, y, r * 2 * p, r * p);
+    g.fillStyle(pal.base, 0.45 * appear).fillEllipse(x, y, r * 2, r);
+    g.fillStyle(late ? pal.late : pal.fill, (0.25 + 0.3 * p) * appear).fillEllipse(x, y, r * 2 * p, r * p);
     // Cracks radiating from the centre (stable per zone).
-    g.lineStyle(1.5, GRAVE_RIM, (0.25 + 0.45 * p) * appear);
+    g.lineStyle(1.5, pal.rim, (0.25 + 0.45 * p) * appear);
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + hash01(zone.id + i) * 0.6;
       const d = (0.45 + 0.4 * hash01(zone.id * 3 + i)) * p;
       g.lineBetween(x, y, x + Math.cos(a) * r * d, y + Math.sin(a) * r * d * 0.5);
     }
-    g.lineStyle(flicker ? 4 : 2.5, flicker ? 0xffffff : GRAVE_RIM, (0.6 + 0.4 * p) * appear).strokeEllipse(x, y, r * 2, r);
+    g.lineStyle(flicker ? 4 : 2.5, flicker ? 0xffffff : pal.rim, (0.6 + 0.4 * p) * appear).strokeEllipse(x, y, r * 2, r);
   }
 
   /** Immune roar (phase change pause) round a boss at screen (x, y): a pulsing violet shell and rising dark smoke. */
@@ -370,9 +386,14 @@ export class BossFx {
     this.dust.emitParticleAt(x, y - 2, 4);
   }
 
-  /** A grave circle erupted at screen (x, y), world radius r: bone spikes thrust up, splinters and dust. */
-  erupt(x: number, y: number, r: number): void {
-    if (!this.start('erupt', x, y, r, ERUPT_TTL)) return;
+  /**
+   * A grave circle erupted at screen (x, y), world radius r: bone spikes thrust up, splinters and dust. `fiery`: placed
+   * by a fiery elite, the flash and rim burn orange.
+   */
+  erupt(x: number, y: number, r: number, fiery = false): void {
+    const burst = this.start('erupt', x, y, r, ERUPT_TTL);
+    if (!burst) return;
+    burst.fiery = fiery;
     this.bones.emitParticleAt(x, y - 8, 8);
     this.dust.emitParticleAt(x, y - 2, 5);
   }
@@ -438,11 +459,12 @@ export class BossFx {
     }
   }
 
-  private start(kind: BossBurstKind, x: number, y: number, radius: number, ttl: number): boolean {
+  /** Takes a free pooled burst and starts it; undefined when the pool is exhausted. */
+  private start(kind: BossBurstKind, x: number, y: number, radius: number, ttl: number): Burst | undefined {
     let burst = this.bursts.find((b) => !b.active);
     if (!burst) {
-      if (this.bursts.length >= MAX_BURSTS) return false;
-      burst = { active: false, kind, x: 0, y: 0, radius: 0, age: 0, ttl: 1, spin: 0 };
+      if (this.bursts.length >= MAX_BURSTS) return undefined;
+      burst = { active: false, kind, x: 0, y: 0, radius: 0, age: 0, ttl: 1, spin: 0, fiery: false };
       this.bursts.push(burst);
     }
     burst.active = true;
@@ -453,7 +475,8 @@ export class BossFx {
     burst.age = 0;
     burst.ttl = ttl;
     burst.spin = Math.random() * Math.PI * 2;
-    return true;
+    burst.fiery = false;
+    return burst;
   }
 
   private drawNova(g: Phaser.GameObjects.Graphics, b: Burst, t: number): void {
@@ -478,10 +501,11 @@ export class BossFx {
   private drawErupt(g: Phaser.GameObjects.Graphics, top: Phaser.GameObjects.Graphics, b: Burst, t: number): void {
     const fade = 1 - t;
     const r = b.radius;
-    if (t < 0.2) g.fillStyle(0xf0d0ff, 0.5 * (1 - t / 0.2)).fillEllipse(b.x, b.y, r * 2, r);
+    const pal = b.fiery ? FIERY_ZONE : GRAVE_ZONE;
+    if (t < 0.2) g.fillStyle(b.fiery ? 0xffe0a0 : 0xf0d0ff, 0.5 * (1 - t / 0.2)).fillEllipse(b.x, b.y, r * 2, r);
     const ring = r * (0.8 + 0.4 * t);
-    g.fillStyle(0x3a0a50, 0.35 * fade).fillEllipse(b.x, b.y, r * 2, r);
-    g.lineStyle(4 * fade + 1, GRAVE_RIM, 0.9 * fade).strokeEllipse(b.x, b.y, ring * 2, ring);
+    g.fillStyle(b.fiery ? 0x501a04 : 0x3a0a50, 0.35 * fade).fillEllipse(b.x, b.y, r * 2, r);
+    g.lineStyle(4 * fade + 1, pal.rim, 0.9 * fade).strokeEllipse(b.x, b.y, ring * 2, ring);
     // Spikes shoot up fast, hold, then sink.
     const rise = t < 0.3 ? t / 0.3 : 1 - Math.max(0, (t - 0.6) / 0.4);
     for (let i = 0; i < ERUPT_SPIKES; i++) {
