@@ -25,6 +25,7 @@ import { add, distance, fanOffsets, normalize, rotate, scale, sub, vec, type Vec
 import type { BaseDamage } from '../combat/damage';
 import type { MobAbilitiesDef, MobAbilityDef, MobDef } from './content';
 import { damagePlayer, spawnMob } from './mobs';
+import { mobActionSpeedMultiplier } from './eliteModifiers';
 import { clampToArena, getMob, type Ctx, type HostileZone, type MobState, type WorldState } from './state';
 import type { MobTarget } from './zones';
 
@@ -118,8 +119,10 @@ export function updateMobAbilities(ctx: Ctx, mob: MobState, def: MobDef, target:
   if (!set) return false;
   const timers = (mob.abilityTimers ??= {});
   const tick = dt * speedFactor;
-  for (const id of Object.keys(timers)) timers[id] = snap(timers[id]! - tick);
-  mob.castRecovery = snap((mob.castRecovery ?? 0) - tick);
+  // Fast elites (actionSpeed) cool down and recover faster; the wind-up (telegraph) keeps its length.
+  const cooldownTick = tick * mobActionSpeedMultiplier(ctx.content, mob);
+  for (const id of Object.keys(timers)) timers[id] = snap(timers[id]! - cooldownTick);
+  mob.castRecovery = snap((mob.castRecovery ?? 0) - cooldownTick);
 
   const cast = mob.casting;
   if (cast) {
@@ -196,6 +199,7 @@ function resolveAbility(ctx: Ctx, mob: MobState, def: MobDef, a: MobAbilityDef, 
           hitIds: [],
           castModifiers: [],
           ...(mob.damageScale !== undefined ? { damageScale: mob.damageScale } : {}),
+          ...(mob.eliteModifier !== undefined ? { eliteModifier: mob.eliteModifier } : {}),
         });
       }
       events.push({ ...base, projectileIds });
@@ -204,7 +208,7 @@ function resolveAbility(ctx: Ctx, mob: MobState, def: MobDef, a: MobAbilityDef, 
     case 'nova': {
       const player = world.player;
       const inside = !player.dead && distance(player.pos, mob.pos) <= a.radius + player.radius;
-      const hit = inside && damagePlayer(ctx, a.damage, a.critChance ?? 0, mob.damageScale ?? 1);
+      const hit = inside && damagePlayer(ctx, a.damage, a.critChance ?? 0, { damageScale: mob.damageScale, eliteModifier: mob.eliteModifier });
       events.push({ ...base, radius: a.radius, hit });
       return;
     }
@@ -249,10 +253,20 @@ function resolveAbility(ctx: Ctx, mob: MobState, def: MobDef, a: MobAbilityDef, 
           remaining: a.delay,
           total: a.delay,
           ...(mob.damageScale !== undefined ? { damageScale: mob.damageScale } : {}),
+          ...(mob.eliteModifier !== undefined ? { eliteModifier: mob.eliteModifier } : {}),
         };
         world.hostileZones.push(zone);
         zoneIds.push(zone.id);
-        events.push({ type: 'hostileZoneSpawn', zoneId: zone.id, sourceId: mob.id, abilityId: a.id, pos, radius: a.radius, delay: a.delay });
+        events.push({
+          type: 'hostileZoneSpawn',
+          zoneId: zone.id,
+          sourceId: mob.id,
+          abilityId: a.id,
+          pos,
+          radius: a.radius,
+          delay: a.delay,
+          ...(mob.eliteModifier !== undefined ? { eliteModifier: mob.eliteModifier } : {}),
+        });
       }
       events.push({ ...base, zoneIds });
       return;
@@ -277,10 +291,22 @@ export function updateHostileZones(ctx: Ctx, dt: number): void {
     const inside = !player.dead && distance(player.pos, zone.pos) <= zone.radius + player.radius;
     let hit = false;
     if (inside) {
-      const { damage, critChance } = abilityHit(getMob(content, zone.sourceDefId), zone.abilityId);
-      hit = damagePlayer(ctx, damage, critChance, zone.damageScale ?? 1);
+      // Death zones (source 'eliteDeath') carry their own hit; ability zones use their ability's.
+      const { damage, critChance } = zone.damage
+        ? { damage: zone.damage, critChance: zone.critChance ?? 0 }
+        : abilityHit(getMob(content, zone.sourceDefId), zone.abilityId);
+      hit = damagePlayer(ctx, damage, critChance, { damageScale: zone.damageScale, eliteModifier: zone.eliteModifier });
     }
-    events.push({ type: 'hostileZoneErupt', zoneId: zone.id, abilityId: zone.abilityId, pos: zone.pos, radius: zone.radius, hit });
+    events.push({
+      type: 'hostileZoneErupt',
+      zoneId: zone.id,
+      abilityId: zone.abilityId,
+      pos: zone.pos,
+      radius: zone.radius,
+      hit,
+      ...(zone.source !== undefined ? { source: zone.source } : {}),
+      ...(zone.eliteModifier !== undefined ? { eliteModifier: zone.eliteModifier } : {}),
+    });
   }
   world.hostileZones = world.hostileZones.filter((z) => !erupted.includes(z.id));
 }

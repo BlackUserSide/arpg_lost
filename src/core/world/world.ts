@@ -15,6 +15,7 @@ import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { updateDecoys, updateZones } from './zones';
 import { updateHostileZones } from './abilities';
+import { tickHeroIgnite } from './eliteModifiers';
 import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Bounds, type Ctx, type MobScale, type Obstacle, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
@@ -22,6 +23,7 @@ export { applyLeech, grantBonusXp, recoverLife, setLoadoutModifiers } from './ex
 export { spawnMob, spawnRadius, type MobSpawn } from './mobs';
 export { inCombat, maxResource, recoverResource } from './resource';
 export { canAfford } from './actions';
+export { eliteModifierDef, mobMoveSpeed } from './eliteModifiers';
 export { supportChangeSets, supportFits, supportTier } from '../supports/rules';
 export type { SupportRef } from '../supports/types';
 export { actionReady, availableCharges, chargeInfo, maxCharges, type ChargeInfo } from './charges';
@@ -138,6 +140,8 @@ export function createWorld(
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
+    ignite: 0,
+    igniteDps: 0,
     motion: undefined,
     dead: false,
   };
@@ -209,6 +213,9 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   player.energyShield = clamp(player.energyShield + playerStat(classDef, player, 'energyShieldRegen') * dt, 0, maxShield);
   tickResource(classDef, player, dt);
   decayLeech(classDef, player, dt);
+  // The hero's own ignite (fiery elites); a burn that kills ends the hero's step here.
+  tickHeroIgnite(ctx, dt);
+  if (player.dead) return;
 
   player.actionTimer = Math.max(0, player.actionTimer - dt);
   const recovery = computeStat(1, allModifiers(classDef, player), 'cooldownRecovery');

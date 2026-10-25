@@ -11,6 +11,7 @@ import type { Content } from '../world/content';
 import { clampToArena, createWorld, grantBonusXp, spawnMob, spawnRadius, step, type Loadout, type MobSpawn } from '../world/world';
 import type {
   BossRoomTemplate,
+  EliteModifierPoolEntry,
   MapsData,
   MobPoolEntry,
   RankScaling,
@@ -31,6 +32,8 @@ const TIME_EPSILON = 1e-9;
 
 /** Mixed into the run seed for the run stream (RunState.rngState); structural, not balance. */
 const RUN_STREAM = 0x85ebca6b;
+/** Mixed into the run seed for the elite modifier rolls (planWaves); structural, not balance. */
+const ELITE_MODIFIER_STREAM = 0xc2b2ae35;
 
 export function getTemplate(maps: MapsData, id: string): RoomTemplate {
   const t = maps.templates[id];
@@ -98,11 +101,28 @@ function ranked(defId: string, rank: 'elite' | 'boss', scaling: RankScaling): Mo
   return { defId, rank, lifeScale: scaling.life, damageScale: scaling.damage, xpScale: scaling.xp, radiusScale: scaling.radius };
 }
 
+/** Elite modifiers that can roll on this map level (weight > 0, minMapLevel reached), in data order. */
+export function eliteModifierPoolAt(rules: RunRules, mapLevel: number): EliteModifierPoolEntry[] {
+  return (rules.elites.modifiers ?? []).filter((e) => e.weight > 0 && (e.minMapLevel ?? 1) <= mapLevel);
+}
+
+/**
+ * One elite modifier id by weight from the pool available on `mapLevel` (one draw), or undefined when nothing is
+ * available (no draw).
+ */
+export function rollEliteModifier(rng: Rng, rules: RunRules, mapLevel: number): string | undefined {
+  const pool = eliteModifierPoolAt(rules, mapLevel);
+  if (pool.length === 0) return undefined;
+  return weightedPick(rng, pool, (e) => e.weight)?.id;
+}
+
 /**
  * Waves of one combat room: wave count, then per wave its size and mob types (pool by weight), then the elites
  * (count, then per elite its type and the wave it joins, appended at the end of that wave). Draw order as listed.
+ * Each elite's modifier comes from the separate `modRng` stream (rollEliteModifier), so adding modifiers did not
+ * shift the run stream (room plans and spawn positions of a seed stay the same).
  */
-function planWaves(rng: Rng, rules: RunRules, mapLevel: number): MobSpawn[][] {
+function planWaves(rng: Rng, modRng: Rng, rules: RunRules, mapLevel: number): MobSpawn[][] {
   const pool = mobPoolAt(rules, mapLevel);
   if (pool.length === 0) throw new Error(`No mobs for map level ${mapLevel}`);
   const pick = (): string => weightedPick(rng, pool, (e) => e.weight)!.mobId;
@@ -117,19 +137,22 @@ function planWaves(rng: Rng, rules: RunRules, mapLevel: number): MobSpawn[][] {
   const elites = rng.int(rules.elites.count.min, rules.elites.count.max);
   for (let i = 0; i < elites; i++) {
     const defId = pick();
-    waves[rng.int(0, waveCount - 1)]!.push(ranked(defId, 'elite', rules.elites.scaling));
+    const wave = waves[rng.int(0, waveCount - 1)]!;
+    const modifier = rollEliteModifier(modRng, rules, mapLevel);
+    wave.push({ ...ranked(defId, 'elite', rules.elites.scaling), ...(modifier !== undefined ? { eliteModifier: modifier } : {}) });
   }
   return waves;
 }
 
 /**
  * Plans the run's rooms: combat templates (pickTemplates), the boss template, then each combat room's waves in room
- * order (planWaves). Everything comes from the run stream, so a seed always gives the same map.
+ * order (planWaves). Everything comes from the run stream (elite modifiers from their own stream `modRng`), so a
+ * seed always gives the same map.
  */
-function planRooms(rng: Rng, maps: MapsData, mapLevel: number): RoomPlan[] {
+function planRooms(rng: Rng, modRng: Rng, maps: MapsData, mapLevel: number): RoomPlan[] {
   const combat = pickTemplates(rng, maps, 'combat', maps.rules.combatRooms);
   const boss = pickTemplates(rng, maps, 'boss', 1)[0]!;
-  const rooms: RoomPlan[] = combat.map((t) => ({ templateId: t.id, kind: 'combat', waves: planWaves(rng, maps.rules, mapLevel) }));
+  const rooms: RoomPlan[] = combat.map((t) => ({ templateId: t.id, kind: 'combat', waves: planWaves(rng, modRng, maps.rules, mapLevel) }));
   rooms.push({ templateId: boss.id, kind: 'boss', waves: [] });
   return rooms;
 }
@@ -142,7 +165,7 @@ function planRooms(rng: Rng, maps: MapsData, mapLevel: number): RoomPlan[] {
 export function createRun(content: Content, maps: MapsData, classId: string, seed: number, loadout: Loadout, mapLevel: number): RunState {
   const level = Math.max(1, Math.floor(mapLevel));
   const rng = createRng((seed ^ RUN_STREAM) >>> 0);
-  const rooms = planRooms(rng, maps, level);
+  const rooms = planRooms(rng, createRng((seed ^ ELITE_MODIFIER_STREAM) >>> 0), maps, level);
   const first = getTemplate(maps, rooms[0]!.templateId);
   const world = createWorld(content, classId, seed, loadout, level, {
     bounds: { width: first.width, height: first.height },

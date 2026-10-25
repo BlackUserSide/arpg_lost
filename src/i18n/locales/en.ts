@@ -540,6 +540,12 @@ export const en = {
   'mob.gravedigger.name': 'Gravedigger',
   'mob.cultist.name': 'Cultist Summoner',
 
+  // ---- Content: elite modifiers (name over an elite's life bar) ----
+  'eliteModifier.fast.name': 'Fast',
+  'eliteModifier.fat.name': 'Fat',
+  'eliteModifier.fiery.name': 'Fiery',
+  'eliteModifier.explosive.name': 'Explosive',
+
   // ---- Content: supports ----
   'support.wider_swing.name': 'Wider Swing',
   'support.wider_swing.description': 'A wider arc and a larger strike area, slightly less damage.',

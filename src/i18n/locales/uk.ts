@@ -552,6 +552,12 @@ export const uk: LocaleTable = {
   'mob.gravedigger.name': 'Могильник',
   'mob.cultist.name': 'Культист-заклинач',
 
+  // ---- Content: elite modifiers (name over an elite's life bar) ----
+  'eliteModifier.fast.name': 'Швидкий',
+  'eliteModifier.fat.name': 'Товстий',
+  'eliteModifier.fiery.name': 'Вогняний',
+  'eliteModifier.explosive.name': 'Вибуховий',
+
   // ---- Content: supports ----
   'support.wider_swing.name': 'Ширший замах',
   'support.wider_swing.description': 'Ширша дуга й більша зона удару, трохи менше урону.',

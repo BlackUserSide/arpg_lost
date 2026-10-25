@@ -4,11 +4,17 @@ import { vec } from '../math';
 import type { SupportData } from '../supports/types';
 import type { ActionDef, ClassDef, Content, MobDef } from '../world/content';
 import { clampToArena, isBoss, mobRank, spawnMob, step, type PlayerInput } from '../world/world';
-import { abandonRun, canActivateAltar, createRun, currentTemplate, levelCurveMultiplier, mobLevelScaling, mobPoolAt, openDoor, stepRun, timeLeft } from './run';
+import { abandonRun, canActivateAltar, createRun, currentTemplate, eliteModifierPoolAt, levelCurveMultiplier, mobLevelScaling, mobPoolAt, openDoor, rollEliteModifier, stepRun, timeLeft } from './run';
+import { createRng } from '../rng';
 import { planRunRewards, runOutcome } from './rewards';
 import type { MapsData, RunInput, RunState, RunStepEvent } from './types';
 
 const DT = 1 / 60;
+
+// Exact elite modifier rolls of the fixtures in the «elite modifiers» block (fixed seeds).
+const ROLLS_MAP1 = ['quick', 'tough', 'quick', 'quick', 'tough', 'quick', 'tough', 'quick'];
+const ROLLS_MAP3 = ['deep', 'deep', 'deep', 'deep', 'quick', 'deep', 'quick', 'deep'];
+const ELITES_SEED7 = ['quick', 'quick', 'quick', 'quick'];
 
 const dummy: MobDef = {
   id: 'dummy',
@@ -627,5 +633,84 @@ describe('rank scaling in combat', () => {
     elite.life = 0;
     const events = step(run.world, idle, withSupports, DT);
     expect(events.filter((e) => e.type === 'supportDrop')).toEqual([{ type: 'supportDrop', mobId: elite.id, pos: elite.pos, defId: 's', tier: 1 }]);
+  });
+});
+
+describe('elite modifiers (mobs.md «Еліти»)', () => {
+  const modContent: Content = {
+    ...content,
+    eliteModifiers: { tough: { id: 'tough', life: 3 }, quick: { id: 'quick', moveSpeed: 2 }, deep: { id: 'deep', life: 2 } },
+  };
+  const modMaps: MapsData = {
+    ...maps,
+    rules: {
+      ...maps.rules,
+      elites: {
+        ...maps.rules.elites,
+        count: { min: 2, max: 2 },
+        modifiers: [
+          { id: 'tough', weight: 1 },
+          { id: 'quick', weight: 1 },
+          { id: 'deep', weight: 5, minMapLevel: 3 },
+        ],
+      },
+    },
+  };
+
+  it('the pool on a map level: weight > 0 and minMapLevel reached, in data order', () => {
+    expect(eliteModifierPoolAt(modMaps.rules, 1).map((e) => e.id)).toEqual(['tough', 'quick']);
+    expect(eliteModifierPoolAt(modMaps.rules, 3).map((e) => e.id)).toEqual(['tough', 'quick', 'deep']);
+    expect(eliteModifierPoolAt(maps.rules, 1)).toEqual([]);
+    expect(rollEliteModifier(createRng(1), maps.rules, 1)).toBeUndefined();
+  });
+
+  it('rolls by weight with one draw (exact values for fixed seeds)', () => {
+    const rolls = (level: number): (string | undefined)[] => {
+      const rng = createRng(42);
+      return Array.from({ length: 8 }, () => rollEliteModifier(rng, modMaps.rules, level));
+    };
+    expect(rolls(1)).toEqual(ROLLS_MAP1);
+    expect(rolls(3)).toEqual(ROLLS_MAP3);
+  });
+
+  it('every elite gets exactly one modifier from the pool; ordinary mobs and the boss none; deterministic', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const run = createRun(modContent, modMaps, 'hero', seed, {}, 1);
+      for (const room of run.rooms) {
+        for (const spawn of room.waves.flat()) {
+          if (spawn.rank === 'elite') expect(['tough', 'quick']).toContain(spawn.eliteModifier);
+          else expect(spawn.eliteModifier).toBeUndefined();
+        }
+      }
+      expect(createRun(modContent, modMaps, 'hero', seed, {}, 1).rooms).toEqual(run.rooms);
+    }
+    const run = createRun(modContent, modMaps, 'hero', 7, {}, 1);
+    expect(run.rooms.flatMap((r) => r.waves.flat().filter((s) => s.rank === 'elite').map((s) => s.eliteModifier))).toEqual(ELITES_SEED7);
+  });
+
+  it('modifiers come from their own stream: the room plan of a seed is otherwise unchanged', () => {
+    const plain = createRun(content, { ...modMaps, rules: { ...modMaps.rules, elites: { ...modMaps.rules.elites, modifiers: [] } } }, 'hero', 7, {}, 1);
+    const withMods = createRun(modContent, modMaps, 'hero', 7, {}, 1);
+    const strip = (r: RunState): unknown =>
+      r.rooms.map((room) => ({ ...room, waves: room.waves.map((w) => w.map(({ eliteModifier, ...rest }) => (void eliteModifier, rest))) }));
+    expect(strip(withMods)).toEqual(strip(plain));
+    expect(withMods.rngState).toBe(plain.rngState);
+  });
+
+  it('a spawned elite carries its modifier (fat life on top of the rank); the boss never does', () => {
+    const run = createRun(modContent, modMaps, 'hero', 7, {}, 1);
+    let elites: ReturnType<typeof run.world.mobs.filter> = [];
+    for (let i = 0; i < 1000 && elites.length === 0; i++) {
+      stepRun(run, idle, modContent, modMaps, DT);
+      elites = run.world.mobs.filter((m) => m.rank === 'elite');
+    }
+    expect(elites.length).toBeGreaterThan(0);
+    for (const e of elites) {
+      expect(['tough', 'quick']).toContain(e.eliteModifier);
+      // dummy life 10 × rank 3 (× 3 for tough).
+      expect(e.maxLife).toBe(e.eliteModifier === 'tough' ? 90 : 30);
+    }
+    const boss = spawnMob(run.world, modContent, { defId: 'dummy', rank: 'boss' }, vec(200, 200), []);
+    expect(boss.eliteModifier).toBeUndefined();
   });
 });

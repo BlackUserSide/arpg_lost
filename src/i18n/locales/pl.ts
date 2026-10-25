@@ -568,6 +568,12 @@ export const pl: LocaleTable = {
   'mob.gravedigger.name': 'Grabarz',
   'mob.cultist.name': 'Kultysta-przywoływacz',
 
+  // ---- Content: elite modifiers (name over an elite's life bar) ----
+  'eliteModifier.fast.name': 'Szybki',
+  'eliteModifier.fat.name': 'Gruby',
+  'eliteModifier.fiery.name': 'Ognisty',
+  'eliteModifier.explosive.name': 'Wybuchowy',
+
   // ---- Content: supports ----
   'support.wider_swing.name': 'Szerszy zamach',
   'support.wider_swing.description': 'Szerszy łuk i większy obszar ciosu, nieco mniej obrażeń.',
