@@ -17,6 +17,7 @@ import { updateDecoys, updateZones } from './zones';
 import { updateHostileZones } from './abilities';
 import { tickHeroIgnite } from './eliteModifiers';
 import { advanceTimeStop, tickCheatDeathCooldown } from './cheatDeath';
+import { newPotion, updatePotion } from './potion';
 import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Bounds, type Ctx, type MobScale, type Obstacle, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
@@ -25,6 +26,7 @@ export { spawnMob, spawnRadius, type MobSpawn } from './mobs';
 export { inCombat, maxResource, recoverResource } from './resource';
 export { canAfford } from './actions';
 export { cheatDeathReady, cheatDeathStats, timeStopped } from './cheatDeath';
+export { newPotion, potionHealAmount } from './potion';
 export { eliteModifierDef, mobMoveSpeed } from './eliteModifiers';
 export { supportChangeSets, supportFits, supportTier } from '../supports/rules';
 export type { SupportRef } from '../supports/types';
@@ -143,6 +145,7 @@ export function createWorld(
     nextAttackCrit: false,
     souls: 0,
     cheatDeathCooldown: 0,
+    potion: newPotion(content),
     weapon: loadout.weapon ?? classDef.weapon,
     buffs: [],
     invulnerable: 0,
@@ -226,6 +229,8 @@ function updatePlayer(ctx: Ctx, dt: number): void {
   const maxShield = playerStat(classDef, player, 'energyShield');
   player.life = clamp(player.life + playerStat(classDef, player, 'lifeRegen') * dt, 0, maxLife);
   player.energyShield = clamp(player.energyShield + playerStat(classDef, player, 'energyShieldRegen') * dt, 0, maxShield);
+  // Life potion: drink on a press, running heals tick (hero time: also during a time stop).
+  updatePotion(ctx, dt);
   tickResource(classDef, player, dt);
   decayLeech(classDef, player, dt);
   // The hero's own ignite (fiery elites); a burn that kills ends the hero's step here (a cheated one does not).

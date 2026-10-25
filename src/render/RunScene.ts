@@ -55,6 +55,7 @@ import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadSprites, MOB_S
 import { BossFx } from './bossFx';
 import { EliteFx, eliteLook } from './eliteFx';
 import { UniqueFx } from './uniqueFx';
+import { PotionFx } from './potionFx';
 import { SOUL_GREEN, SOUL_VIOLET, SoulFx } from './soulFx';
 import { ClockFx, ENEMY_FX_DEPTH, HERO_STOP_DEPTH } from './clockFx';
 import { soulsMax } from '../core/world/souls';
@@ -245,8 +246,8 @@ const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: numb
   lifeCost: { color: '#ff7070', size: 15, rise: 22, duration: 650 },
 };
 
-/** F wakes the altar: LMB / RMB / Q / E are the skills (CLAUDE.md), R restarts, P opens the talents. */
-type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'P' | 'F' | 'ESC', Phaser.Input.Keyboard.Key>;
+/** F wakes the altar: LMB / RMB / Q / E are the skills (CLAUDE.md), 1 drinks the life potion, R restarts, P opens the talents. */
+type Keys = Record<'W' | 'A' | 'S' | 'D' | 'Q' | 'E' | 'R' | 'P' | 'F' | 'ESC' | 'ONE', Phaser.Input.Keyboard.Key>;
 
 const NO_MOVE = vec(0, 0);
 const NO_SKILLS: readonly boolean[] = [false, false, false];
@@ -304,6 +305,7 @@ export class RunScene extends Phaser.Scene {
   /** Elite modifier visuals (glow, death circle and blast, fiery projectiles, hero burn, fast streaks). */
   private eliteFx!: EliteFx;
   private uniqueFx!: UniqueFx;
+  private potionFx!: PotionFx;
   private soulFx!: SoulFx;
   /** Clock of the Last Moment: cheat-death trigger and the time-stop tint / dial. */
   private clockFx!: ClockFx;
@@ -326,6 +328,11 @@ export class RunScene extends Phaser.Scene {
   private skillBuffer: number[] = [];
   /** The altar button was tapped: sent as RunInput.interact with the next step. */
   private interactQueued = false;
+  /**
+   * A potion press (key 1 pressed between steps, or a tap on the potion slot): sent as RunInput.potion with the next
+   * step, so a tap shorter than a step is not lost (core drinks on the press edge).
+   */
+  private potionQueued = false;
   private mode: RunMode = SOLO_MODE;
   /** The passive tree is open over the run (the run keeps going only if the mode does not pause on menus). */
   private treeOpen = false;
@@ -400,6 +407,7 @@ export class RunScene extends Phaser.Scene {
     this.skillWasDown = [];
     this.skillBuffer = [];
     this.interactQueued = false;
+    this.potionQueued = false;
     this.counterShot = undefined;
     this.announcement = [];
     this.bossFall = undefined;
@@ -409,7 +417,7 @@ export class RunScene extends Phaser.Scene {
     }
 
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,P,F,ESC') as Keys;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,P,F,ESC,ONE') as Keys;
     this.input.on('pointerdown', (_p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => (this.uiPress = over.length > 0));
     this.input.on('pointerup', () => (this.uiPress = false));
 
@@ -423,6 +431,7 @@ export class RunScene extends Phaser.Scene {
     this.bossFx = new BossFx(this);
     this.eliteFx = new EliteFx(this);
     this.uniqueFx = new UniqueFx(this);
+    this.potionFx = new PotionFx(this);
     this.soulFx = new SoulFx(this);
     this.clockFx = new ClockFx(this);
     this.heroTinted = false;
@@ -434,7 +443,10 @@ export class RunScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#07070a');
     this.buildRoom();
 
-    this.hud = new Hud(this, getClass(this.content, this.classId), this.content.progression, this.content.skillLevels);
+    this.hud = new Hud(this, getClass(this.content, this.classId), this.content.progression, this.content.skillLevels, this.content, () => {
+      // Tap / click on the potion slot (the mobile hook until the touch controls of 0.5).
+      if (!this.paused && !this.treeOpen && !this.ended()) this.potionQueued = true;
+    });
     this.runHud = new RunHud(this, mapsData, () => (this.interactQueued = true), this.content);
     this.pointer = pinToScreen(this.add.graphics(), HUD_UI_DEPTH - 2);
     this.overlay = undefined;
@@ -519,6 +531,7 @@ export class RunScene extends Phaser.Scene {
     this.bossFx.clear();
     this.eliteFx.clear();
     this.uniqueFx.clear();
+    this.potionFx.clear();
     this.soulFx.clear();
     this.clockFx.clear(timeStopped(this.world));
     this.immuneShown.clear();
@@ -615,6 +628,7 @@ export class RunScene extends Phaser.Scene {
     this.skillBuffer = [];
     this.skillWasDown = [];
     this.interactQueued = false;
+    this.potionQueued = false;
     this.uiPress = false;
     this.accumulator = 0;
   }
@@ -896,6 +910,7 @@ export class RunScene extends Phaser.Scene {
         this.openTree();
         return;
       }
+      if (Phaser.Input.Keyboard.JustDown(this.keys.ONE) && !this.paused && !ended) this.potionQueued = true;
     }
     if (this.paused) return;
 
@@ -1008,6 +1023,9 @@ export class RunScene extends Phaser.Scene {
     });
     const interact = k.F.isDown || this.interactQueued;
     this.interactQueued = false;
+    // Held key or a queued press; core drinks once per press edge.
+    const potion = k.ONE.isDown || this.potionQueued;
+    this.potionQueued = false;
     return {
       move: screenDirToWorld(screenMove),
       // Aim at ground level under the cursor; sprites stand on their feet.
@@ -1015,6 +1033,7 @@ export class RunScene extends Phaser.Scene {
       basicAttack: pointer.leftButtonDown() && !this.uiPress,
       skills,
       interact,
+      potion,
     };
   }
 
@@ -1405,6 +1424,18 @@ export class RunScene extends Phaser.Scene {
       case 'timeStopEnd':
         this.clockFx.resume(this.hero.sprite.x, this.hero.sprite.y);
         break;
+      case 'potionDrink':
+        // The whole heal as one number (it is restored over event.duration; the orb glows meanwhile).
+        this.spawnDamageNumber(event.pos, event.amount, 'heal');
+        this.potionFx.drink(this.hero.sprite.x, this.hero.sprite.y, BODY_PX);
+        this.hud.potionDrink();
+        break;
+      case 'potionDenied':
+        this.hud.potionDenied(event.reason, this.world);
+        break;
+      case 'potionCharge':
+        this.hud.potionCharge();
+        break;
       default:
         break;
     }
@@ -1781,6 +1812,7 @@ export class RunScene extends Phaser.Scene {
     const soulsFull = maxSouls !== undefined && player.souls >= maxSouls && !player.dead;
     this.soulFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, soulsFull, this.world.time);
     this.supportFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y);
+    this.potionFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, player.potion.heals.length > 0 && !player.dead);
 
     for (const p of this.world.projectiles) {
       const pos = this.interpolated(p.id, p.pos);
