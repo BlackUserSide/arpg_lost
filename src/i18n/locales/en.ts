@@ -461,6 +461,7 @@ export const en = {
   'hud.clock': 'Last Moment',
   'hud.clockReady': 'Ready',
   'hud.clockPenalty': '+{pct} damage taken',
+  'hud.allies': 'Skeletons',
   /** Life potion slot: tooltip title, heal line (life / energy shield pool), charges, refill note; denied captions. */
   'hud.potion': 'Life Potion',
   'hud.potionHeal': 'Heals {amount} life over {seconds} s',
@@ -495,6 +496,7 @@ export const en = {
   'arena.lastMoment': 'Last Moment!',
   'arena.levelUpLine': 'Level {level}  ·  {restored}',
   'arena.restoredBoth': 'Life and {resName} restored',
+  'arena.allyResource': '+{amount} {resName}',
   'arena.restoredLife': 'Life restored',
   // ---- Map run (docs/design/maps.md) ----
   'run.map': 'Map {map}',
@@ -813,4 +815,7 @@ export const en = {
   'unique.clock_last_moment.name': 'Clock of the Last Moment',
   'unique.clock_last_moment.effect':
     'A lethal hit does not kill you: you are left at {life} Life and time stops for enemies for {seconds} s. Once every {cooldown} s. While the Clock is rewinding you take {pct} more Damage',
+  'unique.abyss_eye.name': 'Eye of the Abyss',
+  'unique.abyss_eye.effect':
+    'Slain enemies (except bosses) rise as your skeletons for {seconds} s, up to {max} at once. Enemies attack the skeletons. Your Resource does not regenerate and is not gained from hits or damage taken: each kill by your skeletons restores {pct} of it',
 } satisfies Record<string, Message>;

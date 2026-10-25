@@ -27,6 +27,7 @@ import type { MobAbilitiesDef, MobAbilityDef, MobDef } from './content';
 import { damagePlayer, spawnMob } from './mobs';
 import { mobActionSpeedMultiplier } from './eliteModifiers';
 import { timeStopped } from './cheatDeath';
+import { alliesInside, damageAlly } from './allies';
 import { clampToArena, getMob, type Ctx, type HostileZone, type MobState, type WorldState } from './state';
 import type { MobTarget } from './zones';
 
@@ -210,6 +211,10 @@ function resolveAbility(ctx: Ctx, mob: MobState, def: MobDef, a: MobAbilityDef, 
       const player = world.player;
       const inside = !player.dead && distance(player.pos, mob.pos) <= a.radius + player.radius;
       const hit = inside && damagePlayer(ctx, a.damage, a.critChance ?? 0, { damageScale: mob.damageScale, eliteModifier: mob.eliteModifier });
+      // Raised allies caught in it are hit too (own rolls, after the hero), bosses' novas included.
+      for (const ally of alliesInside(world, mob.pos, a.radius)) {
+        damageAlly(ctx, ally, a.damage, a.critChance ?? 0, { damageScale: mob.damageScale, eliteModifier: mob.eliteModifier });
+      }
       events.push({ ...base, radius: a.radius, hit });
       return;
     }
@@ -293,12 +298,16 @@ export function updateHostileZones(ctx: Ctx, dt: number): void {
     const player = world.player;
     const inside = !player.dead && distance(player.pos, zone.pos) <= zone.radius + player.radius;
     let hit = false;
-    if (inside) {
+    const allies = alliesInside(world, zone.pos, zone.radius);
+    if (inside || allies.length > 0) {
       // Death zones (source 'eliteDeath') carry their own hit; ability zones use their ability's.
       const { damage, critChance } = zone.damage
         ? { damage: zone.damage, critChance: zone.critChance ?? 0 }
         : abilityHit(getMob(content, zone.sourceDefId), zone.abilityId);
-      hit = damagePlayer(ctx, damage, critChance, { damageScale: zone.damageScale, eliteModifier: zone.eliteModifier });
+      const source = { damageScale: zone.damageScale, eliteModifier: zone.eliteModifier };
+      if (inside) hit = damagePlayer(ctx, damage, critChance, source);
+      // Raised allies inside are hit too (own rolls, after the hero).
+      for (const ally of allies) damageAlly(ctx, ally, damage, critChance, source);
     }
     events.push({
       type: 'hostileZoneErupt',

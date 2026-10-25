@@ -17,8 +17,9 @@ import { elementalArmourEffectiveness } from './passiveEffects';
 import { gainSoul } from './souls';
 import { gainPotionPoints } from './potion';
 import { killHero, timeStopped } from './cheatDeath';
-import { mobTarget } from './zones';
-import { allModifiers, clampToArena, getMob, mobRank, playerStat, type Ctx, type MobState, type WorldEvent, type WorldState } from './state';
+import { mobTarget, targetAlly, targetDecoy } from './zones';
+import { damageAlly, onMobDeath } from './allies';
+import { allModifiers, clampToArena, getMob, MELEE_APPROACH, mobRank, playerStat, type Ctx, type MobState, type WorldEvent, type WorldState } from './state';
 
 /**
  * Every living mob for one step. During a time stop (cheatDeath, timeStopped) nothing of a mob runs: no movement,
@@ -64,7 +65,7 @@ export function updateMobs(ctx: Ctx, dt: number): void {
       continue;
     }
 
-    // The hero, or a decoy taunting this mob (mobTarget): the mob chases and attacks it the same way.
+    // The hero, a decoy taunting this mob or the nearest raised ally (mobTarget): the mob chases and attacks it the same way.
     const target = mobTarget(world, mob, mobRank(def, mob) === 'boss');
     // Busy with an ability (its start, wind-up or resolve step): the mob stands still, does not use its basic attack,
     // and the basic attack timer waits.
@@ -80,13 +81,15 @@ export function updateMobs(ctx: Ctx, dt: number): void {
       // Ranged: close in to preferred range, back off if the player gets too close.
       if (gap > def.preferredRange) mob.pos = add(mob.pos, scale(toTarget, Math.min(maxStep, gap - def.preferredRange)));
       else if (gap < def.preferredRange * 0.6) mob.pos = add(mob.pos, scale(toTarget, -maxStep));
-    } else if (gap > def.attack.range * 0.8) {
+    } else if (gap > def.attack.range * MELEE_APPROACH) {
       mob.pos = add(mob.pos, scale(toTarget, Math.min(maxStep, gap)));
     }
 
     if (gap <= def.attack.range && mob.attackTimer <= 0 && !player.dead) {
       mob.attackTimer = def.attack.interval;
-      events.push({ type: 'mobAttack', id: mob.id, ...(target.decoy ? { decoyId: target.decoy.id } : {}) });
+      const decoy = targetDecoy(target);
+      const ally = targetAlly(target);
+      events.push({ type: 'mobAttack', id: mob.id, ...(decoy ? { decoyId: decoy.id } : {}), ...(ally ? { allyId: ally.id } : {}) });
       if (def.attack.projectile) {
         world.projectiles.push({
           id: world.nextId++,
@@ -105,7 +108,10 @@ export function updateMobs(ctx: Ctx, dt: number): void {
           ...(mob.damageScale !== undefined ? { damageScale: mob.damageScale } : {}),
           ...(mob.eliteModifier !== undefined ? { eliteModifier: mob.eliteModifier } : {}),
         });
-      } else if (!target.decoy) {
+      } else if (ally) {
+        // A melee swing at a raised ally (allies.ts): the same roll as on the hero; no statuses, no counter-attack.
+        damageAlly(ctx, ally, def.attack.damage, def.attack.critChance, { damageScale: mob.damageScale, eliteModifier: mob.eliteModifier });
+      } else if (!decoy) {
         // A melee swing at a decoy does nothing (it has no life): the mob just wastes its attack.
         hitPlayer(ctx, def, { damageScale: mob.damageScale, meleeAttacker: mob, eliteModifier: mob.eliteModifier });
       }
@@ -253,6 +259,8 @@ export function removeDeadMobs(ctx: Ctx): void {
       // Life potion: kill points by rank (decision 2026-10-26; minions give nothing like every other reward).
       gainPotionPoints(ctx, mobRank(def, mob));
     }
+    // Eye of the Abyss (raiseAllies): an ally's killing blow restores resource; every non-boss death (minions too) rises.
+    onMobDeath(ctx, mob);
     queue.push(...heroDeathExplosions(ctx, mob));
     // An exploding elite («Вибуховий») leaves its telegraphed death zone (hits the hero ~1 s later).
     spawnDeathZone(ctx, mob);

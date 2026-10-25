@@ -59,6 +59,7 @@ import { PotionFx } from './potionFx';
 import { SOUL_GREEN, SOUL_VIOLET, SoulFx } from './soulFx';
 import { ClockFx, ENEMY_FX_DEPTH, HERO_STOP_DEPTH } from './clockFx';
 import { soulsMax } from '../core/world/souls';
+import { AllyFx } from './allyFx';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
 // Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
@@ -131,12 +132,24 @@ const IMMUNE_TEXT_INTERVAL = 0.45;
 /** Immune roar: the boss flickers violet. */
 const IMMUNE_TINTS = [0x6a3aaa, 0x9a6ae0] as const;
 
-type FloatTextKind = 'interrupt' | 'immune' | 'lastMoment';
+type FloatTextKind = 'interrupt' | 'immune' | 'lastMoment' | 'allyResource';
 const FLOAT_TEXT_STYLES: Record<FloatTextKind, { color: string; size: number; rise: number; duration: number }> = {
   interrupt: { color: '#e8d4ff', size: 20, rise: 34, duration: 900 },
   immune: { color: '#c8b0ff', size: 18, rise: 24, duration: 650 },
   lastMoment: { color: '#bfeaff', size: 26, rise: 46, duration: 1300 },
+  /** Resource restored by a skeleton's kill (Eye of the Abyss): small, in the class resource colour (set per use). */
+  allyResource: { color: '#9dffe0', size: 17, rise: 26, duration: 800 },
 };
+/** Class resource colours of the ally-kill popup (the HUD orb text colours). */
+const RESOURCE_POPUP_COLORS: Readonly<Record<string, string>> = { rage: '#ffb45a', energy: '#e6f07a', mana: '#8fb3ff' };
+/** Raised allies: how long their remains show after crumbling (timeout / cap) or shattering (killed). */
+const ALLY_CRUMBLE_TIME = 1.0;
+const ALLY_SHATTER_TIME = 0.45;
+const ALLY_CRUMBLE_TINT = 0x5a7a70;
+/** Seconds of the pale flash on an ally hit by an enemy. */
+const ALLY_STRUCK = 0.15;
+/** The mob corpse an ally rises from fades out this fast (the skeleton takes its place). */
+const RAISED_CORPSE_TIME = 0.45;
 
 /**
  * How ranked mobs stand out (visual only; their strength is core rank scaling). Their size is not here: the sprite
@@ -204,6 +217,18 @@ interface EliteMark {
 interface Corpse {
   actor: Actor;
   ttl: number;
+  /** Mob id it was (an ally may rise from it); undefined for allies' remains. */
+  id?: number;
+  /** Opacity it starts its fade from (translucent allies); default 1. */
+  alpha?: number;
+}
+
+/** A raised ally on screen (Eye of the Abyss): an actor with the spectral look. */
+interface AllyView {
+  actor: Actor;
+  glow: Phaser.Filters.Glow | undefined;
+  /** Seconds left of the pale flash after an enemy hit. */
+  struck: number;
 }
 
 interface AreaFx {
@@ -229,7 +254,7 @@ type OverlayKind = 'pause' | 'end';
 /** Lift of Chain Lightning bolts above the floor (screen px): roughly mid-body. */
 const CHAIN_HEIGHT = 30;
 
-type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot' | 'playerDot' | 'bleed' | 'heal' | 'lifeCost';
+type DamageNumberKind = 'hit' | 'crit' | 'player' | 'dot' | 'playerDot' | 'bleed' | 'heal' | 'lifeCost' | 'ally' | 'allyCrit' | 'allyHurt';
 
 /** Visual-only damage number looks. */
 const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: number; rise: number; duration: number }> = {
@@ -244,6 +269,11 @@ const DAMAGE_NUMBER_STYLES: Record<DamageNumberKind, { color: string; size: numb
   heal: { color: '#5cff8a', size: 16, rise: 34, duration: 700 },
   /** Life paid for a skill use (Rift Ring): a small red number with a minus, apart from hits taken. */
   lifeCost: { color: '#ff7070', size: 15, rise: 22, duration: 650 },
+  /** A raised skeleton's hit on a mob: muted teal, a bit smaller than the hero's, so his own damage stays the loud one. */
+  ally: { color: '#8fcfbf', size: 15, rise: 24, duration: 550 },
+  allyCrit: { color: '#b8ffe8', size: 19, rise: 26, duration: 600 },
+  /** Damage an enemy dealt to a skeleton: small and dusky, apart from the hero's red. */
+  allyHurt: { color: '#b89a9a', size: 13, rise: 18, duration: 550 },
 };
 
 /** F wakes the altar: LMB / RMB / Q / E are the skills (CLAUDE.md), 1 drinks the life potion, R restarts, P opens the talents. */
@@ -282,6 +312,9 @@ export class RunScene extends Phaser.Scene {
   private keys!: Keys;
   private hero!: Actor;
   private mobs = new Map<number, Actor>();
+  /** Raised allies (Eye of the Abyss) by core ally id. */
+  private allies = new Map<number, AllyView>();
+  private allyFx!: AllyFx;
   private corpses: Corpse[] = [];
   private areas: AreaFx[] = [];
   private fx!: Phaser.GameObjects.Graphics;
@@ -311,6 +344,8 @@ export class RunScene extends Phaser.Scene {
   private clockFx!: ClockFx;
   /** Mob marks and mob projectiles: under the time-stop tint (fxTop with the hero's effects stays above it). */
   private fxEnemy!: Phaser.GameObjects.Graphics;
+  /** Ally ground rings while the time-stop tint is on: over the tint, just under the lifted ally sprites. */
+  private fxAllyStop!: Phaser.GameObjects.Graphics;
   /**
    * Render clock of the enemies' looks (pulses, flicker, spins): runs with frame time, holds still while core time is
    * stopped (timeStopped), so frozen mobs, their projectiles and zones do not shimmer.
@@ -398,6 +433,7 @@ export class RunScene extends Phaser.Scene {
     this.alpha = 1;
     this.prevPositions.clear();
     this.mobs.clear();
+    this.allies.clear();
     this.corpses = [];
     this.areas = [];
     this.textPool = [];
@@ -425,6 +461,7 @@ export class RunScene extends Phaser.Scene {
     this.fx = this.add.graphics().setDepth(-1000);
     this.fxTop = this.add.graphics().setDepth(4000);
     this.fxEnemy = this.add.graphics().setDepth(ENEMY_FX_DEPTH);
+    this.fxAllyStop = this.add.graphics().setDepth(HERO_STOP_DEPTH - 2);
     this.enemyTime = 0;
     this.combatFx = new CombatFx(this);
     this.skillFx = new SkillFx(this);
@@ -434,6 +471,7 @@ export class RunScene extends Phaser.Scene {
     this.potionFx = new PotionFx(this);
     this.soulFx = new SoulFx(this);
     this.clockFx = new ClockFx(this);
+    this.allyFx = new AllyFx(this);
     this.heroTinted = false;
     this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
@@ -517,6 +555,10 @@ export class RunScene extends Phaser.Scene {
       actor.sprite.destroy();
     }
     this.mobs.clear();
+    // Raised allies stay behind (core clears WorldState.allies without expire events).
+    for (const view of this.allies.values()) view.actor.sprite.destroy();
+    this.allies.clear();
+    this.allyFx.clear();
     for (const corpse of this.corpses) corpse.actor.sprite.destroy();
     this.corpses = [];
     this.areas = [];
@@ -1251,7 +1293,53 @@ export class RunScene extends Phaser.Scene {
         // A frozen mob holds its pose.
         // A casting mob keeps its wind-up pose.
         if (actor && !actor.oneShot && !actor.frozen && !actor.pose) this.playOneShot(actor, 'hit');
-        this.spawnDamageNumber(event.pos, event.amount, event.isCrit ? 'crit' : event.targetId === PLAYER_ID ? 'player' : 'hit');
+        // A skeleton's hit (Eye of the Abyss): muted teal numbers, apart from the hero's own damage.
+        const kind: DamageNumberKind =
+          event.source === 'ally' ? (event.isCrit ? 'allyCrit' : 'ally') : event.isCrit ? 'crit' : event.targetId === PLAYER_ID ? 'player' : 'hit';
+        this.spawnDamageNumber(event.pos, event.amount, kind);
+        break;
+      }
+      case 'allySpawn': {
+        // The dead mob's body gives way to the skeleton climbing out of it.
+        for (const corpse of this.corpses) if (corpse.id === event.mobId) corpse.ttl = Math.min(corpse.ttl, RAISED_CORPSE_TIME);
+        const view = this.allyView(event.allyId, event.defId, event.pos);
+        if (SPRITE_SETS[view.actor.set]?.spawn) this.playOneShot(view.actor, 'spawn');
+        const s = toScreen(event.pos);
+        this.allyFx.rise(s.x, s.y);
+        break;
+      }
+      case 'allyAttack': {
+        const view = this.allies.get(event.allyId);
+        if (!view) break;
+        view.actor.facing = event.facing;
+        this.playOneShot(view.actor, ATTACK_ANIMS[view.actor.set] ?? 'attack');
+        const ally = this.world.allies.find((a) => a.id === event.allyId);
+        if (ally) {
+          const here = toScreen(ally.pos);
+          const ahead = toScreen(vec(ally.pos.x + event.facing.x, ally.pos.y + event.facing.y));
+          this.allyFx.swing(view.actor.sprite.x, view.actor.sprite.y, ahead.x - here.x, ahead.y - here.y, BODY_PX * view.actor.scale);
+        }
+        break;
+      }
+      case 'allyHit': {
+        const view = this.allies.get(event.allyId);
+        if (view) {
+          view.struck = ALLY_STRUCK;
+          if (!view.actor.oneShot) this.playOneShot(view.actor, 'hit');
+        }
+        this.spawnDamageNumber(event.pos, event.amount, 'allyHurt');
+        break;
+      }
+      case 'allyExpire':
+        this.allyGone(event.allyId, event.reason);
+        break;
+      case 'allyKill': {
+        // Resource restored by a skeleton's kill: a small popup over the hero in the resource's colour.
+        const amount = Math.round(event.resource);
+        if (amount < 1) break;
+        const resId = getClass(this.content, this.classId).resource.id;
+        const message = t('arena.allyResource', { amount, resName: resourceText(resId), resGen: resourceText(resId, 'gen') });
+        this.spawnFloatText(this.world.player.pos, message, 'allyResource', BODY_PX + 36, RESOURCE_POPUP_COLORS[resId]);
         break;
       }
       case 'death': {
@@ -1274,7 +1362,7 @@ export class RunScene extends Phaser.Scene {
             actor.sprite.setTint(CRUMBLE_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
             this.bossFx.crumble(actor.sprite.x, actor.sprite.y);
           }
-          this.corpses.push({ actor, ttl: crumbles ? CRUMBLE_CORPSE_TIME : actor.rank === 'boss' ? CORPSE_TIME * 3 : CORPSE_TIME });
+          this.corpses.push({ actor, id: event.id, ttl: crumbles ? CRUMBLE_CORPSE_TIME : actor.rank === 'boss' ? CORPSE_TIME * 3 : CORPSE_TIME });
           this.mobs.delete(event.id);
           this.immuneShown.delete(event.id);
           if (actor.rank !== 'normal') {
@@ -1457,6 +1545,7 @@ export class RunScene extends Phaser.Scene {
     prev.clear();
     prev.set(PLAYER_ID, this.world.player.pos);
     for (const mob of this.world.mobs) prev.set(mob.id, mob.pos);
+    for (const ally of this.world.allies) prev.set(ally.id, ally.pos);
     for (const p of this.world.projectiles) prev.set(p.id, p.pos);
   }
 
@@ -1555,7 +1644,64 @@ export class RunScene extends Phaser.Scene {
       else if (actor.rank !== 'normal') actor.sprite.setTint(RANK_LOOKS[actor.rank].tint).setTintMode(Phaser.TintModes.MULTIPLY);
       else actor.sprite.clearTint();
     }
+    this.syncAllies(dt);
     this.updateDotNumbers(dt);
+  }
+
+  /**
+   * Raised allies (Eye of the Abyss): hero-side, so they keep moving and animating through a time stop. Their look
+   * fades in the last seconds of their lifetime (AllyFx.style).
+   */
+  private syncAllies(dt: number): void {
+    for (const ally of this.world.allies) {
+      if (ally.life <= 0) continue;
+      const view = this.allyView(ally.id, ally.defId, ally.pos);
+      const actor = view.actor;
+      // An attack swing keeps facing its target (the allyAttack event); otherwise the core facing.
+      if (!actor.oneShot || actor.oneShot.anim !== (ATTACK_ANIMS[actor.set] ?? 'attack')) actor.facing = ally.facing;
+      const target = this.interpolated(ally.id, ally.pos);
+      if (distance(actor.display, target) > SNAP_DISTANCE) actor.display = target;
+      else {
+        const k = 1 - Math.exp(-MOB_SMOOTHING * dt);
+        actor.display = vec(actor.display.x + (target.x - actor.display.x) * k, actor.display.y + (target.y - actor.display.y) * k);
+      }
+      this.updateActor(actor, dt, this.speedOf(ally.id, ally.pos), ally.moveSpeed);
+      // Over the time-stop tint like the hero (just under the dial): allies keep their colour and keep moving.
+      if (this.clockFx.active()) actor.sprite.setDepth(HERO_STOP_DEPTH - 1.5);
+      view.struck = Math.max(0, view.struck - dt);
+      this.allyFx.style(actor.sprite, view.glow, ally.remaining, this.world.time, ally.id, view.struck);
+    }
+  }
+
+  /** The view of ally `id`, created on first sight (spectral look). */
+  private allyView(id: number, defId: string, pos: Vec2): AllyView {
+    let view = this.allies.get(id);
+    if (view) return view;
+    const set = MOB_SPRITES[defId] ?? 'skeleton_warrior';
+    const actor = this.createActor(set, pos, 'normal', spriteLayout(set).nativeScale);
+    view = { actor, glow: this.allyFx.dress(actor.sprite), struck: 0 };
+    this.allies.set(id, view);
+    return view;
+  }
+
+  /** Ally `id` is gone: shattered (killed by enemies) or crumbled (its time ran out / a newer one took its place). */
+  private allyGone(id: number, reason: 'timeout' | 'killed' | 'cap'): void {
+    const view = this.allies.get(id);
+    if (!view) return;
+    this.allies.delete(id);
+    const actor = view.actor;
+    this.allyFx.undress(actor.sprite, view.glow);
+    this.playOneShot(actor, 'death');
+    actor.sprite.setDepth(actor.sprite.y - 40);
+    const killed = reason === 'killed';
+    if (killed) {
+      this.allyFx.shatter(actor.sprite.x, actor.sprite.y, BODY_PX * actor.scale);
+      actor.sprite.setTint(0xc8fff0).setTintMode(Phaser.TintModes.SCREEN);
+    } else {
+      this.allyFx.crumble(actor.sprite.x, actor.sprite.y);
+      actor.sprite.setTint(ALLY_CRUMBLE_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
+    }
+    this.corpses.push({ actor, ttl: killed ? ALLY_SHATTER_TIME : ALLY_CRUMBLE_TIME, alpha: actor.sprite.alpha });
   }
 
   /** Adds damage-over-time style damage (ignite, ground zone ticks) to the mob's pending small number. */
@@ -1679,7 +1825,7 @@ export class RunScene extends Phaser.Scene {
       corpse.ttl -= dt;
       corpse.actor.time += dt;
       this.applyFrame(corpse.actor, dt);
-      corpse.actor.sprite.setAlpha(Math.min(1, corpse.ttl / 0.5));
+      corpse.actor.sprite.setAlpha((corpse.alpha ?? 1) * Math.min(1, corpse.ttl / 0.5));
       if (corpse.ttl > 0) alive.push(corpse);
       else corpse.actor.sprite.destroy();
     }
@@ -1705,6 +1851,16 @@ export class RunScene extends Phaser.Scene {
       this.skillFx.drawDecoy(g, decoy.id, p.x, p.y, decoy.radius, ORIGIN_Y, dt);
     }
     this.skillFx.updateFadingGhosts(dt);
+    // Raised allies: a teal ring under each, a small life bar (once hurt) and the lifetime line over the head. During a
+    // time stop their rings go over the tint with them (the sprites are lifted to HERO_STOP_DEPTH - 1.5).
+    const allyGround = this.clockFx.active() ? this.fxAllyStop : g;
+    this.fxAllyStop.clear();
+    for (const ally of this.world.allies) {
+      const view = this.allies.get(ally.id);
+      if (!view || ally.life <= 0) continue;
+      const { x, y } = view.actor.sprite;
+      this.allyFx.drawAlly(allyGround, top, x, y, ally.radius, BODY_PX * view.actor.scale, ally.life / ally.maxLife, ally.remaining / ally.duration, this.world.time, ally.id);
+    }
     // Grave circles (hostile zones): warning discs filling up until they erupt.
     for (const zone of this.world.hostileZones) {
       const p = toScreen(zone.pos);
@@ -1807,6 +1963,7 @@ export class RunScene extends Phaser.Scene {
     this.bossFx.drawBursts(g, top, dt);
     this.eliteFx.drawBursts(g, top, dt);
     this.uniqueFx.drawBursts(g, top, dt);
+    this.allyFx.drawBursts(g, top, dt);
     this.uniqueFx.drawCritMark(top, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, player.nextAttackCrit && !player.dead, this.world.time, dt);
     const maxSouls = soulsMax(player);
     const soulsFull = maxSouls !== undefined && player.souls >= maxSouls && !player.dead;
@@ -1983,13 +2140,13 @@ export class RunScene extends Phaser.Scene {
   }
 
   /** A short floating label (localized) over a mob at world `pos`, `lift` px above its feet; pooled like damage numbers. */
-  private spawnFloatText(pos: Vec2, message: string, kind: FloatTextKind, lift: number): void {
+  private spawnFloatText(pos: Vec2, message: string, kind: FloatTextKind, lift: number, color?: string): void {
     const style = FLOAT_TEXT_STYLES[kind];
     const screen = toScreen(pos);
     const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
     // Keep it below the run HUD (timer, boss bar), which would hide it when the mob stands near the top of the screen.
     const minY = this.cameras.main.worldView.y + this.runHud.bottom() + 16 + style.rise;
-    text.setText(message).setPosition(screen.x, Math.max(screen.y - lift, minY)).setColor(style.color).setFontSize(style.size).setAlpha(1).setVisible(true);
+    text.setText(message).setPosition(screen.x, Math.max(screen.y - lift, minY)).setColor(color ?? style.color).setFontSize(style.size).setAlpha(1).setVisible(true);
     this.tweens.add({
       targets: text,
       y: text.y - style.rise,

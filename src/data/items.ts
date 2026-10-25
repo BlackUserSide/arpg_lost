@@ -372,6 +372,44 @@ const uniqueList: UniqueDef[] = [
       pct: { path: 'mechanics.1.modifiers.0.value', format: 'percent' },
     },
   },
+  // L3 Eye of the Abyss (amulet): every non-boss death (minions too) rises as your skeleton for 8 s, max 6 (the oldest
+  // crumbles); enemies (not bosses) attack the skeletons, which have life and draw them off the hero. Strength = the
+  // skeleton warrior (zombie def) × the map's mob growth, multipliers 1 (designer 2026-10-26). Cost: the class resource
+  // does not recover by itself (no regen, on-hit or damage-taken gains; Rage decay stays); a skeleton's kill restores
+  // 10% of max. PROPOSAL (agent): skeletons move at 2.5 × the zombie's speed (~190, close to the hero's 200) so they
+  // keep up; leash 400 around the hero; they stop 70 from the hero when following. Level 15 and weight like the others.
+  {
+    id: 'abyss_eye',
+    rarity: 'legendary',
+    baseId: 'jade_amulet',
+    level: 15,
+    weight: 100,
+    stats: [
+      uline({ stat: 'life', kind: 'flat' }, int([12, 20], [21, 32], [33, 46], [47, 60], [61, 75])),
+      uline({ stat: 'damage', kind: 'increased' }, pct([0.12, 0.16], [0.17, 0.23], [0.24, 0.31], [0.32, 0.4], [0.41, 0.5])),
+      uline({ stat: 'resource', kind: 'increased' }, pct([0.06, 0.09], [0.1, 0.13], [0.14, 0.17], [0.18, 0.21], [0.22, 0.25])),
+    ],
+    mechanics: [
+      {
+        kind: 'raiseAllies',
+        mobId: 'zombie',
+        duration: 8,
+        max: 6,
+        lifeMultiplier: 1,
+        damageMultiplier: 1,
+        moveSpeedMultiplier: 2.5,
+        leashRadius: 400,
+        followDistance: 70,
+        resourcePerKill: 0.1,
+      },
+      { kind: 'allyOnlyResource' },
+    ],
+    effectParams: {
+      seconds: { path: 'mechanics.0.duration' },
+      max: { path: 'mechanics.0.max' },
+      pct: { path: 'mechanics.0.resourcePerKill', format: 'percent' },
+    },
+  },
 ];
 
 const rules: LootRules = {

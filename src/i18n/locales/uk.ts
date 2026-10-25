@@ -468,6 +468,7 @@ export const uk: LocaleTable = {
   'hud.clock': 'Остання мить',
   'hud.clockReady': 'Готово',
   'hud.clockPenalty': '+{pct} отриманого урону',
+  'hud.allies': 'Скелети',
   'hud.potion': 'Зілля життя',
   'hud.potionHeal': 'Лікує {amount} життя за {seconds} с',
   'hud.potionHealShield': 'Відновлює {amount} енергетичного щита за {seconds} с',
@@ -501,6 +502,7 @@ export const uk: LocaleTable = {
   'arena.lastMoment': 'Остання мить!',
   'arena.levelUpLine': 'Рівень {level}  ·  {restored}',
   'arena.restoredBoth': 'Відновлено життя й {resAcc}',
+  'arena.allyResource': '+{amount} {resGen}',
   'arena.restoredLife': 'Відновлено життя',
   // ---- Map run ----
   'run.map': 'Карта {map}',
@@ -829,4 +831,7 @@ export const uk: LocaleTable = {
   'unique.clock_last_moment.name': 'Годинник Останньої Миті',
   'unique.clock_last_moment.effect':
     'Смертельний удар не вбиває: у вас лишається {life} життя, а час для ворогів зупиняється на {seconds} с. Раз на {cooldown} с. Поки годинник «заводиться», ви отримуєте на {pct} більше урону',
+  'unique.abyss_eye.name': 'Око Безодні',
+  'unique.abyss_eye.effect':
+    'Убиті вороги (крім босів) повстають вашими скелетами на {seconds} с, до {max} одночасно. Вороги атакують скелетів. Ваш ресурс не відновлюється сам — ні з часом, ні від ударів чи отриманого урону: кожне вбивство скелетом повертає {pct} ресурсу',
 };

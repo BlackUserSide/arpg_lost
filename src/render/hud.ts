@@ -16,6 +16,7 @@ import { t, upper } from '../i18n';
 import { skillIcon } from './hudIcons';
 import { formatCost, resourceText } from './resourceText';
 import { ClockBadge } from './clockHud';
+import { AlliesBadge } from './alliesHud';
 import { POTION_ROSE } from './potionFx';
 import { PotionSlot } from './potionHud';
 import { SoulsBadge } from './soulsHud';
@@ -188,9 +189,12 @@ export class Hud {
   private readonly souls: SoulsBadge;
   /** Clock of the Last Moment recharge badge: in the souls spot, or stacked above the souls pill when both show. */
   private readonly clock: ClockBadge;
-  /** Where the clock badge goes (bottom edge, screen px) alone / above the souls pill; which one it has now. */
-  private clockSpot = { x: 0, alone: 0, stacked: 0, maxRight: 0 };
-  private clockStacked: boolean | undefined;
+  /** Eye of the Abyss skeleton counter: stacked like the clock (above whichever badges show below it). */
+  private readonly allies: AlliesBadge;
+  /** Where the stacked badges start (bottom edge of the lowest, screen px), the gap between them, the right edge. */
+  private badgeSpot = { x: 0, bottom: 0, gap: 0, maxRight: 0 };
+  /** Which of souls / clock / allies were visible at the last stacking (bit mask); -1 = lay out again. */
+  private badgeMask = -1;
   /** Life potion slot left of the skill bar (absent without Content.lifePotion). */
   private readonly potion: PotionSlot | undefined;
   /** Glow on the life orb while a potion heal runs, 0..1. */
@@ -262,6 +266,7 @@ export class Hud {
     this.resourceNote.setStroke('#000', 3);
     this.souls = new SoulsBadge(scene, DEPTH + 2);
     this.clock = new ClockBadge(scene, DEPTH + 2);
+    this.allies = new AlliesBadge(scene, DEPTH + 2);
     this.potion = content?.lifePotion ? new PotionSlot(scene, DEPTH, content.lifePotion, content, classDef, onPotionPress) : undefined;
   }
 
@@ -304,8 +309,8 @@ export class Hud {
     // Souls pill above the resource name (its caption on top), clear of the skill bar on narrow phones.
     const soulsBottom = this.resourceName.y - this.resourceName.height - (compact ? 6 : 8);
     this.souls.layout(this.resource.x, soulsBottom, compact);
-    this.clockSpot = { x: this.resource.x, alone: soulsBottom, stacked: soulsBottom - this.souls.stackHeight - (compact ? 2 : 4), maxRight: width - 4 };
-    this.clockStacked = undefined;
+    this.badgeSpot = { x: this.resource.x, bottom: soulsBottom, gap: compact ? 2 : 4, maxRight: width - 4 };
+    this.badgeMask = -1;
     // XP bar spans the skill bar, just above it; level number to its left.
     const barH = compact ? 6 : 8;
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - levelStrip - size - (compact ? 10 : 14) - barH, w: total, h: barH };
@@ -412,13 +417,21 @@ export class Hud {
     }
 
     this.souls.update(p, dt);
-    const stacked = this.souls.visible;
-    if (stacked !== this.clockStacked) {
-      this.clockStacked = stacked;
-      const spot = this.clockSpot;
-      this.clock.layout(spot.x, stacked ? spot.stacked : spot.alone, this.compact, spot.maxRight);
-    }
     this.clock.update(p, dt);
+    this.allies.refresh(world);
+    // Badges stack upwards from the souls spot: souls, then the clock, then the skeleton counter, each above the
+    // visible ones below it (re-laid only when the set of visible badges changes).
+    const mask = (this.souls.visible ? 1 : 0) | (this.clock.visible ? 2 : 0) | (this.allies.visible ? 4 : 0);
+    if (mask !== this.badgeMask) {
+      this.badgeMask = mask;
+      const spot = this.badgeSpot;
+      let bottom = spot.bottom;
+      if (this.souls.visible) bottom -= this.souls.stackHeight + spot.gap;
+      this.clock.layout(spot.x, bottom, this.compact, spot.maxRight);
+      if (this.clock.visible) bottom -= this.clock.stackHeight + spot.gap;
+      this.allies.layout(spot.x, bottom, this.compact, spot.maxRight);
+    }
+    this.allies.update(world, dt);
     this.potion?.update(p, dt);
     this.drawXp(world, dt);
     this.drawSkillLevels(world, dt);

@@ -278,6 +278,8 @@ describe('waves and room progression', () => {
     steps(run, 1);
     expect(run.room).toBe(0);
     run.world.projectiles.push({ ...dummyProjectile(), id: 999 });
+    // A raised ally (Eye of the Abyss) stays behind too.
+    run.world.allies.push({ kind: 'ally', id: 998, defId: 'dummy', pos: vec(5, 5), facing: vec(1, 0), radius: 10, life: 5, maxLife: 5, damageScale: 1, armour: 0, moveSpeed: 0, leashRadius: 0, followDistance: 0, remaining: 8, duration: 8, attackTimer: 0 });
     const entered = walkThroughDoor(run);
     const next = currentTemplate(run, maps);
     expect(entered.filter((e) => e.type === 'roomEnter')).toEqual([{ type: 'roomEnter', room: 1, templateId: next.id, kind: 'combat' }]);
@@ -286,6 +288,7 @@ describe('waves and room progression', () => {
     expect(run.world.obstacles).toEqual(next.obstacles ?? []);
     expect(run.world.player.pos).toEqual(next.entry);
     expect(run.world.projectiles).toEqual([]);
+    expect(run.world.allies).toEqual([]);
   });
 
   it('elites are counted when they die (rankedKill), with their rank scaling', () => {

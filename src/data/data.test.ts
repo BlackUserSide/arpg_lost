@@ -178,8 +178,9 @@ describe('unique data validation', () => {
       rift_ring: 'ring',
       devourer_crown: 'helmet',
       clock_last_moment: 'amulet',
+      abyss_eye: 'amulet',
     });
-    const legendaries = new Set(['devourer_crown', 'clock_last_moment']);
+    const legendaries = new Set(['devourer_crown', 'clock_last_moment', 'abyss_eye']);
     // Legendaries share one weight (designer default 2026-10-25) and one level gate.
     const legendDefs = Object.values(itemsData.uniques).filter((u) => u.rarity === 'legendary');
     expect(new Set(legendDefs.map((u) => u.weight)).size).toBe(1);
@@ -200,6 +201,19 @@ describe('unique data validation', () => {
         expect(m.life).toBeGreaterThan(0);
         expect(m.stopDuration).toBeGreaterThan(0);
         expect(m.cooldown).toBeGreaterThan(m.stopDuration);
+      }
+      for (const m of u.mechanics ?? []) {
+        if (m.kind !== 'raiseAllies') continue;
+        // A real, non-boss mob def; allies that live, hit, move and cap; a resource share in (0, 1].
+        const ally = content.mobs[m.mobId];
+        expect(ally, m.mobId).toBeDefined();
+        expect(ally!.boss ?? false).toBe(false);
+        expect(m.duration).toBeGreaterThan(0);
+        expect(m.max).toBeGreaterThanOrEqual(1);
+        expect(Number.isInteger(m.max)).toBe(true);
+        for (const v of [m.lifeMultiplier, m.damageMultiplier, m.moveSpeedMultiplier, m.leashRadius, m.followDistance]) expect(v).toBeGreaterThan(0);
+        expect(m.resourcePerKill).toBeGreaterThan(0);
+        expect(m.resourcePerKill).toBeLessThanOrEqual(1);
       }
       for (const m of u.mechanics ?? []) {
         if (m.kind !== 'skillParams' && m.kind !== 'critAfterSkill') continue;

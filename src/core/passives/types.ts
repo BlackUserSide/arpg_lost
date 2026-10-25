@@ -161,7 +161,34 @@ export type PassiveMechanic =
    * time (PlayerState.cheatDeathCooldown; not shortened by cooldown recovery); ready at the start of every run.
    * Several sources: the first one counts. See cheatDeath.ts.
    */
-  | { readonly kind: 'cheatDeath'; readonly life: number; readonly stopDuration: number; readonly cooldown: number };
+  | { readonly kind: 'cheatDeath'; readonly life: number; readonly stopDuration: number; readonly cooldown: number }
+  /**
+   * Raise allies (Eye of the Abyss): every non-boss mob death (minions included, whatever killed it) raises an ally
+   * of mob def `mobId` at the dead mob's position for `duration` seconds; at most `max` at once (a new one past the
+   * cap makes the oldest crumble). Ally life = def life × lifeMultiplier × the area's mob life scale, its melee hit =
+   * def attack × damageMultiplier × the area's mob damage scale; it moves at def moveSpeed × moveSpeedMultiplier.
+   * AI: the living mob nearest to the ally among those within `leashRadius` of the hero, else it follows the hero up
+   * to `followDistance`. Enemies (not bosses) target allies like the hero and can kill them. An ally's killing blow
+   * restores `resourcePerKill` × max class resource. Several sources: the first one counts. See allies.ts.
+   */
+  | {
+      readonly kind: 'raiseAllies';
+      readonly mobId: string;
+      readonly duration: number;
+      readonly max: number;
+      readonly lifeMultiplier: number;
+      readonly damageMultiplier: number;
+      readonly moveSpeedMultiplier: number;
+      readonly leashRadius: number;
+      readonly followDistance: number;
+      readonly resourcePerKill: number;
+    }
+  /**
+   * The class resource does not recover by itself: no regeneration, no gains on hit (ResourceDef.onHit, a skill's
+   * resourcePerHit) or from damage taken. Decay (Rage) still drains; spawn fill and level-up refill are unchanged;
+   * other explicit gains (raiseAllies resourcePerKill) still work. Eye of the Abyss's cost.
+   */
+  | { readonly kind: 'allyOnlyResource' };
 
 export type PassiveMechanicKind = PassiveMechanic['kind'];
 

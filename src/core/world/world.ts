@@ -18,6 +18,7 @@ import { updateHostileZones } from './abilities';
 import { tickHeroIgnite } from './eliteModifiers';
 import { advanceTimeStop, tickCheatDeathCooldown } from './cheatDeath';
 import { newPotion, updatePotion } from './potion';
+import { removeDeadAllies, updateAllies } from './allies';
 import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Bounds, type Ctx, type MobScale, type Obstacle, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
@@ -27,6 +28,7 @@ export { inCombat, maxResource, recoverResource } from './resource';
 export { canAfford } from './actions';
 export { cheatDeathReady, cheatDeathStats, timeStopped } from './cheatDeath';
 export { newPotion, potionHealAmount } from './potion';
+export { allyTarget, livingAllies, raiseAlliesStats } from './allies';
 export { eliteModifierDef, mobMoveSpeed } from './eliteModifiers';
 export { supportChangeSets, supportFits, supportTier } from '../supports/rules';
 export type { SupportRef } from '../supports/types';
@@ -172,6 +174,7 @@ export function createWorld(
     zones: [],
     decoys: [],
     hostileZones: [],
+    allies: [],
     timeStop: 0,
     spawn: { timer: content.arena.spawn.firstDelay, wave: 0 },
     kills: 0,
@@ -186,7 +189,7 @@ export function createWorld(
  * Advances the simulation by a fixed dt. Mutates `world`, returns what happened for the view.
  * Time stop (cheatDeath, WorldState.timeStop): it runs down first (so the step it ends in is a normal one); while it
  * lasts the mob, mob projectile, hostile zone and spawner systems skip themselves (they check it live: a stop that
- * starts mid-step freezes what comes after it); the hero, hero projectiles, traps, zones, decoys and mob deaths run.
+ * starts mid-step freezes what comes after it); the hero, allies, hero projectiles, traps, zones, decoys and mob deaths run.
  */
 export function step(world: WorldState, input: PlayerInput, content: Content, dt: number): WorldEvent[] {
   const events: WorldEvent[] = [];
@@ -198,6 +201,8 @@ export function step(world: WorldState, input: PlayerInput, content: Content, dt
 
   advanceTimeStop(ctx, dt);
   updatePlayer(ctx, dt);
+  // Raised allies act on the hero's side: after the hero, before the mobs, also during a time stop.
+  updateAllies(ctx, dt);
   updateMobs(ctx, dt);
   updateProjectiles(ctx, dt);
   updateTraps(ctx, dt);
@@ -205,6 +210,7 @@ export function step(world: WorldState, input: PlayerInput, content: Content, dt
   updateZones(ctx, dt);
   updateDecoys(ctx, dt);
   updateHostileZones(ctx, dt);
+  removeDeadAllies(world);
   removeDeadMobs(ctx);
   updateSpawner(ctx, dt);
 

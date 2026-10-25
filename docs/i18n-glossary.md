@@ -151,3 +151,6 @@ A unique's drawback lines read `item.cost` ("Cost: …" / "Ціна: …"); the 
 | Last Moment (clock name part) | Last Moment | Остання мить | Letzter Augenblick | Ostatnia chwila |
 | Time stop (clock effect) | Time stops | Час зупиняється | Die Zeit bleibt stehen | Czas się zatrzymuje |
 | "rewinding" (clock recharge) | rewinding | «заводиться» | sich aufziehen | nakręcać się |
+| abyss_eye (legendary) | Eye of the Abyss | Око Безодні | Auge des Abgrunds | Oko Otchłani |
+| Skeleton (raised ally) | skeleton | скелет | Skelett | szkielet |
+| Rise (ally raise verb) | rise | повставати | sich erheben | powstawać |

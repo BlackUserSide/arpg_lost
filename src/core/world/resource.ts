@@ -8,13 +8,21 @@
 // - onDamageTaken: + perPoolFraction × (life + ES lost) / (max life + max ES).
 // - decay: − perSecond once the hero has neither dealt nor taken a hit for `delay` seconds (combatIdle).
 // Under bloodMagic max resource is 0, so gains and regen do nothing (the warrior gains no Rage).
+// allyOnlyResource (Eye of the Abyss): no regeneration, no onHit / onDamageTaken gains (nor a skill's resourcePerHit);
+// decay, spawn fill, level-up refill and explicit gains (an ally's kill, raiseAllies) are unchanged.
 
 import { clamp } from '../math';
 import type { ActionDef, ClassDef, ResourceHitGain } from './content';
+import { findMechanic } from './passiveEffects';
 import { playerStat, type PlayerState } from './state';
 
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
 const TIME_EPSILON = 1e-9;
+
+/** True when the hero's resource does not recover by itself (allyOnlyResource): regen and hit / damage-taken gains are off. */
+export function ownResourceGainsBlocked(player: Pick<PlayerState, 'mechanics'>): boolean {
+  return findMechanic(player.mechanics, 'allyOnlyResource') !== undefined;
+}
 
 /** Max resource of the hero now (0 under bloodMagic). */
 export function maxResource(classDef: ClassDef, player: PlayerState): number {
@@ -82,7 +90,7 @@ export function tickResource(classDef: ClassDef, player: PlayerState, dt: number
   const def = classDef.resource;
   const fighting = inCombat(classDef, player);
   let value = player.resource;
-  if (fighting || !def.regenOnlyInCombat) value += playerStat(classDef, player, 'resourceRegen') * dt;
+  if ((fighting || !def.regenOnlyInCombat) && !ownResourceGainsBlocked(player)) value += playerStat(classDef, player, 'resourceRegen') * dt;
   if (def.decay && !fighting) value -= def.decay.perSecond * dt;
   player.resource = clamp(value, 0, maxResource(classDef, player));
 }
@@ -108,7 +116,7 @@ export function startResourceUse(classDef: ClassDef, player: PlayerState, action
 export function resourceOnHeroHit(classDef: ClassDef, player: PlayerState, action: ActionDef): number {
   player.combatIdle = 0;
   const gain = classDef.resource.onHit;
-  if (!gain || !countsForHitGain(gain, player, action) || player.resourceHits >= gain.maxHitsPerUse) return 0;
+  if (!gain || ownResourceGainsBlocked(player) || !countsForHitGain(gain, player, action) || player.resourceHits >= gain.maxHitsPerUse) return 0;
   player.resourceHits += 1;
   return recoverResource(classDef, player, gain.amount);
 }
@@ -122,7 +130,7 @@ export function resourceOnHeroHit(classDef: ClassDef, player: PlayerState, actio
 export function resourceOnHeroHitTaken(classDef: ClassDef, player: PlayerState, lost: number): number {
   player.combatIdle = 0;
   const gain = classDef.resource.onDamageTaken;
-  if (!gain || lost <= 0) return 0;
+  if (!gain || lost <= 0 || ownResourceGainsBlocked(player)) return 0;
   const maxPool = playerStat(classDef, player, 'life') + playerStat(classDef, player, 'energyShield');
   if (maxPool <= 0) return 0;
   return recoverResource(classDef, player, (lost / maxPool) * gain.perPoolFraction);
