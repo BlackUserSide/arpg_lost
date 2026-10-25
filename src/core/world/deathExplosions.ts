@@ -8,7 +8,7 @@ import { mitigate } from '../combat/mitigation';
 import { distance, vec } from '../math';
 import type { DeathExplosionDef } from './content';
 import { deathExplosionRadiusMultiplier, findMechanic, targetHasStatus } from './passiveEffects';
-import { allModifiers, getMob, isImmune, type Ctx, type MobState } from './state';
+import { allModifiers, getMob, isImmune, mobDefences, type Ctx, type MobState } from './state';
 import { applyIgnite, conditionTarget } from './statuses';
 
 /**
@@ -60,7 +60,7 @@ export function explodeOnDeath(ctx: Ctx, dead: MobState, spec: DeathExplosionDef
 
   const killed: MobState[] = [];
   for (const { mob, def } of targets) {
-    const damage = mitigate({ [spec.damageType]: amount }, { armour: def.armour, resistances: def.resistances }, content.combat);
+    const damage = mitigate({ [spec.damageType]: amount }, mobDefences(def, mob), content.combat);
     const total = damage[spec.damageType] ?? 0;
     if (total > 0) {
       mob.life -= total;

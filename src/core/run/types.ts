@@ -88,15 +88,34 @@ export interface RunRules {
     readonly scaling: RankScaling;
   };
   readonly boss: {
-    /**
-     * Mob def of the boss. Package 1 uses an ordinary mob scaled as a placeholder; the necromancer (package 2) will
-     * be its own MobDef with boss: true (and scaling 1).
-     */
+    /** Mob def of the boss (the necromancer: its own MobDef with boss: true, rank scaling 1). */
     readonly mobId: string;
     readonly scaling: RankScaling;
     /** Seconds from the altar's activation to the boss appearing. */
     readonly spawnDelay: number;
   };
+  /**
+   * Growth of mob life, damage and armour with the map level (docs/design/mobs.md, decision 2026-10-25), applied to every mob
+   * of the run: waves, elites (on top of their rank scaling), the boss and minions. See mobLevelScaling.
+   */
+  readonly mobScaling: MobLevelScaling;
+}
+
+/**
+ * Multiplier of one mob stat at map level L: (1 + linear × (L − 1)) × (1 + compound)^(L − 1). Level 1 is always × 1;
+ * both terms 0 = no growth. `linear` alone gives a straight line, `compound` alone a constant % per level.
+ */
+export interface LevelCurve {
+  readonly linear: number;
+  readonly compound: number;
+}
+
+/** Map level growth of mob life, damage and armour (not XP: progression.mobXpGrowth; not speed or resistances). */
+export interface MobLevelScaling {
+  readonly life: LevelCurve;
+  readonly damage: LevelCurve;
+  /** Designer decision 2026-10-25: armour grows too, so armoured mobs stay armoured on any map. */
+  readonly armour: LevelCurve;
 }
 
 /** Chest bonus for a fast clear: applies when at least `minTimeLeft` of the time limit (fraction) is left. */

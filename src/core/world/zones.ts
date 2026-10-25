@@ -6,7 +6,7 @@ import { mitigate } from '../combat/mitigation';
 import { distance, type Vec2 } from '../math';
 import type { Modifier } from '../stats/types';
 import type { ActionDef, SelfEffect } from './content';
-import { allModifiers, getMob, isImmune, type Ctx, type Decoy, type GroundZone, type MobState, type WorldState } from './state';
+import { allModifiers, getMob, isImmune, mobDefences, type Ctx, type Decoy, type GroundZone, type MobState, type WorldState } from './state';
 import { applyStatus, conditionTarget, updateAuraSlows } from './statuses';
 
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
@@ -94,7 +94,7 @@ function tickZone(ctx: Ctx, zone: GroundZone): void {
       mods.filter((m) => m.kind !== 'flat'),
       action.tags,
     );
-    const amount = totalDamage(mitigate(raw, { armour: def.armour, resistances: def.resistances }, content.combat));
+    const amount = totalDamage(mitigate(raw, mobDefences(def, mob), content.combat));
     if (amount > 0) {
       mob.life -= amount;
       events.push({ type: 'hit', targetId: mob.id, pos: mob.pos, amount, isCrit: false, source: 'zone', zoneId: zone.id });

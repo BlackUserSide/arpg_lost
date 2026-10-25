@@ -350,6 +350,154 @@
         "fps": 8,
         "loop": false
       }
+    },
+    "shieldbearer": {
+      "idle": {
+        "file": "shieldbearer_idle.png",
+        "atlas": "shieldbearer_idle.json",
+        "frames": 8,
+        "fps": 7.5,
+        "loop": true
+      },
+      "run": {
+        "file": "shieldbearer_run.png",
+        "atlas": "shieldbearer_run.json",
+        "frames": 10,
+        "fps": 9.37,
+        "loop": true
+      },
+      "attack": {
+        "file": "shieldbearer_attack.png",
+        "atlas": "shieldbearer_attack.json",
+        "frames": 8,
+        "fps": 16,
+        "loop": false
+      },
+      "hit": {
+        "file": "shieldbearer_hit.png",
+        "atlas": "shieldbearer_hit.json",
+        "frames": 4,
+        "fps": 20,
+        "loop": false
+      },
+      "death": {
+        "file": "shieldbearer_death.png",
+        "atlas": "shieldbearer_death.json",
+        "frames": 8,
+        "fps": 12,
+        "loop": false
+      }
+    },
+    "bone_thrower": {
+      "idle": {
+        "file": "bone_thrower_idle.png",
+        "atlas": "bone_thrower_idle.json",
+        "frames": 8,
+        "fps": 1.87,
+        "loop": true
+      },
+      "run": {
+        "file": "bone_thrower_run.png",
+        "atlas": "bone_thrower_run.json",
+        "frames": 10,
+        "fps": 6.25,
+        "loop": true
+      },
+      "cast_spears": {
+        "file": "bone_thrower_cast_spears.png",
+        "atlas": "bone_thrower_cast_spears.json",
+        "frames": 8,
+        "fps": 16,
+        "loop": false
+      },
+      "hit": {
+        "file": "bone_thrower_hit.png",
+        "atlas": "bone_thrower_hit.json",
+        "frames": 4,
+        "fps": 20,
+        "loop": false
+      },
+      "death": {
+        "file": "bone_thrower_death.png",
+        "atlas": "bone_thrower_death.json",
+        "frames": 8,
+        "fps": 12,
+        "loop": false
+      }
+    },
+    "gravedigger": {
+      "idle": {
+        "file": "gravedigger_idle.png",
+        "atlas": "gravedigger_idle.json",
+        "frames": 8,
+        "fps": 7.5,
+        "loop": true
+      },
+      "run": {
+        "file": "gravedigger_run.png",
+        "atlas": "gravedigger_run.json",
+        "frames": 10,
+        "fps": 6.25,
+        "loop": true
+      },
+      "cast_summon": {
+        "file": "gravedigger_cast_summon.png",
+        "atlas": "gravedigger_cast_summon.json",
+        "frames": 8,
+        "fps": 14,
+        "loop": false
+      },
+      "hit": {
+        "file": "gravedigger_hit.png",
+        "atlas": "gravedigger_hit.json",
+        "frames": 4,
+        "fps": 20,
+        "loop": false
+      },
+      "death": {
+        "file": "gravedigger_death.png",
+        "atlas": "gravedigger_death.json",
+        "frames": 8,
+        "fps": 12,
+        "loop": false
+      }
+    },
+    "cultist": {
+      "idle": {
+        "file": "cultist_idle.png",
+        "atlas": "cultist_idle.json",
+        "frames": 8,
+        "fps": 7.5,
+        "loop": true
+      },
+      "run": {
+        "file": "cultist_run.png",
+        "atlas": "cultist_run.json",
+        "frames": 10,
+        "fps": 9.37,
+        "loop": true
+      },
+      "cast_summon": {
+        "file": "cultist_cast_summon.png",
+        "atlas": "cultist_cast_summon.json",
+        "frames": 8,
+        "fps": 10,
+        "loop": false
+      },
+      "hit": {
+        "file": "cultist_hit.png",
+        "atlas": "cultist_hit.json",
+        "frames": 4,
+        "fps": 20,
+        "loop": false
+      },
+      "death": {
+        "file": "cultist_death.png",
+        "atlas": "cultist_death.json",
+        "frames": 8,
+        "fps": 12,
+        "loop": false
+      }
     }
   },
   "layouts": {
@@ -357,6 +505,26 @@
       "frameSize": 288,
       "originY": 180,
       "nativeScale": 1.75
+    },
+    "shieldbearer": {
+      "frameSize": 192,
+      "originY": 136,
+      "nativeScale": 1
+    },
+    "bone_thrower": {
+      "frameSize": 192,
+      "originY": 136,
+      "nativeScale": 1
+    },
+    "gravedigger": {
+      "frameSize": 192,
+      "originY": 136,
+      "nativeScale": 1
+    },
+    "cultist": {
+      "frameSize": 192,
+      "originY": 136,
+      "nativeScale": 1
     }
   }
 }

@@ -4,7 +4,7 @@ import { vec } from '../math';
 import type { SupportData } from '../supports/types';
 import type { ActionDef, ClassDef, Content, MobDef } from '../world/content';
 import { clampToArena, isBoss, mobRank, spawnMob, step, type PlayerInput } from '../world/world';
-import { abandonRun, canActivateAltar, createRun, currentTemplate, mobPoolAt, openDoor, stepRun, timeLeft } from './run';
+import { abandonRun, canActivateAltar, createRun, currentTemplate, levelCurveMultiplier, mobLevelScaling, mobPoolAt, openDoor, stepRun, timeLeft } from './run';
 import { planRunRewards, runOutcome } from './rewards';
 import type { MapsData, RunInput, RunState, RunStepEvent } from './types';
 
@@ -21,7 +21,18 @@ const dummy: MobDef = {
   attack: { damage: { physical: { min: 1, max: 1 } }, range: 5, interval: 1, critChance: 0 },
 };
 const late: MobDef = { ...dummy, id: 'late' };
+const plated: MobDef = { ...dummy, id: 'plated', armour: 10 };
 const biter: MobDef = { ...dummy, id: 'biter', attack: { ...dummy.attack, damage: { physical: { min: 1000, max: 1000 } } } };
+/** Raises 2 dummies 0.5 s after it spawns (once: cooldown 100). */
+const caller: MobDef = {
+  ...dummy,
+  id: 'caller',
+  abilities: {
+    recovery: 0,
+    phases: [],
+    list: [{ id: 'call', kind: 'summon', windUp: 0.5, cooldown: 100, count: 2, maxAlive: 2, ringRadius: 30, pool: [{ mobId: 'dummy', weight: 1 }] }],
+  },
+};
 
 const strike: ActionDef = {
   id: 'strike',
@@ -46,7 +57,7 @@ const heroClass: ClassDef = {
 const content: Content = {
   combat: { resistanceCap: 0.75, critMultiplierBase: 1.5, armourK: 5, armourMaxReduction: 0.9, bossFreezeSlow: 0.5, bossStunSlow: 0.5 },
   classes: { hero: heroClass },
-  mobs: { dummy, late, biter },
+  mobs: { dummy, late, biter, caller, plated },
   arena: { width: 1000, height: 1000, spawn: { firstDelay: 1, interval: 1, batchStart: 5, batchGrowth: 0, maxAlive: 50, mobIds: ['dummy'] } },
   progression: {
     maxLevel: 5,
@@ -79,6 +90,8 @@ const maps: MapsData = {
     },
     elites: { count: { min: 1, max: 1 }, scaling: { life: 3, damage: 2, xp: 5, radius: 1.5 } },
     boss: { mobId: 'dummy', scaling: { life: 10, damage: 4, xp: 20, radius: 2 }, spawnDelay: 0.5 },
+    // No growth: the other tests see the defs' numbers on every map (scaledMaps below has growth).
+    mobScaling: { life: { linear: 0, compound: 0 }, damage: { linear: 0, compound: 0 }, armour: { linear: 0, compound: 0 } },
   },
   rewards: {
     chest: { items: 2, bossItemLevelBonus: 1, maxItemLevelBonus: 3, speedTiers: [] },
@@ -100,6 +113,12 @@ const maps: MapsData = {
     },
     lair: { id: 'lair', kind: 'boss', width: 400, height: 400, entry: vec(200, 380), altar: vec(200, 100), bossSpawn: vec(200, 50), spawnPoints: [vec(100, 100)] },
   },
+};
+
+/** Same rules with growth: map 3 = life × 4 (compound 1: 2²), damage × 2 (linear 0.5: 1 + 0.5 × 2), armour × 3 (linear 1). */
+const scaledMaps: MapsData = {
+  ...maps,
+  rules: { ...maps.rules, mobScaling: { life: { linear: 0, compound: 1 }, damage: { linear: 0.5, compound: 0 }, armour: { linear: 1, compound: 0 } } },
 };
 
 const idle: RunInput = { move: vec(0, 0), aim: vec(0, 0), basicAttack: false, skills: [] };
@@ -299,6 +318,106 @@ describe('waves and room progression', () => {
     steps(run, 120, { ...idle, move: vec(0, -1) });
     expect(run.world.player.pos.x).toBe(150);
     expect(run.world.player.pos.y).toBe(230);
+  });
+});
+
+describe('mob growth with the map level', () => {
+  it('a curve is × 1 at level 1 (and below); the linear and compound terms multiply', () => {
+    expect(levelCurveMultiplier({ linear: 0.5, compound: 0.3 }, 1)).toBe(1);
+    expect(levelCurveMultiplier({ linear: 0.5, compound: 0.3 }, 0)).toBe(1);
+    expect(levelCurveMultiplier({ linear: 0.5, compound: 0.3 }, -3)).toBe(1);
+    expect(levelCurveMultiplier({ linear: 0, compound: 0 }, 40)).toBe(1);
+    expect(levelCurveMultiplier({ linear: 0.5, compound: 0 }, 5)).toBe(3);
+    expect(levelCurveMultiplier({ linear: 0, compound: 1 }, 4)).toBe(8);
+    expect(levelCurveMultiplier({ linear: 0.5, compound: 1 }, 3)).toBe(8);
+  });
+
+  it('mobLevelScaling: life and damage multipliers of a map level', () => {
+    expect(mobLevelScaling(scaledMaps.rules, 1)).toEqual({ life: 1, damage: 1, armour: 1 });
+    expect(mobLevelScaling(scaledMaps.rules, 3)).toEqual({ life: 4, damage: 2, armour: 3 });
+    expect(mobLevelScaling(maps.rules, 3)).toEqual({ life: 1, damage: 1, armour: 1 });
+  });
+
+  it("map 1 changes nothing: the defs' numbers, no damage scale on ordinary mobs", () => {
+    const run = newRun(7, 1, scaledMaps);
+    expect(run.world.mobScale).toEqual({ life: 1, damage: 1, armour: 1 });
+    const mob = spawnMob(run.world, content, { defId: 'dummy' }, vec(300, 50), []);
+    expect(mob.life).toBe(10);
+    expect(mob.maxLife).toBe(10);
+    expect(mob.damageScale).toBeUndefined();
+  });
+
+  it('waves and elites (on top of their rank scaling) grow; their hits deal the scaled damage', () => {
+    const run = newRun(7, 3, scaledMaps);
+    expect(run.world.mobScale).toEqual({ life: 4, damage: 2, armour: 3 });
+    stepUntil(run, 'waveStart');
+    const normal = run.world.mobs.filter((m) => m.rank === undefined);
+    expect(normal.length).toBeGreaterThan(0);
+    for (const m of normal) expect(m).toMatchObject({ life: 40, maxLife: 40, damageScale: 2 });
+    for (const m of run.world.mobs.filter((m) => m.rank === 'elite')) expect(m).toMatchObject({ life: 120, maxLife: 120, damageScale: 4, xpScale: 5 });
+    // A dummy next to the hero: its 1-damage swing lands as 2.
+    killAll(run);
+    stepRun(run, idle, content, scaledMaps, DT);
+    const hero = run.world.player;
+    expect(hero.life).toBe(100);
+    spawnMob(run.world, content, { defId: 'dummy' }, vec(hero.pos.x + 23, hero.pos.y), []);
+    const events = stepRun(run, idle, content, scaledMaps, DT);
+    expect(events.filter((e) => e.type === 'mobAttack')).toHaveLength(1);
+    expect(hero.life).toBe(98);
+  });
+
+  it('the boss grows (numbers only)', () => {
+    const run = newRun(7, 3, scaledMaps);
+    toBossRoom(run);
+    const bossId = summonBoss(run);
+    const boss = run.world.mobs.find((m) => m.id === bossId)!;
+    expect(boss).toMatchObject({ rank: 'boss', life: 400, maxLife: 400, damageScale: 8, xpScale: 20, radius: 20 });
+  });
+
+  it('armour grows with the map level (not with rank) and cuts the hero hits by the grown amount', () => {
+    // Map 1: the def's armour, no armour key; a 10 physical hit vs 10 armour: 10 / (10 + 5 × 10) = 1/6 off.
+    const low = newRun(7, 1, scaledMaps);
+    expect(spawnMob(low.world, content, { defId: 'plated' }, vec(300, 50), []).armour).toBeUndefined();
+    const run = newRun(7, 3, scaledMaps);
+    const elite = spawnMob(run.world, content, { defId: 'plated', rank: 'elite', lifeScale: 3 }, vec(300, 50), []);
+    expect(elite.armour).toBe(30);
+    expect(spawnMob(run.world, content, { defId: 'dummy' }, vec(300, 100), []).armour).toBe(0);
+    run.world.mobs = [];
+    // Map 3: armour 30 vs the hero's 10 physical swing: 30 / (30 + 50) = 0.375 off → 6.25 of 40 life.
+    const hero = run.world.player;
+    const mob = spawnMob(run.world, content, { defId: 'plated' }, vec(hero.pos.x + 30, hero.pos.y), []);
+    expect(mob).toMatchObject({ life: 40, armour: 30 });
+    stepRun(run, { ...idle, basicAttack: true, aim: vec(hero.pos.x + 30, hero.pos.y) }, content, scaledMaps, DT);
+    expect(mob.life).toBe(33.75);
+  });
+
+  it("minions raised by any mob grow too, without their summoner's rank scaling", () => {
+    const run = newRun(7, 3, scaledMaps);
+    const elite = spawnMob(run.world, content, { defId: 'caller', rank: 'elite', lifeScale: 3, damageScale: 2, xpScale: 5 }, vec(300, 50), []);
+    expect(elite).toMatchObject({ life: 120, damageScale: 4 });
+    stepUntil(run, 'mobAbility');
+    const minions = run.world.mobs.filter((m) => m.summonerId === elite.id);
+    expect(minions).toHaveLength(2);
+    for (const m of minions) expect(m).toMatchObject({ defId: 'dummy', life: 40, maxLife: 40, damageScale: 2 });
+    expect(minions.every((m) => m.rank === undefined && m.xpScale === undefined)).toBe(true);
+  });
+
+  it("an elite summoner's minions give nothing and crumble with it: one elite kill (essence), its XP only", () => {
+    const run = newRun(7, 3, scaledMaps);
+    const elite = spawnMob(run.world, content, { defId: 'caller', rank: 'elite', lifeScale: 3, damageScale: 2, xpScale: 5 }, vec(300, 50), []);
+    run.eliteIds.push(elite.id);
+    stepUntil(run, 'mobAbility');
+    const minionIds = run.world.mobs.filter((m) => m.summonerId === elite.id).map((m) => m.id);
+    expect(minionIds).toHaveLength(2);
+    elite.life = 0;
+    const events = stepRun(run, idle, content, scaledMaps, DT);
+    expect(events.flatMap((e) => (e.type === 'death' ? [e.id] : []))).toEqual([elite.id, ...minionIds]);
+    expect(events.filter((e) => e.type === 'rankedKill')).toEqual([{ type: 'rankedKill', id: elite.id, rank: 'elite' }]);
+    expect(run.world.mobs).toEqual([]);
+    expect(run.elitesKilled).toBe(1);
+    expect(run.world.kills).toBe(1);
+    // 10 × xpScale 5 (no area growth in this fixture); the minions add nothing.
+    expect(run.world.xpGained).toBe(50);
   });
 });
 

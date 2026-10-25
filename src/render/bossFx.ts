@@ -22,6 +22,10 @@ const COLD = 0x9fe4ff;
 const BONE = 0xe8dcc0;
 const NECRO_GREEN = 0x7dff9a;
 const GRAVE_RIM = 0xc04cff;
+/** Grave earth flung by the gravedigger. */
+const EARTH = 0x5a3f26;
+const EARTH_LIGHT = 0x8a6a46;
+const EARTH_DUST = 0x9a8466;
 
 const NOVA_TTL = 0.55;
 const RAISE_TTL = 0.75;
@@ -310,6 +314,35 @@ export class BossFx {
     const px = -uy * radius * 0.7;
     const py = ux * radius * 0.7;
     top.fillStyle(0xffffff, 1).fillTriangle(tipX, tipY, x + px, y + py, x - px, y - py);
+  }
+
+  /**
+   * A thrown bone (the bone thrower): a short bone tumbling end over end, knobs at both ends. (x, y) screen centre,
+   * `radius` the projectile's world radius, `spin` its turn angle (radians).
+   */
+  drawThrownBone(top: Phaser.GameObjects.Graphics, x: number, y: number, radius: number, spin: number): void {
+    const half = radius * 1.5;
+    const cx = Math.cos(spin) * half;
+    // Turning in the screen plane but squashed a little, so it reads as tumbling rather than a flat propeller.
+    const cy = Math.sin(spin) * half * 0.7;
+    top.fillStyle(BONE, 0.18).fillCircle(x, y, radius * 1.8);
+    top.lineStyle(radius * 0.9, 0x3a2a24, 0.9).lineBetween(x - cx, y - cy, x + cx, y + cy);
+    top.lineStyle(radius * 0.5, BONE, 1).lineBetween(x - cx, y - cy, x + cx, y + cy);
+    const knob = radius * 0.42;
+    const px = -Math.sin(spin) * knob * 0.8;
+    const py = Math.cos(spin) * knob * 0.8 * 0.7;
+    top.fillStyle(BONE, 1);
+    top.fillCircle(x + cx + px, y + cy + py, knob).fillCircle(x + cx - px, y + cy - py, knob);
+    top.fillCircle(x - cx + px, y - cy + py, knob).fillCircle(x - cx - px, y - cy - py, knob);
+  }
+
+  /** The gravedigger's flung clod of grave earth: a dark brown lump with a dusty trail. */
+  drawEarthClod(top: Phaser.GameObjects.Graphics, x: number, y: number, tx: number, ty: number, radius: number): void {
+    top.lineStyle(radius * 1.4, EARTH_DUST, 0.3).lineBetween(tx, ty, x, y);
+    top.fillStyle(EARTH_DUST, 0.3).fillCircle(x, y, radius * 1.8);
+    top.fillStyle(EARTH, 1).fillCircle(x, y, radius * 1.05);
+    top.fillStyle(EARTH_LIGHT, 1).fillCircle(x - radius * 0.3, y - radius * 0.35, radius * 0.4);
+    top.lineStyle(1.5, 0x1a1008, 0.9).strokeCircle(x, y, radius * 1.05);
   }
 
   /** The boss's weak dark bolt: a dark core in a violet glow with a short trail. */

@@ -535,6 +535,10 @@ export const en = {
   'mob.runner.name': 'Runner',
   'mob.archer.name': 'Archer',
   'mob.necromancer.name': 'Necromancer',
+  'mob.shieldbearer.name': 'Bone Shieldbearer',
+  'mob.boneThrower.name': 'Bone Thrower',
+  'mob.gravedigger.name': 'Gravedigger',
+  'mob.cultist.name': 'Cultist Summoner',
 
   // ---- Content: supports ----
   'support.wider_swing.name': 'Wider Swing',

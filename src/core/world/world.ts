@@ -15,7 +15,7 @@ import { removeDeadMobs, updateMobs, updateSpawner } from './mobs';
 import { updateProjectiles, updateTraps } from './projectiles';
 import { updateDecoys, updateZones } from './zones';
 import { updateHostileZones } from './abilities';
-import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Bounds, type Ctx, type Obstacle, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
+import { allModifiers, clampToArena, deriveFromMechanics, getClass, movePlayer, playerStat, PLAYER_ID, type Bounds, type Ctx, type MobScale, type Obstacle, type PlayerInput, type PlayerState, type WorldEvent, type WorldState } from './state';
 
 export * from './state';
 export { applyLeech, grantBonusXp, recoverLife, setLoadoutModifiers } from './experience';
@@ -83,6 +83,8 @@ export interface WorldPlace {
   readonly start?: Vec2;
   /** Runs the endless arena spawner (Content.arena.spawn). */
   readonly endless: boolean;
+  /** Area level scaling of every mob spawned here (WorldState.mobScale); absent = × 1. */
+  readonly mobScale?: MobScale;
 }
 
 /**
@@ -160,6 +162,7 @@ export function createWorld(
     spawn: { timer: content.arena.spawn.firstDelay, wave: 0 },
     kills: 0,
     areaLevel,
+    ...(place.mobScale ? { mobScale: { life: place.mobScale.life, damage: place.mobScale.damage, armour: place.mobScale.armour } } : {}),
     xpGained: 0,
     skillXpGained: 0,
   };

@@ -547,6 +547,10 @@ export const uk: LocaleTable = {
   'mob.runner.name': 'Бігун',
   'mob.archer.name': 'Лучник',
   'mob.necromancer.name': 'Некромант',
+  'mob.shieldbearer.name': 'Кістяний щитоносець',
+  'mob.boneThrower.name': 'Кістяний метальник',
+  'mob.gravedigger.name': 'Могильник',
+  'mob.cultist.name': 'Культист-заклинач',
 
   // ---- Content: supports ----
   'support.wider_swing.name': 'Ширший замах',

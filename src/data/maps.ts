@@ -92,11 +92,17 @@ export const mapsData: MapsData = {
       firstDelay: 1,
       nextDelay: 1.5,
       spawnJitter: 60,
-      // Same mix as the arena (3 : 2 : 1). New mob types every 5 map levels go here with minMapLevel (package 3).
+      // Maps 1–4: the arena mix (3 : 2 : 1). Designer decision 2026-10-23 / 2026-10-25: a new mob type every 5 map
+      // levels (mobs.md table; which mob comes at which level is PROPOSAL). Weights BALANCE-TBD: the shieldbearer is
+      // part of the melee wall (2), the casters are spice (1 each) — at map 20 a wave of 10 has ~1 cultist.
       mobPool: [
         { mobId: 'zombie', weight: 3 },
         { mobId: 'runner', weight: 2 },
         { mobId: 'archer', weight: 1 },
+        { mobId: 'shieldbearer', weight: 2, minMapLevel: 5 },
+        { mobId: 'boneThrower', weight: 1, minMapLevel: 10 },
+        { mobId: 'gravedigger', weight: 1, minMapLevel: 15 },
+        { mobId: 'cultist', weight: 1, minMapLevel: 20 },
       ],
     },
     elites: {
@@ -107,11 +113,33 @@ export const mapsData: MapsData = {
       scaling: { life: 4, damage: 1.5, xp: 5, radius: 1.3 },
     },
     boss: {
-      // The necromancer (mobs.md «Бос»): its def holds its real numbers, so the rank scaling is 1. Growth with map
-      // level (life / damage only, designer decision 2026-10-24) comes with package 3.
+      // The necromancer (mobs.md «Бос»): its def holds its real numbers, so the rank scaling is 1. It grows with the
+      // map level through mobScaling below (numbers only, designer decision 2026-10-24).
       mobId: 'necromancer',
       scaling: { life: 1, damage: 1, xp: 1, radius: 1 },
       spawnDelay: 1.5,
+    },
+    // Designer decision 2026-10-25 (mobs.md): growth "noticeably harder" — mobs outgrow an average hero, so every ~10
+    // maps the hero has to catch up with gear and passives. Applies to every mob of a run (waves, elites on top of
+    // their rank scaling, the boss, minions); XP grows separately (progression.mobXpGrowth), speed does not grow.
+    // Multiplier at map L = (1 + linear × (L − 1)) × (1 + compound)^(L − 1); map 1 is always × 1.
+    // PROPOSAL / BALANCE-TBD (balance-analyst, tools/sim/mobScaling.sim.ts; final numbers in the end-of-0.5 rebalance).
+    // Hero power (hero level = map level, gear of map level) grows fast early (×5–8 DPS by map 10: first real gear,
+    // tier 2 affixes at item level 8, new bases at 10, skill level 3) and flattens after 30 (no affix tier or base
+    // above item level 30), so life is mostly linear with a small compound part. Casts of the main skill per zombie:
+    //   average hero: ~1 at map 1, 1–1.8 at 5, ~1 at 10, 1.5–2 at 20, 2–2.5 at 30, 3–4 at 40;
+    //   geared (crafted rares, item level map + 3): ≤ 1 up to ~25, ≤ 1.7 at 40;
+    //   gear of 10 maps ago: 2–4 → runs over the 5:00 limit, i.e. "upgrade or get stuck".
+    // Life ×2.9 at map 5, ×6.0 at 10, ×15 at 20, ×30 at 30, ×53 at 40.
+    // Damage ×1.5 / ×2.2 / ×4.0 / ×6.8 / ×10.8 (maps 5 / 10 / 20 / 30 / 40): an average hero's zombie hit goes from
+    // ~1% to ~7–9% of life + ES at map 40 (armour eats most of small hits), the boss's Dark Nova from ~13% to ~25–35%.
+    mobScaling: {
+      life: { linear: 0.4, compound: 0.03 },
+      damage: { linear: 0.08, compound: 0.025 },
+      // Designer decision 2026-10-25: armour grows too, so the shieldbearer stays armoured on any map (ranks do not
+      // change armour). Linear, close to the growth of a hero's physical hit (×4–6 from map 5 to 40): ×1.7 at 5,
+      // ×2.6 at 10, ×4.4 at 20, ×8 at 40; the shieldbearer then cuts ~40–55% of an average physical hit on any map.
+      armour: { linear: 0.18, compound: 0 },
     },
   },
   rewards: {

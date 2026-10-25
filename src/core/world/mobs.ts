@@ -264,10 +264,18 @@ export function spawnRadius(content: Content, spawn: MobSpawn): number {
   return getMob(content, spawn.defId).radius * (spawn.radiusScale ?? 1);
 }
 
-/** Adds a fresh mob at `pos` (full life, no statuses) with a 'spawn' event. Returns it. */
+/**
+ * Adds a fresh mob at `pos` (full life, no statuses) with a 'spawn' event. Returns it. Life and damage are the def's
+ * × the spawn's rank scaling × the world's area level scaling (WorldState.mobScale), armour the def's × the area
+ * level scaling, so waves, elites, the boss and minions raised by any mob all grow with the map level.
+ */
 export function spawnMob(world: WorldState, content: Content, spawn: MobSpawn, pos: Vec2, events: { push(event: WorldEvent): unknown }): MobState {
   const def = getMob(content, spawn.defId);
-  const life = def.life * (spawn.lifeScale ?? 1);
+  const level = world.mobScale;
+  const life = def.life * (spawn.lifeScale ?? 1) * (level?.life ?? 1);
+  const damageScale = (spawn.damageScale ?? 1) * (level?.damage ?? 1);
+  // Armour grows with the area level only (designer decision 2026-10-25); ranks do not change it.
+  const armourScale = level?.armour ?? 1;
   const mob: MobState = {
     id: world.nextId++,
     defId: def.id,
@@ -289,7 +297,8 @@ export function spawnMob(world: WorldState, content: Content, spawn: MobSpawn, p
     auraSlow: 0,
     radius: def.radius * (spawn.radiusScale ?? 1),
     ...(spawn.rank !== undefined ? { rank: spawn.rank } : {}),
-    ...(spawn.damageScale !== undefined ? { damageScale: spawn.damageScale } : {}),
+    ...(spawn.damageScale !== undefined || damageScale !== 1 ? { damageScale } : {}),
+    ...(armourScale !== 1 ? { armour: def.armour * armourScale } : {}),
     ...(spawn.xpScale !== undefined ? { xpScale: spawn.xpScale } : {}),
     ...(spawn.summonerId !== undefined ? { summonerId: spawn.summonerId } : {}),
     ...initialAbilityState(def),
