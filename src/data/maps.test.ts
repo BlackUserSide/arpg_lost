@@ -1,6 +1,7 @@
 // Sanity of the map run data (src/data/maps.ts): every reference resolves and every point is reachable.
 import { describe, expect, it } from 'vitest';
 import { distance, type Vec2 } from '../core/math';
+import { mobLevelScaling, mobPoolAt } from '../core/run/run';
 import { content } from './index';
 import { mapsData } from './maps';
 
@@ -34,6 +35,48 @@ describe('map data', () => {
     expect(content.mobs[boss.mobId]).toBeDefined();
     for (const r of [waves.count, waves.mobs, elites.count]) expect(r.min).toBeLessThanOrEqual(r.max);
     expect(waves.mobPool.some((e) => (e.minMapLevel ?? 1) <= 1 && e.weight > 0)).toBe(true);
+  });
+
+  it('a new mob type every 5 map levels (mobs.md 2026-10-25): ordinary mobs, unlocked at 5 / 10 / 15 / 20', () => {
+    const at = (level: number): string[] => mobPoolAt(mapsData.rules, level).map((e) => e.mobId);
+    expect(at(1)).toEqual(['zombie', 'runner', 'archer']);
+    expect(at(4)).toEqual(at(1));
+    expect(at(5)).toEqual([...at(1), 'shieldbearer']);
+    expect(at(10)).toEqual([...at(5), 'boneThrower']);
+    expect(at(15)).toEqual([...at(10), 'gravedigger']);
+    expect(at(20)).toEqual([...at(15), 'cultist']);
+    expect(at(mapsData.rules.maxLinearMap)).toEqual(at(20));
+    for (const e of mapsData.rules.waves.mobPool) {
+      const def = content.mobs[e.mobId]!;
+      expect(def.boss, e.mobId).toBeFalsy();
+      expect(def.abilities?.phases ?? [], e.mobId).toEqual([]);
+    }
+  });
+
+  it('mob growth: × 1 on map 1, then life, damage and armour grow with every map level', () => {
+    expect(mobLevelScaling(mapsData.rules, 1)).toEqual({ life: 1, damage: 1, armour: 1 });
+    for (let level = 2; level <= mapsData.rules.maxLinearMap; level++) {
+      const prev = mobLevelScaling(mapsData.rules, level - 1);
+      const now = mobLevelScaling(mapsData.rules, level);
+      expect(now.life, `life ${level}`).toBeGreaterThan(prev.life);
+      expect(now.damage, `damage ${level}`).toBeGreaterThan(prev.damage);
+      expect(now.armour, `armour ${level}`).toBeGreaterThan(prev.armour);
+    }
+  });
+
+  it('mob growth stays in the band checked by tools/sim/mobScaling.sim.ts (re-run the sim when this fails)', () => {
+    // Hero power grows ×5–8 by map 10 and ×15–20 by 40 (average gear), ×10 more with crafted gear; outside these
+    // bands average heroes one-shot everything or geared heroes leave the 1–2 hit / 5:00 targets.
+    const at = (level: number) => mobLevelScaling(mapsData.rules, level);
+    expect(at(10).life).toBeGreaterThan(4);
+    expect(at(10).life).toBeLessThan(9);
+    expect(at(40).life).toBeGreaterThan(35);
+    expect(at(40).life).toBeLessThan(70);
+    // Damage grows slower than life (hero life + ES only ×3–4 by map 40), armour no faster than life (no armour wall).
+    for (let level = 2; level <= mapsData.rules.maxLinearMap; level++) {
+      expect(at(level).damage, `damage ${level}`).toBeLessThan(at(level).life);
+      expect(at(level).armour, `armour ${level}`).toBeLessThanOrEqual(at(level).life);
+    }
   });
 
   it('designer rules: 5:00 limit, linear maps to 40, item level at most map + 3, essence 0.1 / 0.5', () => {

@@ -26,6 +26,22 @@ export interface BakeAttachment {
   readonly bone: string;
   /** Euler rotation in degrees (x, y, z) relative to the bone. */
   readonly rotation?: readonly [number, number, number];
+  /** Offset relative to the bone, in the prop's own units (before the character is scaled). */
+  readonly position?: readonly [number, number, number];
+  /** Uniform scale of the prop relative to the bone. Default 1. */
+  readonly scale?: number;
+}
+
+export interface BakeTint {
+  /** Mesh node names (character parts or attached props) whose material colour is multiplied. */
+  readonly meshes: readonly string[];
+  /**
+   * New hue / saturation (RGB); the texture's per-texel brightness is kept, so shading and painted details stay.
+   * The shared KayKit texture itself is left untouched.
+   */
+  readonly color: number;
+  /** Brightness multiplier on top of the texture's own. Default 1. */
+  readonly brightness?: number;
 }
 
 export interface BakeCharacter {
@@ -34,6 +50,8 @@ export interface BakeCharacter {
   /** Mesh node names to hide (unused weapons / shields). */
   readonly hide: readonly string[];
   readonly attach?: readonly BakeAttachment[];
+  /** Per-part colour multipliers: variants of a shared model (hood / robe colour) that read apart at a glance. */
+  readonly tint?: readonly BakeTint[];
   /** Height on screen in pixels (world units). */
   readonly height: number;
   /**
@@ -159,6 +177,90 @@ export const CHARACTERS: readonly BakeCharacter[] = [
       { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
       { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false },
       { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false },
+    ],
+  },
+  // Map mobs added in 0.4 (docs/design/mobs.md). Not summoned, so no spawn sheet; casters have no `attack` sheet
+  // (render ATTACK_ANIMS maps their basic attack onto the cast sheet). Death_A falls flat without the root-motion
+  // drift of Death_C_Skeletons but does not fit a 128 px frame, so these get a roomier 192 px frame, trimmed (the
+  // margins cost neither file size nor GPU memory). Fewer idle / run frames than the older sets keep the build small.
+  {
+    // Slow heavy melee: big shield held in front, axe, steel-blue helmet and cloak (the zombie is unarmed, red).
+    id: 'shieldbearer',
+    model: 'Skeleton_Warrior.glb',
+    hide: [],
+    attach: [
+      { model: 'Skeleton_Shield_Large_A.gltf', bone: 'handslot.l' },
+      { model: 'Skeleton_Axe.gltf', bone: 'handslot.r' },
+    ],
+    tint: [{ meshes: ['Skeleton_Warrior_Helmet', 'Skeleton_Warrior_Cloak'], color: 0x6f9fe0 }],
+    height: 66,
+    frameSize: 192,
+    originY: 136,
+    trim: true,
+    anims: [
+      { id: 'idle', clip: 'Blocking', frames: 8, loop: true },
+      { id: 'run', clip: 'Walking_A', frames: 10, loop: true },
+      { id: 'attack', clip: '1H_Melee_Attack_Chop', frames: 8, fps: 16, loop: false },
+      { id: 'hit', clip: 'Block_Hit', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_A', frames: 8, fps: 12, loop: false },
+    ],
+  },
+  {
+    // Ranged: bare skull (hood off, unlike the crossbow archer), green cape, empty-handed overhand throws.
+    id: 'bone_thrower',
+    model: 'Skeleton_Rogue.glb',
+    hide: ['Skeleton_Rogue_Hood'],
+    tint: [{ meshes: ['Skeleton_Rogue_Cape'], color: 0x3fa070 }],
+    height: 56,
+    frameSize: 192,
+    originY: 136,
+    trim: true,
+    anims: [
+      { id: 'idle', clip: 'Idle_Combat', frames: 8, loop: true },
+      { id: 'run', clip: 'Walking_D_Skeletons', frames: 10, loop: true },
+      // Wind-up and release of the bone fan (projectileFan) and the basic throw.
+      { id: 'cast_spears', clip: 'Throw', frames: 8, fps: 16, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_A', frames: 8, fps: 12, loop: false },
+    ],
+  },
+  {
+    // Ranged caster: earth-brown hood and cape, an axe held two-handed like a digging tool; slams it into the floor
+    // to open a grave under the hero.
+    id: 'gravedigger',
+    model: 'Skeleton_Rogue.glb',
+    hide: [],
+    attach: [{ model: 'Skeleton_Axe.gltf', bone: 'handslot.r' }],
+    tint: [{ meshes: ['Skeleton_Rogue_Hood', 'Skeleton_Rogue_Cape'], color: 0xb08850, brightness: 0.9 }],
+    height: 58,
+    frameSize: 192,
+    originY: 136,
+    trim: true,
+    anims: [
+      { id: 'idle', clip: '2H_Melee_Idle', frames: 8, loop: true },
+      { id: 'run', clip: 'Walking_C', frames: 10, loop: true },
+      // groundZones wind-up (CAST_ANIMS maps it to cast_summon): the tool comes down on the floor.
+      { id: 'cast_summon', clip: '2H_Melee_Attack_Chop', frames: 8, fps: 14, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_A', frames: 8, fps: 12, loop: false },
+    ],
+  },
+  {
+    // Summoner: normal-sized Skeleton_Mage, no staff (the boss has a staff and a red hat), violet hat and robe.
+    id: 'cultist',
+    model: 'Skeleton_Mage.glb',
+    hide: [],
+    tint: [{ meshes: ['Skeleton_Mage_Hat', 'Skeleton_Mage_Body'], color: 0x9a5cf0 }],
+    height: 62,
+    frameSize: 192,
+    originY: 136,
+    trim: true,
+    anims: [
+      { id: 'idle', clip: 'Idle', frames: 8, loop: true },
+      { id: 'run', clip: 'Walking_B', frames: 10, loop: true },
+      { id: 'cast_summon', clip: 'Spellcast_Summon', frames: 8, fps: 10, loop: false },
+      { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
+      { id: 'death', clip: 'Death_A', frames: 8, fps: 12, loop: false },
     ],
   },
   {

@@ -1,5 +1,6 @@
 import { clamp, distance, scale, sub, vec, type Vec2 } from '../math';
 import type { Rng } from '../rng';
+import type { Defences } from '../combat/mitigation';
 import type { PassiveMechanic } from '../passives/types';
 import type { DamageType, Modifier, StatId, Tag } from '../stats/types';
 import type { ActionDef, ClassDef, Content, MobAbilityKind, MobDef, MobRank, StatusId, TrapAura, TrapChain, WeaponDef } from './content';
@@ -155,15 +156,23 @@ export interface MobState {
   pos: Vec2;
   facing: Vec2;
   life: number;
-  /** Max life, set at spawn (MobDef.life × the spawn's life scale: elite / boss rank, later map level). Death explosions use it. */
+  /**
+   * Max life, set at spawn: MobDef.life × the spawn's life scale (elite / boss rank) × the world's area level scale
+   * (WorldState.mobScale). Death explosions use it.
+   */
   readonly maxLife: number;
   /**
    * Rank of this mob when it differs from its def (a map run spawns elites and the placeholder boss from ordinary mob
    * data, docs/design/maps.md). Absent: the def's rank (MobDef.boss / MobDef.elite). Read through mobRank().
    */
   readonly rank?: MobRank;
-  /** Multiplier on the damage of this mob's attacks (rank scaling); absent = 1. */
+  /** Multiplier on the damage of this mob's attacks and abilities (rank scaling × WorldState.mobScale); absent = 1. */
   readonly damageScale?: number;
+  /**
+   * Armour against hero hits: MobDef.armour × the world's area level scale (WorldState.mobScale), set at spawn when
+   * that scale is not 1. Absent: MobDef.armour. Read through mobDefences().
+   */
+  readonly armour?: number;
   /** Multiplier on the XP this mob gives (rank scaling); absent = 1. */
   readonly xpScale?: number;
   /**
@@ -391,6 +400,13 @@ export interface Obstacle {
   readonly radius: number;
 }
 
+/** Multipliers on mob life, damage and armour from the area level (core/run mobLevelScaling). Plain JSON. */
+export interface MobScale {
+  readonly life: number;
+  readonly damage: number;
+  readonly armour: number;
+}
+
 export interface WorldState {
   time: number;
   /**
@@ -423,6 +439,11 @@ export interface WorldState {
   kills: number;
   /** Level of the area (map level); scales mob XP. */
   readonly areaLevel: number;
+  /**
+   * Area level scaling of every mob spawned in this world (waves, elites, the boss, minions of any mob), on top of the
+   * spawn's own rank scaling; set by a map run (core/run mobLevelScaling). Absent: × 1 (the endless arena harness).
+   */
+  readonly mobScale?: MobScale;
   /** Total XP earned this run. */
   xpGained: number;
   /** Skill XP each class skill was offered this run (the same amount goes to every skill; max-level skills drop it). */
@@ -641,6 +662,11 @@ export function playerStat(classDef: ClassDef, player: PlayerState, stat: StatId
 export function movePlayer(player: PlayerState, pos: Vec2): void {
   if (pos.x !== player.pos.x || pos.y !== player.pos.y) player.stillTime = 0;
   player.pos = pos;
+}
+
+/** A mob's defences against hero damage: its armour (MobState.armour, grown with the area level) and its def's resistances. */
+export function mobDefences(def: MobDef, mob: Pick<MobState, 'armour'>): Defences {
+  return { armour: mob.armour ?? def.armour, resistances: def.resistances };
 }
 
 /** Rank of a mob: its spawn rank (MobState.rank) or its def's (MobDef.boss / MobDef.elite). */

@@ -57,14 +57,21 @@ export const MOB_SPRITES: Readonly<Record<string, string>> = {
   runner: 'skeleton_minion',
   archer: 'skeleton_archer',
   necromancer: 'necromancer',
+  shieldbearer: 'shieldbearer',
+  boneThrower: 'bone_thrower',
+  gravedigger: 'gravedigger',
+  cultist: 'cultist',
 };
 
 /**
  * Sets without an `attack` sheet: the animation their basic attack plays instead (the necromancer's weak dark bolt
- * uses the spear cast's quick staff thrust).
+ * uses the spear cast's quick staff thrust; the map casters reuse their only cast sheet).
  */
 export const ATTACK_ANIMS: Readonly<Record<string, string>> = {
   necromancer: 'cast_spears',
+  bone_thrower: 'cast_spears',
+  gravedigger: 'cast_summon',
+  cultist: 'cast_summon',
 };
 
 /**

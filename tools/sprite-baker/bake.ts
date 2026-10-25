@@ -197,7 +197,39 @@ async function bakeCharacter(def: BakeCharacter): Promise<Record<string, Manifes
     prop.traverse((obj) => (obj.frustumCulled = false));
     const [rx, ry, rz] = (attachment.rotation ?? [0, 0, 0]).map(THREE.MathUtils.degToRad) as [number, number, number];
     prop.rotation.set(rx, ry, rz);
+    if (attachment.position) prop.position.set(...attachment.position);
+    prop.scale.setScalar(attachment.scale ?? 1);
     bone.add(prop);
+  }
+  for (const tint of def.tint ?? []) {
+    let found = 0;
+    model.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !tint.meshes.includes(obj.name)) return;
+      // Parts share one material (one texture atlas): recolour a private copy. The texel's brightness (max channel)
+      // is kept and its hue / saturation replaced, so a dark-red hood turns into a dark-blue one with the same shading
+      // (a plain colour multiply could only darken it).
+      const material = (mesh.material as THREE.MeshStandardMaterial).clone();
+      const color = new THREE.Color(tint.color);
+      color.multiplyScalar((tint.brightness ?? 1) / Math.max(color.r, color.g, color.b, 1e-6));
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.recolor = { value: color };
+        shader.fragmentShader = shader.fragmentShader
+          .replace('void main() {', 'uniform vec3 recolor;\nvoid main() {')
+          .replace(
+            '#include <map_fragment>',
+            `#ifdef USE_MAP
+              vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+              float value = max( max( sampledDiffuseColor.r, sampledDiffuseColor.g ), sampledDiffuseColor.b );
+              diffuseColor *= vec4( recolor * value, sampledDiffuseColor.a );
+            #endif`,
+          );
+      };
+      material.customProgramCacheKey = () => `recolor-${tint.color}-${tint.brightness ?? 1}`;
+      mesh.material = material;
+      found++;
+    });
+    if (found === 0) throw new Error(`Tint meshes not found: ${tint.meshes.join(', ')}`);
   }
 
   const scale = def.height / Math.cos(PITCH) / (box.max.y - box.min.y);
@@ -322,17 +354,19 @@ function layoutOf(def: BakeCharacter): ManifestLayout | undefined {
 }
 
 async function main(): Promise<void> {
-  // ?only=<id> re-bakes one character and updates just its entries in the existing manifest.
+  // ?only=<id>[,<id>...] re-bakes some characters and updates just their entries in the existing manifest.
   const only = new URLSearchParams(location.search).get('only');
   let manifest: Manifest;
   if (only) {
-    const def = CHARACTERS.find((c) => c.id === only);
-    if (!def) throw new Error(`Unknown character: ${only}`);
     manifest = (await (await fetch('/__manifest')).json()) as Manifest;
-    manifest.characters[def.id] = await bakeCharacter(def);
     const layouts = { ...manifest.layouts };
-    delete layouts[def.id];
-    if (layoutOf(def)) layouts[def.id] = layoutOf(def)!;
+    for (const id of only.split(',')) {
+      const def = CHARACTERS.find((c) => c.id === id);
+      if (!def) throw new Error(`Unknown character: ${id}`);
+      manifest.characters[def.id] = await bakeCharacter(def);
+      delete layouts[def.id];
+      if (layoutOf(def)) layouts[def.id] = layoutOf(def)!;
+    }
     manifest.layouts = layouts;
   } else {
     manifest = { frameSize: BAKE.frameSize, originY: BAKE.originY, layouts: {}, characters: {} };

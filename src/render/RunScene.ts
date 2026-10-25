@@ -81,9 +81,15 @@ const CHAIN_AREA_COLOR = 0xffd23a;
 /** Far Shot (distanceDamage) glow around bolts. */
 const FAR_SHOT_GLOW = 0xfff0a0;
 /** Mob basic attack projectiles with their own look (by mob def id); others are the plain red streak. */
-const DARK_BOLT_MOBS: ReadonlySet<string> = new Set(['necromancer']);
+const DARK_BOLT_MOBS: ReadonlySet<string> = new Set(['necromancer', 'cultist']);
+const EARTH_CLOD_MOBS: ReadonlySet<string> = new Set(['gravedigger']);
 /** Ability projectiles drawn as bone spears (Projectile.abilityId). */
 const BONE_SPEAR_ABILITIES: ReadonlySet<string> = new Set(['boneSpears']);
+/** Tumbling thrown bones: ability projectiles (abilityId) and mob basic attacks (mob def id). */
+const THROWN_BONE_ABILITIES: ReadonlySet<string> = new Set(['boneFan']);
+const THROWN_BONE_MOBS: ReadonlySet<string> = new Set(['boneThrower']);
+/** Turns per second of a thrown bone. */
+const THROWN_BONE_SPIN = 2.2;
 /** Sprite height of a normal-sized character in screen px (actor.scale multiplies it); for overhead effects. */
 const BODY_PX = 62;
 /** Minions crumbling with their summoner: a short corpse, a grey dusty tint, deaths staggered a little. */
@@ -1521,10 +1527,17 @@ export class RunScene extends Phaser.Scene {
       const tail = toScreen(vec(pos.x - p.dir.x * 18, pos.y - p.dir.y * 18));
       const color = p.owner === 'mob' ? MOB_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
       g.fillStyle(0x000000, 0.35).fillEllipse(s.x, s.y, p.radius * 2, p.radius);
+      const mobBasic = p.owner === 'mob' && p.abilityId === undefined;
       if (p.owner === 'mob' && p.abilityId !== undefined && BONE_SPEAR_ABILITIES.has(p.abilityId)) {
         this.bossFx.drawBoneSpear(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
-      } else if (p.owner === 'mob' && p.abilityId === undefined && DARK_BOLT_MOBS.has(p.sourceId)) {
+      } else if (p.owner === 'mob' && (p.abilityId !== undefined ? THROWN_BONE_ABILITIES.has(p.abilityId) : THROWN_BONE_MOBS.has(p.sourceId))) {
+        // Spin on the render clock (smooth between fixed core ticks); the id offsets the start angle.
+        const spin = (this.time.now / 1000) * THROWN_BONE_SPIN * Math.PI * 2 + p.id;
+        this.bossFx.drawThrownBone(top, s.x, s.y - PROJECTILE_HEIGHT, p.radius, spin);
+      } else if (mobBasic && DARK_BOLT_MOBS.has(p.sourceId)) {
         this.bossFx.drawDarkBolt(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
+      } else if (mobBasic && EARTH_CLOD_MOBS.has(p.sourceId)) {
+        this.bossFx.drawEarthClod(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
       } else if (p.explodeRadius > 0) {
         // Exploding projectiles (fireball and its split children) leave a short fading glow behind.
         top.fillStyle(color, 0.22).fillCircle(tail.x, tail.y - PROJECTILE_HEIGHT, p.radius * 1.3);

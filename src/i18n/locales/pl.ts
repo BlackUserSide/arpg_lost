@@ -563,6 +563,10 @@ export const pl: LocaleTable = {
   'mob.runner.name': 'Biegacz',
   'mob.archer.name': 'Łucznik',
   'mob.necromancer.name': 'Nekromanta',
+  'mob.shieldbearer.name': 'Kościany tarczownik',
+  'mob.boneThrower.name': 'Kościany miotacz',
+  'mob.gravedigger.name': 'Grabarz',
+  'mob.cultist.name': 'Kultysta-przywoływacz',
 
   // ---- Content: supports ----
   'support.wider_swing.name': 'Szerszy zamach',

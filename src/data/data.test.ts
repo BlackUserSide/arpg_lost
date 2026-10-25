@@ -187,7 +187,7 @@ describe('item generation with real data', () => {
   });
 });
 
-describe('mob abilities (boss)', () => {
+describe('mob abilities (the boss and the map casters)', () => {
   const casters = Object.values(content.mobs).filter((m) => m.abilities);
   const heroes = Object.values(content.classes);
   const widestHero = Math.max(...heroes.map((c) => c.radius));

@@ -10,7 +10,7 @@ import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './st
 import { resourceOnHeroHit, startResourceUse } from './resource';
 import { spawnDecoy, spawnZone } from './zones';
 import type { DamageType, Modifier } from '../stats/types';
-import { allModifiers, clampToArena, getMob, heroConditionalModifiers, isImmune, mobRank, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
+import { allModifiers, clampToArena, getMob, heroConditionalModifiers, isImmune, mobDefences, mobRank, movePlayer, type Ctx, type MobState, type PendingEcho, type PlayerState, type Trap } from './state';
 
 /** The hero's effective action (class data + skill changes, see PlayerState.actions). */
 export function findAction(ctx: Ctx, id: string): ActionDef {
@@ -467,7 +467,7 @@ export function damageMob(ctx: Ctx, action: ActionDef, mob: MobState, castModifi
       critChance: computeStat(baseCrit, mods, 'critChance', action.tags),
       critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', action.tags),
     });
-    const hit = resolveHit(rng, { damage, critChance, critMultiplier }, { armour: def.armour, resistances: def.resistances }, content.combat);
+    const hit = resolveHit(rng, { damage, critChance, critMultiplier }, mobDefences(def, mob), content.combat);
     // Leech counts only the life actually removed (overkill does not leech).
     removed = Math.max(0, Math.min(hit.total, mob.life));
     mob.life -= hit.total;

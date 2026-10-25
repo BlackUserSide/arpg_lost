@@ -6,6 +6,7 @@ import { distance, vec, type Vec2 } from '../math';
 import { mapClearBonusXp } from '../progression/levels';
 import { createRng, type Rng } from '../rng';
 import { weightedPick } from '../items/generate';
+import { mobLevelScaling } from './mobScaling';
 import type { Content } from '../world/content';
 import { clampToArena, createWorld, grantBonusXp, spawnMob, spawnRadius, step, type Loadout, type MobSpawn } from '../world/world';
 import type {
@@ -22,6 +23,8 @@ import type {
   RunState,
   RunStepEvent,
 } from './types';
+
+export { levelCurveMultiplier, mobLevelScaling } from './mobScaling';
 
 /** Seconds below this count as zero (float rounding of fixed steps); structural, not balance. */
 const TIME_EPSILON = 1e-9;
@@ -133,7 +136,8 @@ function planRooms(rng: Rng, maps: MapsData, mapLevel: number): RoomPlan[] {
 
 /**
  * A new run on map `mapLevel`: rooms planned from the seed, the hero in the first room's entry, mob level (world
- * areaLevel) = map level. The first wave comes after RunRules.waves.firstDelay.
+ * areaLevel) = map level, and every mob of the run (waves, elites, boss, minions) grows by mobLevelScaling (world
+ * mobScale). The first wave comes after RunRules.waves.firstDelay.
  */
 export function createRun(content: Content, maps: MapsData, classId: string, seed: number, loadout: Loadout, mapLevel: number): RunState {
   const level = Math.max(1, Math.floor(mapLevel));
@@ -145,6 +149,7 @@ export function createRun(content: Content, maps: MapsData, classId: string, see
     obstacles: first.obstacles ?? [],
     start: first.entry,
     endless: false,
+    mobScale: mobLevelScaling(maps.rules, level),
   });
   return {
     mapLevel: level,
