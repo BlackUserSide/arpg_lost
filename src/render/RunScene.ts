@@ -42,6 +42,8 @@ import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadSprites, MOB_S
 import { BossFx } from './bossFx';
 import { EliteFx, eliteLook } from './eliteFx';
 import { UniqueFx } from './uniqueFx';
+import { SOUL_GREEN, SOUL_VIOLET, SoulFx } from './soulFx';
+import { soulsMax } from '../core/world/souls';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
 // Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
@@ -287,6 +289,7 @@ export class RunScene extends Phaser.Scene {
   /** Elite modifier visuals (glow, death circle and blast, fiery projectiles, hero burn, fast streaks). */
   private eliteFx!: EliteFx;
   private uniqueFx!: UniqueFx;
+  private soulFx!: SoulFx;
   /** The hero sprite carries the burning tint (cleared once when the burn ends). */
   private heroTinted = false;
   /** Mob id → world time of its last "Immune" label. */
@@ -394,6 +397,7 @@ export class RunScene extends Phaser.Scene {
     this.bossFx = new BossFx(this);
     this.eliteFx = new EliteFx(this);
     this.uniqueFx = new UniqueFx(this);
+    this.soulFx = new SoulFx(this);
     this.heroTinted = false;
     this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
@@ -488,6 +492,7 @@ export class RunScene extends Phaser.Scene {
     this.bossFx.clear();
     this.eliteFx.clear();
     this.uniqueFx.clear();
+    this.soulFx.clear();
     this.immuneShown.clear();
     this.buildRoom();
     this.cameras.main.fadeIn(ROOM_FADE, 7, 7, 10);
@@ -1227,12 +1232,26 @@ export class RunScene extends Phaser.Scene {
         this.hud.skillLevelUp(event.skillId);
         break;
       case 'echo': {
-        // The free repeat: the hero swings again (its own action event follows) with a violet afterimage.
+        // The free repeat: the hero swings again (its own action event follows) with a violet afterimage; the
+        // Devourer's Crown echo (souls spent) in soul colours, with a purple-green soul burst.
         const from = toScreen(event.pos);
         const ahead = toScreen(vec(event.pos.x + event.facing.x, event.pos.y + event.facing.y));
-        this.supportFx.echo(this.hero.sprite, ahead.x - from.x, ahead.y - from.y);
+        if (event.souls) {
+          this.supportFx.echo(this.hero.sprite, ahead.x - from.x, ahead.y - from.y, SOUL_GREEN, SOUL_VIOLET);
+          this.soulFx.echo(this.hero.sprite.x, this.hero.sprite.y, BODY_PX);
+        } else this.supportFx.echo(this.hero.sprite, ahead.x - from.x, ahead.y - from.y);
         break;
       }
+      case 'soulGain': {
+        // A fallen mob's soul flies to the hero (Devourer's Crown); the HUD counter reads PlayerState.souls.
+        const s = toScreen(event.pos);
+        this.soulFx.gain(s.x, s.y - BODY_PX * 0.5);
+        break;
+      }
+      case 'soulEcho':
+        // This use took the full souls count: the crown flares now, its free echo follows ('echo' with souls).
+        this.soulFx.charge(this.hero.sprite.x, this.hero.sprite.y, BODY_PX);
+        break;
       case 'chain': {
         const xs = this.chainXs;
         const ys = this.chainYs;
@@ -1701,6 +1720,9 @@ export class RunScene extends Phaser.Scene {
     this.eliteFx.drawBursts(g, top, dt);
     this.uniqueFx.drawBursts(g, top, dt);
     this.uniqueFx.drawCritMark(top, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, player.nextAttackCrit && !player.dead, this.world.time, dt);
+    const maxSouls = soulsMax(player);
+    const soulsFull = maxSouls !== undefined && player.souls >= maxSouls && !player.dead;
+    this.soulFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, soulsFull, this.world.time);
     this.supportFx.update(g, top, dt, this.hero.sprite.x, this.hero.sprite.y);
 
     for (const p of this.world.projectiles) {

@@ -8,6 +8,7 @@ import { actionReady, spendCharge } from './charges';
 import { actionCost, armsNextAttackCrit, canPay, counterAttackStats, critStats, lifeOnCritStats, lifeRecoveryPool } from './passiveEffects';
 import { applyStatus, conditionTarget, fillStunBar, updateAuraSlows } from './statuses';
 import { recoverResource, resourceOnHeroHit, startResourceUse } from './resource';
+import { soulEchoDelay, spendSouls } from './souls';
 import { spawnDecoy, spawnZone } from './zones';
 import type { DamageType, Modifier } from '../stats/types';
 import {
@@ -96,6 +97,8 @@ function payCost(ctx: Ctx, action: ActionDef): void {
  * critAfterSkill: an 'attack' use while PlayerState.nextAttackCrit is set consumes it and delivers a snapshot with
  * guaranteedCrit (every hit of this use crits; projectiles / dashes keep it; its echo does not); then using one of
  * the mechanic's skills arms the flag for the next attack.
+ * souls: at a full souls count a fitting use queues a guaranteed echo (soulEchoDelay, 'soulEcho' event) instead of
+ * its Echo support roll; the souls are spent when that echo fires (updateEchoes).
  */
 export function performAction(ctx: Ctx, action: ActionDef): void {
   const { world, events, input, rng } = ctx;
@@ -130,8 +133,12 @@ export function performAction(ctx: Ctx, action: ActionDef): void {
     }
   }
 
-  // Echo: one chance draw per use, after the use's own hits.
-  if (action.echo && rng.chance(action.echo.chance)) {
+  // Echo: a full souls count guarantees it (no chance draw then); else one chance draw per use, after its own hits.
+  const soulsDelay = soulEchoDelay(player, action);
+  if (soulsDelay !== undefined) {
+    player.echoes.push({ actionId: action.id, action, timer: soulsDelay, facing: use.facing, aim: use.aim, ...(special ? { special } : {}), souls: true });
+    events.push({ type: 'soulEcho', actionId: action.id, pos: player.pos, delay: soulsDelay });
+  } else if (action.echo && rng.chance(action.echo.chance)) {
     player.echoes.push({ actionId: action.id, action, timer: action.echo.delay, facing: use.facing, aim: use.aim, ...(special ? { special } : {}) });
   }
 }
@@ -149,6 +156,7 @@ interface ActionUse {
  * from the hero's current position with the facing and aim locked at the original use ('echo' event first). Free:
  * no cost, charge, cooldown, action time or resource-hit count restart, no self effects (Echo never fits buffs or
  * movement skills), not counted as a use, never echoes again; an every-N-th special swing repeats as special.
+ * A souls echo (PendingEcho.souls) spends the souls after its delivery, so it still hits with them held.
  */
 export function updateEchoes(ctx: Ctx, dt: number): void {
   const player = ctx.world.player;
@@ -161,8 +169,9 @@ export function updateEchoes(ctx: Ctx, dt: number): void {
   if (due.length === 0) return;
   player.echoes = player.echoes.filter((e) => !due.includes(e));
   for (const echo of due) {
-    ctx.events.push({ type: 'echo', actionId: echo.actionId, pos: player.pos, facing: echo.facing });
+    ctx.events.push({ type: 'echo', actionId: echo.actionId, pos: player.pos, facing: echo.facing, ...(echo.souls ? { souls: true } : {}) });
     deliver(ctx, echo.action, { facing: echo.facing, aim: echo.aim, special: echo.special === true });
+    if (echo.souls) spendSouls(player);
   }
 }
 

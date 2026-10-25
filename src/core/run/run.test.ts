@@ -1,6 +1,7 @@
 // Map run state machine (docs/design/maps.md): rooms and waves, door gating, altar and boss, timer, fails, ranks.
 import { describe, expect, it } from 'vitest';
 import { vec } from '../math';
+import type { PassiveMechanic } from '../passives/types';
 import type { SupportData } from '../supports/types';
 import type { ActionDef, ClassDef, Content, MobDef } from '../world/content';
 import { clampToArena, isBoss, mobRank, spawnMob, step, type PlayerInput } from '../world/world';
@@ -712,5 +713,29 @@ describe('elite modifiers (mobs.md «Еліти»)', () => {
     }
     const boss = spawnMob(run.world, modContent, { defId: 'dummy', rank: 'boss' }, vec(200, 200), []);
     expect(boss.eliteModifier).toBeUndefined();
+  });
+});
+
+describe('souls (Devourer\'s Crown) across rooms', () => {
+  it('a souls echo still waiting at a room change is dropped, the souls stay full and the next use queues it again', () => {
+    const souls: PassiveMechanic = { kind: 'souls', max: 30, echoDelay: 0.25, echoFor: { damaging: true, excludeDeliveries: ['dash', 'teleport', 'self'] } };
+    const run = createRun(content, maps, 'hero', 7, { mechanics: [souls] }, 1);
+    clearRoom(run);
+    run.world.player.souls = 30;
+    const attack: RunInput = { ...idle, basicAttack: true, aim: vec(run.world.player.pos.x + 30, run.world.player.pos.y) };
+    const used = steps(run, 1, attack);
+    expect(used.filter((e) => e.type === 'soulEcho').map((e) => (e.type === 'soulEcho' ? e.actionId : ''))).toEqual(['strike']);
+    expect(run.world.player.echoes.map((e) => e.souls)).toEqual([true]);
+    // Through the door before the 0.25 s are up.
+    walkThroughDoor(run);
+    expect(run.room).toBe(1);
+    expect(run.world.player.echoes).toEqual([]);
+    expect(run.world.player.souls).toBe(30);
+    // After the attack time the next use takes the souls again.
+    steps(run, 40);
+    const again = steps(run, 1, { ...attack, aim: vec(run.world.player.pos.x + 30, run.world.player.pos.y) });
+    expect(again.some((e) => e.type === 'soulEcho')).toBe(true);
+    expect(run.world.player.echoes.map((e) => e.souls)).toEqual([true]);
+    expect(run.world.player.souls).toBe(30);
   });
 });

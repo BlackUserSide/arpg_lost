@@ -5,7 +5,7 @@
 import type { PassiveMechanic } from '../passives/types';
 import type { SkillChangeSet } from '../skills/types';
 import type { ActionDef, ClassDef } from '../world/content';
-import type { SupportDef, SupportData, SupportRef, SupportTierDef } from './types';
+import type { SupportCompatibility, SupportDef, SupportData, SupportRef, SupportTierDef } from './types';
 
 /**
  * True if the support can be socketed into `skill` (the class data action, not the resolved one): every rule of
@@ -13,7 +13,14 @@ import type { SupportDef, SupportData, SupportRef, SupportTierDef } from './type
  * in data (e.g. Pierce: projectile deliveries that do not explode).
  */
 export function supportFits(def: SupportDef, skill: ActionDef): boolean {
-  const c = def.compatibility;
+  return fitsCompatibility(def.compatibility, skill);
+}
+
+/**
+ * True if every rule of `c` holds for `skill`. Works with a class data action (supportFits: compatibility only changes
+ * with data) or with a resolved one (the souls mechanic's echo eligibility checks the effective action being used).
+ */
+export function fitsCompatibility(c: SupportCompatibility, skill: ActionDef): boolean {
   if (c.tags && !c.tags.some((set) => set.every((t) => skill.tags.includes(t)))) return false;
   if (c.deliveries && !c.deliveries.includes(skill.delivery.kind)) return false;
   if (c.excludeDeliveries?.includes(skill.delivery.kind)) return false;

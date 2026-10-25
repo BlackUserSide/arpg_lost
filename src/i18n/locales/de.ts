@@ -276,6 +276,7 @@ export const de: LocaleTable = {
   'cond.movedWithin': 'In Bewegung (bewegt in den letzten {seconds} s)',
   'cond.stationaryFor': 'Nach {seconds} s oder mehr Stillstand',
   'cond.lifeBelow': 'Solange Leben unter {pct} ist',
+  'cond.soulsAtMost': 'Solange du höchstens {value} Seelen hast',
   'cond.targetHasStatus': 'Gegen {status} Gegner',
   'mech.bloodMagic.cost': 'Fertigkeiten kosten Leben statt {resGen} ({life} Leben pro 1 {resAcc})',
   'mech.bloodMagic.noResource': 'Max. {resGen} ist 0',
@@ -452,6 +453,10 @@ export const de: LocaleTable = {
   'hud.key.rmb': 'RMT',
   'hud.skillsCostLife': 'Kosten:\nLeben',
   'hud.buffSeconds': '{seconds}s',
+  /** Devourer's Crown souls counter: caption, caption at the max, caption while the no-souls penalty applies. */
+  'hud.souls': 'Seelen',
+  'hud.soulsReady': 'Bereit',
+  'hud.soulsPenalty': '−{pct} Schaden',
   'arena.talents': 'Talente',
   'arena.talentsKey': 'Talente (P)',
   'arena.pause': 'Pause',
@@ -786,4 +791,7 @@ export const de: LocaleTable = {
   'unique.shadow_boots.effect': 'Nach einer Rolle ist dein nächster Angriff ein garantierter kritischer Treffer',
   'unique.rift_ring.name': 'Ring des Risses',
   'unique.rift_ring.effect': 'Teleport hat keine Abklingzeit und hinterlässt am Startpunkt eine Explosion ({min}–{max} Blitzschaden); jeder Teleport kostet {pct} deines aktuellen Lebens',
+  'unique.devourer_crown.name': 'Krone des Verschlingers',
+  'unique.devourer_crown.effect':
+    'Jeder Kill gewährt eine Seele (bis zu {max}). Bei {max} Seelen löst deine nächste schadensverursachende Fertigkeit zweimal aus (Echo), und die Seelen werden verbraucht. Ohne Seelen verursachst du {pct} weniger Schaden',
 };

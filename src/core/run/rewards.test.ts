@@ -119,7 +119,9 @@ describe('uniques and legendaries in the chest', () => {
     weight: 1,
     stats: [{ stat: 'life', kind: 'flat', tiers: [{ min: 10, max: 20, step: 1, minLevel: 1 }] }],
   };
-  const withLegend: ItemsData = { ...itemsData, uniques: { ...itemsData.uniques, test_legend: legend } };
+  // The fixture is the only legendary here (the real ones are left out so the pick is fixed).
+  const realUniques = Object.fromEntries(Object.entries(itemsData.uniques).filter(([, u]) => u.rarity === 'unique'));
+  const withLegend: ItemsData = { ...itemsData, uniques: { ...realUniques, test_legend: legend } };
 
   it('boss loot: only the first chest item gets the ×3 unique weight, and only when the boss was killed', () => {
     expect(planRunRewards(won(0.1), rules).items.map((i) => i.uniqueWeightMultiplier)).toEqual([3, undefined]);
@@ -160,11 +162,25 @@ describe('uniques and legendaries in the chest', () => {
     expect(tight.salvagedIds).toEqual(['i1', 'i2']);
   });
 
-  it('no legendary in the data (6a): a won roll gives nothing extra', () => {
+  it('no legendary in the data: a won roll gives nothing extra', () => {
     const plan = { ...planRunRewards(won(0.1, { mapLevel: 30 }), rules), legendary: { itemLevel: 31, chance: 1 } };
-    const got = grantRunRewards(createProfile(), createRng(42), plan, itemsData);
+    const got = grantRunRewards(createProfile(), createRng(42), plan, { ...itemsData, uniques: realUniques });
     expect(got.items).toHaveLength(2);
     expect(got.legendaryId).toBeUndefined();
+  });
+
+  it("real data: a boss kill on map 30 with the legendary roll won drops Devourer's Crown (6c), T1 lines", () => {
+    const plan = planRunRewards(won(0.1, { mapLevel: 30 }), mapsData.rewards);
+    expect(plan.legendary).toEqual({ itemLevel: 31, chance: 0.002 });
+    expect(planRunRewards(won(0.1, { mapLevel: 29 }), mapsData.rewards).legendary).toBeUndefined();
+    // A forced rng: every chance draw succeeds (the 1 / 500 legendary roll included); the rest stays seeded.
+    const forced = { ...createRng(42), chance: (): boolean => true };
+    const got = grantRunRewards(createProfile(), forced, plan, itemsData);
+    const crown = got.items.find((i) => i.id === got.legendaryId)!;
+    expect(crown).toMatchObject({ rarity: 'legendary', level: 31, baseId: 'warded_helm', unique: { id: 'devourer_crown' } });
+    expect(crown.unique!.rolls.map((r) => r.tier)).toEqual([1, 1, 1]);
+    // The same rolls without the forced chance give no legendary.
+    expect(grantRunRewards(createProfile(), createRng(42), plan, itemsData).legendaryId).toBeUndefined();
   });
 });
 

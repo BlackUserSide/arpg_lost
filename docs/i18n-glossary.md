@@ -144,3 +144,5 @@ A unique's drawback lines read `item.cost` ("Cost: …" / "Ціна: …"); the 
 | madman_gloves | Madman's Gloves | Рукавиці Безумця | Handschuhe des Wahnsinnigen | Rękawice Szaleńca |
 | shadow_boots | Shadow Boots | Чоботи Тіні | Schattenstiefel | Buty Cienia |
 | rift_ring | Rift Ring | Перстень Розлому | Ring des Risses | Pierścień Szczeliny |
+| devourer_crown (legendary) | Devourer's Crown | Корона Пожирача | Krone des Verschlingers | Korona Pożeracza |
+| Soul (crown resource) | Soul | Душа | Seele | Dusza |

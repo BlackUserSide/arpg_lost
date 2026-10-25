@@ -50,6 +50,8 @@ function conditionText(c: PassiveCondition): string {
       return t('cond.stationaryFor', { seconds: num(c.seconds) });
     case 'lifeBelow':
       return t('cond.lifeBelow', { pct: pct(c.fraction) });
+    case 'soulsAtMost':
+      return t('cond.soulsAtMost', { value: num(c.value) });
     case 'targetHasStatus':
       return t('cond.targetHasStatus', { status: statusText(c.status, 'target') });
   }
@@ -149,6 +151,7 @@ export function formatMechanic(m: PassiveMechanic, resourceId?: string): string[
     case 'elementalArmour':
     case 'lifeOnCrit':
     case 'critAfterSkill':
+    case 'souls':
       return [];
   }
 }

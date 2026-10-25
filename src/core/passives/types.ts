@@ -4,6 +4,7 @@
 import type { DeathExplosionDef, StatusId } from '../world/content';
 import type { AddedStatus, SkillChangeSet, SkillGrants, SkillParamChange } from '../skills/types';
 import type { DamageType, Modifier, SkillTag } from '../stats/types';
+import type { SupportCompatibility } from '../supports/types';
 
 /**
  * - `start`: a class start point (free, no bonus, never allocated; other classes cannot path through it).
@@ -27,7 +28,9 @@ export type PassiveCondition =
   /** Current life below this fraction of max life. */
   | { readonly kind: 'lifeBelow'; readonly fraction: number }
   /** The hit's target has this status. */
-  | { readonly kind: 'targetHasStatus'; readonly status: PassiveStatusId };
+  | { readonly kind: 'targetHasStatus'; readonly status: PassiveStatusId }
+  /** The hero holds at most `value` souls (PlayerState.souls; the souls mechanic, Devourer's Crown). */
+  | { readonly kind: 'soulsAtMost'; readonly value: number };
 
 /** Statuses passives refer to (all implemented by combat). */
 export type PassiveStatusId = StatusId;
@@ -139,7 +142,15 @@ export type PassiveMechanic =
    * Using one of `skillIds` makes the hero's next attack use (an action with the 'attack' tag) a guaranteed crit with
    * every hit of that use (PlayerState.nextAttackCrit); no time limit, consumed by that use. Uniques (Shadow Boots).
    */
-  | { readonly kind: 'critAfterSkill'; readonly skillIds: readonly string[] };
+  | { readonly kind: 'critAfterSkill'; readonly skillIds: readonly string[] }
+  /**
+   * Souls (Devourer's Crown): every non-minion mob death, whatever killed it, gives the hero a soul (PlayerState.souls,
+   * 0 at run start, capped at `max`). At `max`, the next use of an action that fits `echoFor` (the rules of a support's
+   * compatibility, checked against the effective action) is repeated once for free `echoDelay` seconds later (a
+   * guaranteed echo, see updateEchoes; it replaces that use's Echo support roll). The souls are spent (back to 0) when
+   * that echo fires, so the use and its echo both hit while the souls are held. Several sources: the first one counts.
+   */
+  | { readonly kind: 'souls'; readonly max: number; readonly echoDelay: number; readonly echoFor: SupportCompatibility };
 
 export type PassiveMechanicKind = PassiveMechanic['kind'];
 
