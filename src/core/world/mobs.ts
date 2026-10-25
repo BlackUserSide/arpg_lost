@@ -15,15 +15,22 @@ import { decayStunBar, tickBleed, tickIgnite } from './statuses';
 import { resourceOnHeroHitTaken } from './resource';
 import { elementalArmourEffectiveness } from './passiveEffects';
 import { gainSoul } from './souls';
+import { killHero, timeStopped } from './cheatDeath';
 import { mobTarget } from './zones';
 import { allModifiers, clampToArena, getMob, mobRank, playerStat, type Ctx, type MobState, type WorldEvent, type WorldState } from './state';
 
+/**
+ * Every living mob for one step. During a time stop (cheatDeath, timeStopped) nothing of a mob runs: no movement,
+ * attacks, casts, ability / phase timers, statuses or DoTs, no separation. A stop that starts during this loop (a mob's
+ * lethal hit was cheated) freezes the mobs after it at once, so no second hit lands in the same step.
+ */
 export function updateMobs(ctx: Ctx, dt: number): void {
   const { world, content, events } = ctx;
   const player = world.player;
   const barStats = player.stunBarStats;
   // Index loop over the mobs alive at the start: minions raised during this step first act on the next one.
   for (let i = 0, n = world.mobs.length; i < n; i++) {
+    if (timeStopped(world)) return;
     const mob = world.mobs[i]!;
     // Mobs killed earlier this step neither act nor tick: their statuses at death stay as they were.
     if (mob.life <= 0) continue;
@@ -103,7 +110,7 @@ export function updateMobs(ctx: Ctx, dt: number): void {
       }
     }
   }
-  separateMobs(world);
+  if (!timeStopped(world)) separateMobs(world);
 }
 
 /** Advances a mob's knockback by one step (clamped to the arena). Returns true if it was being pushed this step. */
@@ -182,12 +189,9 @@ export function damagePlayer(ctx: Ctx, base: BaseDamage, critChance: number, sou
   player.energyShield = result.pools.energyShield;
   events.push({ type: 'hit', targetId: player.id, pos: player.pos, amount: taken, isCrit: hit.isCrit });
   if (result.isDead) {
-    player.dead = true;
-    player.motion = undefined;
-    // A dead hero does not keep burning (render reads player.ignite).
-    player.ignite = 0;
-    player.igniteDps = 0;
-    events.push({ type: 'playerDeath' });
+    // Death, or a cheatDeath save (killHero). Either way the lethal hit has no after-effects: no hero statuses from
+    // it (a saved hero is not set on fire again), no resource from damage taken, no counter-attack.
+    killHero(ctx);
     return true;
   }
   if (mod) applyHeroStatuses(ctx, mod, hit.raw);
@@ -350,7 +354,8 @@ export function spawnMob(world: WorldState, content: Content, spawn: MobSpawn, p
  */
 export function updateSpawner(ctx: Ctx, dt: number): void {
   const { world, content, rng, events } = ctx;
-  if (!world.endless) return;
+  // Time stop (cheatDeath): the arena spawner waits.
+  if (!world.endless || timeStopped(world)) return;
   const spawn = content.arena.spawn;
   world.spawn.timer -= dt;
   if (world.spawn.timer > 0) return;

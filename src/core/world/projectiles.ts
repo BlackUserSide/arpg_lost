@@ -6,6 +6,7 @@ import { damageMob, explode, releaseChain } from './actions';
 import { damagePlayer, hitPlayer } from './mobs';
 import { abilityHit } from './abilities';
 import { distanceDamageModifier } from './passiveEffects';
+import { timeStopped } from './cheatDeath';
 import { getMob, insideArena, type Ctx, type Projectile } from './state';
 
 
@@ -30,6 +31,9 @@ export function updateProjectiles(ctx: Ctx, dt: number): void {
 /** Returns false when the projectile is gone. */
 function stepProjectile(ctx: Ctx, p: Projectile, dt: number): boolean {
   const { world, content } = ctx;
+  // Time stop (cheatDeath): mob projectiles hang in the air, checked live so a stop started by an earlier projectile
+  // this step already holds the rest.
+  if (p.owner === 'mob' && timeStopped(world)) return true;
   const stepLen = Math.min(p.speed * dt, p.remaining);
   p.pos = add(p.pos, scale(p.dir, stepLen));
   p.remaining -= stepLen;

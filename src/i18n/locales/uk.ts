@@ -275,6 +275,7 @@ export const uk: LocaleTable = {
   'cond.stationaryFor': 'Якщо стоїте на місці ≥ {seconds} с',
   'cond.lifeBelow': 'Поки життя нижче {pct}',
   'cond.soulsAtMost': 'Поки у вас не більше {value} душ',
+  'cond.cheatDeathRecharging': 'Поки годинник «заводиться»',
   'cond.targetHasStatus': 'Проти {status} ворогів',
   'mech.bloodMagic.cost': 'Скіли коштують життя замість {resGen} ({life} життя за 1 {resAcc})',
   'mech.bloodMagic.noResource': 'Максимум {resGen} = 0',
@@ -460,6 +461,9 @@ export const uk: LocaleTable = {
   'hud.souls': 'Душі',
   'hud.soulsReady': 'Готово',
   'hud.soulsPenalty': '−{pct} урону',
+  'hud.clock': 'Остання мить',
+  'hud.clockReady': 'Готово',
+  'hud.clockPenalty': '+{pct} отриманого урону',
   'arena.talents': 'Таланти',
   'arena.talentsKey': 'Таланти (P)',
   'arena.pause': 'Пауза',
@@ -482,6 +486,7 @@ export const uk: LocaleTable = {
   'arena.hintPause': 'Esc — продовжити',
   'arena.hintRetry': 'R — ще раз   ·   Esc — до хабу',
   'arena.levelUp': 'Новий рівень',
+  'arena.lastMoment': 'Остання мить!',
   'arena.levelUpLine': 'Рівень {level}  ·  {restored}',
   'arena.restoredBoth': 'Відновлено життя й {resAcc}',
   'arena.restoredLife': 'Відновлено життя',
@@ -808,4 +813,7 @@ export const uk: LocaleTable = {
   'unique.devourer_crown.name': 'Корона Пожирача',
   'unique.devourer_crown.effect':
     'Кожне вбивство дає душу (до {max}). На {max} душах наступний скіл з уроном спрацьовує двічі (луна), душі витрачаються. Без душ урон на {pct} менший',
+  'unique.clock_last_moment.name': 'Годинник Останньої Миті',
+  'unique.clock_last_moment.effect':
+    'Смертельний удар не вбиває: у вас лишається {life} життя, а час для ворогів зупиняється на {seconds} с. Раз на {cooldown} с. Поки годинник «заводиться», ви отримуєте на {pct} більше урону',
 };

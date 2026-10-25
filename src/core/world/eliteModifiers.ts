@@ -11,6 +11,7 @@
 
 import { applyDamageTaken, totalDamage, type DamageByType } from '../combat/damage';
 import { applyDamage } from '../combat/hit';
+import { killHero } from './cheatDeath';
 import { resistanceMultiplier } from '../combat/mitigation';
 import type { Content, EliteModifierDef, MobDef } from './content';
 import { allModifiers, playerStat, PLAYER_ID, type Ctx, type HostileZone, type MobState } from './state';
@@ -84,8 +85,8 @@ export function applyHeroIgnite(ctx: Ctx, amount: number, duration: number): voi
  * The hero's ignite for one fixed step: igniteDps × min(dt, remaining), energy shield first like every hero damage
  * (applyDamage), one 'dot' event (targetId PLAYER_ID). A damage over time: no crit, no resource from damage taken, no
  * combat-idle reset, no counter-attack. While invulnerable (roll) it keeps running out but deals nothing (like an
- * immune mob). Killing the hero: 'playerDeath'. Runs in updatePlayer after regeneration, so a burn applied by a
- * hit in step n first ticks in step n + 1.
+ * immune mob). Reaching 0: killHero (death, or a cheatDeath save). Runs in updatePlayer after regeneration, so a
+ * burn applied by a hit in step n first ticks in step n + 1.
  */
 export function tickHeroIgnite(ctx: Ctx, dt: number): void {
   const { world, events } = ctx;
@@ -98,12 +99,9 @@ export function tickHeroIgnite(ctx: Ctx, dt: number): void {
     player.life = result.pools.life;
     player.energyShield = result.pools.energyShield;
     events.push({ type: 'dot', targetId: PLAYER_ID, pos: player.pos, amount, status: 'ignite' });
+    // Death or a cheatDeath save (killHero); both clear the burn.
     if (result.isDead) {
-      player.dead = true;
-      player.motion = undefined;
-      player.ignite = 0;
-      player.igniteDps = 0;
-      events.push({ type: 'playerDeath' });
+      killHero(ctx);
       return;
     }
   }

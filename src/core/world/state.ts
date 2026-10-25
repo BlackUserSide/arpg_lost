@@ -157,6 +157,11 @@ export interface PlayerState {
    * max, back to 0 when the free echo they grant fires. Stays 0 without the mechanic. Render: the souls counter.
    */
   souls: number;
+  /**
+   * Seconds until cheatDeath (Clock of the Last Moment) can save the hero again; 0 = ready (also without the
+   * mechanic). Counts down on world time, also during a time stop. Render: the clock's recharge on the HUD.
+   */
+  cheatDeathCooldown: number;
   /** Equipped weapon, or the class default. */
   weapon: WeaponDef;
   buffs: Buff[];
@@ -475,7 +480,14 @@ export interface WorldState {
   decoys: Decoy[];
   /** Hostile ground zones waiting to erupt (mob abilities), in placement order. */
   hostileZones: HostileZone[];
-  spawn: { timer: number; wave: number };
+  /**
+   * Seconds left of a time stop (cheatDeath): while > 0 the enemies' time stands still: mobs (movement, attacks,
+   * casts, ability and phase timers, statuses and DoTs on them, knockback), mob projectiles, hostile zones, the arena
+   * spawner and a map run's wave / boss summon timers. The hero, hero projectiles, traps, hero zones, decoys and mob
+   * deaths keep going; so does the run timer. 0 = time runs. Render: freeze mob animations, tint the scene.
+   */
+  timeStop: number;
+  spawn:{ timer: number; wave: number };
   kills: number;
   /** Level of the area (map level); scales mob XP. */
   readonly areaLevel: number;
@@ -629,7 +641,15 @@ export type WorldEvent =
     }
   /** A hostile zone erupted and is gone; `hit`: the hero was inside and was hit. */
   | { type: 'hostileZoneErupt'; zoneId: number; abilityId: string; pos: Vec2; radius: number; hit: boolean; source?: 'eliteDeath'; eliteModifier?: string }
-  | { type: 'playerDeath' };
+  | { type: 'playerDeath' }
+  /**
+   * cheatDeath saved the hero from a lethal hit / burn (its 'hit' / 'dot' event comes first): life is now
+   * PlayerState.life, time stops for `stopDuration` seconds (WorldState.timeStop) and the mechanic recharges for
+   * `cooldown` seconds (PlayerState.cheatDeathCooldown). `pos`: the hero.
+   */
+  | { type: 'cheatDeath'; pos: Vec2; stopDuration: number; cooldown: number }
+  /** The time stop ran out at the start of this step: the enemies act again from this step on. */
+  | { type: 'timeStopEnd' };
 
 /** Everything a system needs during one step. */
 export interface Ctx {
@@ -687,6 +707,7 @@ function conditionState(classDef: ClassDef, player: PlayerState, base: readonly 
     stillTime: player.stillTime,
     life: player.life,
     souls: player.souls,
+    cheatDeathCooldown: player.cheatDeathCooldown,
     energyShield: player.energyShield,
     get maxLife(): number {
       return deriveStat(source, 'life');

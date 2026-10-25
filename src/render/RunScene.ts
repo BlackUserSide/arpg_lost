@@ -1,7 +1,20 @@
 import * as Phaser from 'phaser';
 import { distance, vec, type Vec2 } from '../core/math';
 import type { Content, MobRank } from '../core/world/content';
-import { distanceDamageMore, eliteModifierDef, getClass, getMob, maxResource, mobMoveSpeed, mobRank, PLAYER_ID, setLoadoutModifiers, type WorldEvent, type WorldState } from '../core/world/world';
+import {
+  distanceDamageMore,
+  eliteModifierDef,
+  getClass,
+  getMob,
+  maxResource,
+  mobMoveSpeed,
+  mobRank,
+  PLAYER_ID,
+  setLoadoutModifiers,
+  timeStopped,
+  type WorldEvent,
+  type WorldState,
+} from '../core/world/world';
 import { unspentPoints } from '../core/passives/allocation';
 import { equippedWeapon } from '../core/items/equipment';
 import { heroMechanics, heroModifiers } from '../core/progression/hero';
@@ -43,6 +56,7 @@ import { BossFx } from './bossFx';
 import { EliteFx, eliteLook } from './eliteFx';
 import { UniqueFx } from './uniqueFx';
 import { SOUL_GREEN, SOUL_VIOLET, SoulFx } from './soulFx';
+import { ClockFx, ENEMY_FX_DEPTH, HERO_STOP_DEPTH } from './clockFx';
 import { soulsMax } from '../core/world/souls';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
@@ -116,10 +130,11 @@ const IMMUNE_TEXT_INTERVAL = 0.45;
 /** Immune roar: the boss flickers violet. */
 const IMMUNE_TINTS = [0x6a3aaa, 0x9a6ae0] as const;
 
-type FloatTextKind = 'interrupt' | 'immune';
+type FloatTextKind = 'interrupt' | 'immune' | 'lastMoment';
 const FLOAT_TEXT_STYLES: Record<FloatTextKind, { color: string; size: number; rise: number; duration: number }> = {
   interrupt: { color: '#e8d4ff', size: 20, rise: 34, duration: 900 },
   immune: { color: '#c8b0ff', size: 18, rise: 24, duration: 650 },
+  lastMoment: { color: '#bfeaff', size: 26, rise: 46, duration: 1300 },
 };
 
 /**
@@ -290,6 +305,15 @@ export class RunScene extends Phaser.Scene {
   private eliteFx!: EliteFx;
   private uniqueFx!: UniqueFx;
   private soulFx!: SoulFx;
+  /** Clock of the Last Moment: cheat-death trigger and the time-stop tint / dial. */
+  private clockFx!: ClockFx;
+  /** Mob marks and mob projectiles: under the time-stop tint (fxTop with the hero's effects stays above it). */
+  private fxEnemy!: Phaser.GameObjects.Graphics;
+  /**
+   * Render clock of the enemies' looks (pulses, flicker, spins): runs with frame time, holds still while core time is
+   * stopped (timeStopped), so frozen mobs, their projectiles and zones do not shimmer.
+   */
+  private enemyTime = 0;
   /** The hero sprite carries the burning tint (cleared once when the burn ends). */
   private heroTinted = false;
   /** Mob id → world time of its last "Immune" label. */
@@ -392,12 +416,15 @@ export class RunScene extends Phaser.Scene {
     this.room = new RoomView(this);
     this.fx = this.add.graphics().setDepth(-1000);
     this.fxTop = this.add.graphics().setDepth(4000);
+    this.fxEnemy = this.add.graphics().setDepth(ENEMY_FX_DEPTH);
+    this.enemyTime = 0;
     this.combatFx = new CombatFx(this);
     this.skillFx = new SkillFx(this);
     this.bossFx = new BossFx(this);
     this.eliteFx = new EliteFx(this);
     this.uniqueFx = new UniqueFx(this);
     this.soulFx = new SoulFx(this);
+    this.clockFx = new ClockFx(this);
     this.heroTinted = false;
     this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
@@ -493,6 +520,7 @@ export class RunScene extends Phaser.Scene {
     this.eliteFx.clear();
     this.uniqueFx.clear();
     this.soulFx.clear();
+    this.clockFx.clear(timeStopped(this.world));
     this.immuneShown.clear();
     this.buildRoom();
     this.cameras.main.fadeIn(ROOM_FADE, 7, 7, 10);
@@ -504,6 +532,7 @@ export class RunScene extends Phaser.Scene {
     const compact = width < 820 || height < 520;
     const margin = compact ? 12 : 22;
     this.hud.layout(width, height);
+    this.clockFx.layout(width, height);
     this.treeButton?.destroy();
     this.treeButton = undefined;
     this.pauseButton?.destroy();
@@ -877,9 +906,14 @@ export class RunScene extends Phaser.Scene {
     // Render between the last two sim states so motion is smooth at any refresh rate.
     this.alpha = Math.min(1, this.accumulator / DT);
     const dt = deltaMs / 1000;
+    const stopped = timeStopped(this.world);
+    if (!stopped) this.enemyTime += dt;
     this.syncActors(dt);
     this.updateCorpses(dt);
     this.drawFx(dt);
+    this.clockFx.update(dt, stopped, this.world.timeStop, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, this.world.time);
+    // Lifted over the time-stop tint while it shows, so the hero keeps full colour.
+    if (this.clockFx.active() && this.hero.oneShot?.anim !== 'death') this.hero.sprite.setDepth(HERO_STOP_DEPTH);
 
     const heroScreen = toScreen(this.hero.display);
     this.cameras.main.centerOn(heroScreen.x, heroScreen.y - 30);
@@ -1354,6 +1388,17 @@ export class RunScene extends Phaser.Scene {
         this.playOneShot(this.hero, 'death');
         this.cameras.main.shake(250, 0.006);
         break;
+      case 'cheatDeath': {
+        // Clock of the Last Moment saved the hero: the face flares and shatters, a chime-white flash, time stops.
+        const s = toScreen(event.pos);
+        this.clockFx.trigger(s.x, s.y, event.stopDuration);
+        this.cameras.main.shake(200, 0.007);
+        this.spawnFloatText(event.pos, upper(t('arena.lastMoment')), 'lastMoment', BODY_PX + 40);
+        break;
+      }
+      case 'timeStopEnd':
+        this.clockFx.resume(this.hero.sprite.x, this.hero.sprite.y);
+        break;
       default:
         break;
     }
@@ -1419,6 +1464,8 @@ export class RunScene extends Phaser.Scene {
       this.heroTinted = false;
     }
 
+    // Time stop (cheatDeath): every mob holds its pose and frame; its looks run on the stopped enemy clock.
+    const stopped = timeStopped(this.world);
     for (const mob of this.world.mobs) {
       let actor = this.mobs.get(mob.id);
       const def = getMob(this.content, mob.defId);
@@ -1462,11 +1509,11 @@ export class RunScene extends Phaser.Scene {
       // A frozen mob holds its pose; a boss under freeze (freezeSlow) only looks frozen and keeps moving.
       actor.frozen = mob.freeze > 0;
       // Reference speed with the elite modifier (fast elites): the run cycle keeps pace with the feet.
-      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), mobMoveSpeed(this.content, def, mob), actor.frozen);
+      this.updateActor(actor, dt, this.speedOf(mob.id, mob.pos), mobMoveSpeed(this.content, def, mob), actor.frozen || stopped);
       // Likewise a boss under an ordinary stun (stunSlow) looks stunned but keeps moving.
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
-      const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, Math.max(mob.slow, mob.auraSlow), this.world.time, mob.id);
-      if (roar) actor.sprite.setTint(IMMUNE_TINTS[Math.floor(this.world.time * 12) % 2]!).setTintMode(Phaser.TintModes.SCREEN);
+      const look = statusLook(frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, Math.max(mob.slow, mob.auraSlow), this.enemyTime, mob.id);
+      if (roar) actor.sprite.setTint(IMMUNE_TINTS[Math.floor(this.enemyTime * 12) % 2]!).setTintMode(Phaser.TintModes.SCREEN);
       else if (look !== undefined) actor.sprite.setTint(look.color).setTintMode(look.mode);
       else if (actor.rank !== 'normal') actor.sprite.setTint(RANK_LOOKS[actor.rank].tint).setTintMode(Phaser.TintModes.MULTIPLY);
       else actor.sprite.clearTint();
@@ -1605,6 +1652,10 @@ export class RunScene extends Phaser.Scene {
   private drawFx(dt: number): void {
     const g = this.fx.clear();
     const top = this.fxTop.clear();
+    // Enemy marks and projectiles go under the time-stop tint; while time stands still their clock and dt hold too.
+    const enemyTop = this.fxEnemy.clear();
+    const et = this.enemyTime;
+    const edt = timeStopped(this.world) ? 0 : dt;
     const player = this.world.player;
 
     // Ground zones (fire puddle, ice field) lie on the floor under everything else.
@@ -1620,8 +1671,8 @@ export class RunScene extends Phaser.Scene {
     // Grave circles (hostile zones): warning discs filling up until they erupt.
     for (const zone of this.world.hostileZones) {
       const p = toScreen(zone.pos);
-      if (zone.source === 'eliteDeath') this.eliteFx.drawDeathZone(g, top, zone, p.x, p.y, this.world.time, dt);
-      else this.bossFx.drawHostileZone(g, zone, p.x, p.y, this.world.time, this.firesWith(zone.eliteModifier));
+      if (zone.source === 'eliteDeath') this.eliteFx.drawDeathZone(g, enemyTop, zone, p.x, p.y, et, edt);
+      else this.bossFx.drawHostileZone(g, zone, p.x, p.y, et, this.firesWith(zone.eliteModifier));
     }
 
     // Ring under the hero so they never get lost in a crowd; orange while buffed.
@@ -1668,7 +1719,7 @@ export class RunScene extends Phaser.Scene {
       if (!actor) continue;
       // Core body radius (rank scaled): rings and status marks match what hits land on.
       const radius = mob.radius;
-      if (actor.rank !== 'normal') this.drawRankMarks(g, top, actor, mob.life / mob.maxLife, radius);
+      if (actor.rank !== 'normal') this.drawRankMarks(g, enemyTop, actor, mob.life / mob.maxLife, radius);
       if (actor.elite) {
         // Screen velocity over the last sim step (fast elites trail speed streaks).
         const prev = this.prevPositions.get(mob.id);
@@ -1680,38 +1731,38 @@ export class RunScene extends Phaser.Scene {
           vx = (dx - dy) * ISO_K;
           vy = ((dx + dy) * ISO_K) / 2;
         }
-        if (actor.elite.glow) this.eliteFx.pulseGlow(actor.elite.glow, this.world.time, mob.id);
-        if (!actor.frozen) this.eliteFx.drawElite(top, actor.elite, actor.sprite.x, actor.sprite.y, radius, BODY_PX * actor.scale, vx, vy, this.world.time, dt);
+        if (actor.elite.glow) this.eliteFx.pulseGlow(actor.elite.glow, et, mob.id);
+        if (!actor.frozen) this.eliteFx.drawElite(enemyTop, actor.elite, actor.sprite.x, actor.sprite.y, radius, BODY_PX * actor.scale, vx, vy, et, edt);
       }
       // Ability telegraphs, the immune roar and the later-phase mark (mobs with abilities).
       const bodyHeight = BODY_PX * actor.scale;
       if (mob.phaseTransition) {
         const pause = mob.phaseTransition;
-        this.bossFx.drawImmuneAura(g, top, actor.sprite.x, actor.sprite.y, radius, bodyHeight, 1 - pause.remaining / Math.max(1e-6, pause.total), this.world.time, dt);
-      } else if ((mob.phase ?? 1) > 1) this.bossFx.drawPhaseMark(g, actor.sprite.x, actor.sprite.y, radius, this.world.time, dt);
+        this.bossFx.drawImmuneAura(g, enemyTop, actor.sprite.x, actor.sprite.y, radius, bodyHeight, 1 - pause.remaining / Math.max(1e-6, pause.total), et, edt);
+      } else if ((mob.phase ?? 1) > 1) this.bossFx.drawPhaseMark(g, actor.sprite.x, actor.sprite.y, radius, et, edt);
       const cast = mob.casting;
       if (cast) {
         const def = getMob(this.content, mob.defId);
         const ability = def.abilities?.list.find((a) => a.id === cast.abilityId);
-        this.bossFx.drawCast(g, top, cast, ability, actor.display.x, actor.display.y, actor.sprite.x, actor.sprite.y, radius, bodyHeight, this.world.time, dt);
+        this.bossFx.drawCast(g, enemyTop, cast, ability, actor.display.x, actor.display.y, actor.sprite.x, actor.sprite.y, radius, bodyHeight, et, edt);
       }
       const frozenLook = Math.max(mob.freeze, mob.freezeSlow);
-      this.combatFx.drawMobStatus(g, top, actor.sprite.x, actor.sprite.y, radius, frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, this.world.time, dt, mob.id);
+      this.combatFx.drawMobStatus(g, enemyTop, actor.sprite.x, actor.sprite.y, radius, frozenLook, Math.max(mob.stun, mob.stunSlow), mob.ignite, et, edt, mob.id);
       // Stun bar (stunBar mechanic): eases up to the core fill, snaps down on reset; flashes full after a stun.
-      actor.stunBarFlash = Math.max(0, actor.stunBarFlash - dt);
+      actor.stunBarFlash = Math.max(0, actor.stunBarFlash - edt);
       if (mob.stunBar < actor.stunBarShown) actor.stunBarShown = mob.stunBar;
-      else actor.stunBarShown += (mob.stunBar - actor.stunBarShown) * (1 - Math.exp(-STUN_BAR_SMOOTHING * dt));
+      else actor.stunBarShown += (mob.stunBar - actor.stunBarShown) * (1 - Math.exp(-STUN_BAR_SMOOTHING * edt));
       if (actor.stunBarShown < 0.002 && mob.stunBar <= 0) actor.stunBarShown = 0;
-      this.combatFx.drawStunBar(top, actor.sprite.x, actor.sprite.y, actor.stunBarShown, actor.stunBarFlash);
+      this.combatFx.drawStunBar(enemyTop, actor.sprite.x, actor.sprite.y, actor.stunBarShown, actor.stunBarFlash);
       // Bleed (support): one drop per stack under the feet.
       const bleedStacks = (mob.bleed ?? 0) > 0 ? (mob.bleedStacks?.length ?? 0) : 0;
-      if (bleedStacks > 0) this.supportFx.drawBleed(top, actor.sprite.x, actor.sprite.y, bleedStacks, this.world.time, mob.id);
+      if (bleedStacks > 0) this.supportFx.drawBleed(enemyTop, actor.sprite.x, actor.sprite.y, bleedStacks, et, mob.id);
       // Knockback (support): speed streaks while the mob is still flying.
       const knock = mob.knockback;
       if (knock && knock.remaining > 0) {
         const ahead = toScreen(vec(mob.pos.x + knock.dir.x, mob.pos.y + knock.dir.y));
         const here = toScreen(mob.pos);
-        this.supportFx.drawKnockbackTrail(top, actor.sprite.x, actor.sprite.y, ahead.x - here.x, ahead.y - here.y);
+        this.supportFx.drawKnockbackTrail(enemyTop, actor.sprite.x, actor.sprite.y, ahead.x - here.x, ahead.y - here.y);
       }
     }
     this.combatFx.drawBursts(g, top, dt);
@@ -1729,6 +1780,8 @@ export class RunScene extends Phaser.Scene {
       const pos = this.interpolated(p.id, p.pos);
       const s = toScreen(pos);
       const tail = toScreen(vec(pos.x - p.dir.x * 18, pos.y - p.dir.y * 18));
+      // Mob shots sit under the time-stop tint (and freeze with it); the hero's stay above in full colour.
+      const pt = p.owner === 'mob' ? enemyTop : top;
       const color =
         p.owner === 'mob' ? MOB_PROJECTILE_COLOR : p.action?.damageConversion?.to === 'cold' ? COLD_PROJECTILE_COLOR : (PROJECTILE_COLORS[p.sourceId] ?? 0xffffff);
       g.fillStyle(0x000000, 0.35).fillEllipse(s.x, s.y, p.radius * 2, p.radius);
@@ -1736,29 +1789,29 @@ export class RunScene extends Phaser.Scene {
       const thrownBone = p.owner === 'mob' && (p.abilityId !== undefined ? THROWN_BONE_ABILITIES.has(p.abilityId) : THROWN_BONE_MOBS.has(p.sourceId));
       if (p.owner === 'mob' && this.firesWith(p.eliteModifier)) {
         // A fiery elite's shots burn: a fire bolt, or a flaming halo round a thrown bone (its shape still reads).
-        this.eliteFx.drawFireBolt(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius, dt, thrownBone);
+        this.eliteFx.drawFireBolt(pt, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius, edt, thrownBone);
         if (!thrownBone) continue;
       }
       if (p.owner === 'mob' && p.abilityId !== undefined && BONE_SPEAR_ABILITIES.has(p.abilityId)) {
-        this.bossFx.drawBoneSpear(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
+        this.bossFx.drawBoneSpear(pt, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
       } else if (thrownBone) {
         // Spin on the render clock (smooth between fixed core ticks); the id offsets the start angle.
-        const spin = (this.time.now / 1000) * THROWN_BONE_SPIN * Math.PI * 2 + p.id;
-        this.bossFx.drawThrownBone(top, s.x, s.y - PROJECTILE_HEIGHT, p.radius, spin);
+        const spin = this.enemyTime * THROWN_BONE_SPIN * Math.PI * 2 + p.id;
+        this.bossFx.drawThrownBone(pt, s.x, s.y - PROJECTILE_HEIGHT, p.radius, spin);
       } else if (mobBasic && DARK_BOLT_MOBS.has(p.sourceId)) {
-        this.bossFx.drawDarkBolt(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
+        this.bossFx.drawDarkBolt(pt, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
       } else if (mobBasic && EARTH_CLOD_MOBS.has(p.sourceId)) {
-        this.bossFx.drawEarthClod(top, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
+        this.bossFx.drawEarthClod(pt, s.x, s.y - PROJECTILE_HEIGHT, tail.x, tail.y - PROJECTILE_HEIGHT, p.radius);
       } else if (p.explodeRadius > 0) {
         // Exploding projectiles (fireball and its split children) leave a short fading glow behind.
-        top.fillStyle(color, 0.22).fillCircle(tail.x, tail.y - PROJECTILE_HEIGHT, p.radius * 1.3);
-        top.fillStyle(color, 0.35).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 2.2);
-        top.fillStyle(color, 1).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 1.2);
+        pt.fillStyle(color, 0.22).fillCircle(tail.x, tail.y - PROJECTILE_HEIGHT, p.radius * 1.3);
+        pt.fillStyle(color, 0.35).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 2.2);
+        pt.fillStyle(color, 1).fillCircle(s.x, s.y - PROJECTILE_HEIGHT, p.radius * 1.2);
       } else {
         // Far Shot: the bolt glows brighter as its distance bonus builds up.
         const glow = p.action ? farShotGlow(player.mechanics, p.action.tags, p.travelled) : 0;
-        if (glow > 0) top.lineStyle(3 + 5 * glow, FAR_SHOT_GLOW, 0.15 + 0.45 * glow).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
-        top.lineStyle(3, color, 1).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
+        if (glow > 0) pt.lineStyle(3 + 5 * glow, FAR_SHOT_GLOW, 0.15 + 0.45 * glow).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
+        pt.lineStyle(3, color, 1).lineBetween(tail.x, tail.y - PROJECTILE_HEIGHT, s.x, s.y - PROJECTILE_HEIGHT);
       }
     }
   }
@@ -1770,7 +1823,7 @@ export class RunScene extends Phaser.Scene {
   private drawRankMarks(g: Phaser.GameObjects.Graphics, top: Phaser.GameObjects.Graphics, actor: Actor, life: number, radius: number): void {
     const look = RANK_LOOKS[actor.rank as Exclude<MobRank, 'normal'>];
     const { x, y } = actor.sprite;
-    const pulse = 0.5 + 0.5 * Math.sin(this.world.time * 4 + x * 0.01);
+    const pulse = 0.5 + 0.5 * Math.sin(this.enemyTime * 4 + x * 0.01);
     const rx = radius * 2.6;
     // An elite's ring takes its modifier's colour (the life bar stays the elite gold).
     const ring = actor.elite ? eliteLook(actor.elite.modifier).color : look.ring;

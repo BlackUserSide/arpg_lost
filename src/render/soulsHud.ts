@@ -54,6 +54,8 @@ export class SoulsBadge {
   private y = 0;
   private w = 104;
   private h = 28;
+  /** Caption line height above the pill (px). */
+  private captionH = 17;
   /** Mechanics list max / penalty were read from (the world replaces the array on change). */
   private mechanicsFor: unknown;
   private max: number | undefined;
@@ -65,6 +67,7 @@ export class SoulsBadge {
   private gainFlash = 0;
   private spentFlash = 0;
   private time = 0;
+  private shown = false;
 
   constructor(scene: Phaser.Scene, depth: number) {
     this.gfx = scene.add.graphics().setScrollFactor(0).setDepth(depth).setVisible(false);
@@ -74,10 +77,21 @@ export class SoulsBadge {
     this.caption.setStroke('#000', 3).setLetterSpacing(1);
   }
 
+  /** Visible this frame (the hero has the souls mechanic). */
+  get visible(): boolean {
+    return this.shown;
+  }
+
+  /** Height the pill and its caption take (px), for stacking another badge above. */
+  get stackHeight(): number {
+    return this.h + this.captionH + 6;
+  }
+
   /** Places the pill centred on x with its bottom edge at `bottom` (screen px). */
   layout(x: number, bottom: number, compact: boolean): void {
     this.w = compact ? 92 : 108;
     this.h = compact ? 26 : 30;
+    this.captionH = compact ? 16 : 18;
     this.x = x;
     this.y = bottom - this.h / 2;
     this.count.setFontSize(compact ? 16 : 18).setPosition(x + this.h / 2 - 2, this.y);
@@ -94,6 +108,7 @@ export class SoulsBadge {
     }
     const max = this.max;
     const visible = max !== undefined && max > 0;
+    this.shown = visible;
     this.gfx.setVisible(visible);
     this.count.setVisible(visible);
     this.caption.setVisible(visible);

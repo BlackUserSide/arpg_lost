@@ -177,8 +177,12 @@ describe('unique data validation', () => {
       shadow_boots: 'boots',
       rift_ring: 'ring',
       devourer_crown: 'helmet',
+      clock_last_moment: 'amulet',
     });
-    const legendaries = new Set(['devourer_crown']);
+    const legendaries = new Set(['devourer_crown', 'clock_last_moment']);
+    // Legendaries share one weight (designer default 2026-10-25) and one level gate.
+    const legendDefs = Object.values(itemsData.uniques).filter((u) => u.rarity === 'legendary');
+    expect(new Set(legendDefs.map((u) => u.weight)).size).toBe(1);
     const skillIds = new Set(allActions().map((a) => a.id));
     for (const u of Object.values(itemsData.uniques)) {
       expect(u.rarity).toBe(legendaries.has(u.id) ? 'legendary' : 'unique');
@@ -189,6 +193,13 @@ describe('unique data validation', () => {
         // A souls echo of a movement / buff skill would move the hero again or do nothing (designer default 2026-10-25).
         expect(m.echoFor.damaging).toBe(true);
         expect(m.echoFor.excludeDeliveries).toEqual(expect.arrayContaining(['dash', 'teleport', 'self']));
+      }
+      for (const m of u.mechanics ?? []) {
+        if (m.kind !== 'cheatDeath') continue;
+        // It must leave the hero alive, stop time for a while and recharge for longer than the stop.
+        expect(m.life).toBeGreaterThan(0);
+        expect(m.stopDuration).toBeGreaterThan(0);
+        expect(m.cooldown).toBeGreaterThan(m.stopDuration);
       }
       for (const m of u.mechanics ?? []) {
         if (m.kind !== 'skillParams' && m.kind !== 'critAfterSkill') continue;

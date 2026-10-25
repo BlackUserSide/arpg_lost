@@ -8,7 +8,7 @@ import { createRng, type Rng } from '../rng';
 import { weightedPick } from '../items/generate';
 import { mobLevelScaling } from './mobScaling';
 import type { Content } from '../world/content';
-import { clampToArena, createWorld, grantBonusXp, spawnMob, spawnRadius, step, type Loadout, type MobSpawn } from '../world/world';
+import { clampToArena, createWorld, grantBonusXp, spawnMob, spawnRadius, step, timeStopped, type Loadout, type MobSpawn } from '../world/world';
 import type {
   BossRoomTemplate,
   EliteModifierPoolEntry,
@@ -334,6 +334,8 @@ function updateRoom(run: RunState, input: RunInput, content: Content, maps: Maps
     case 'waves': {
       if (run.world.mobs.length > 0) return;
       if (run.wavesSpawned < plan.waves.length) {
+        // Time stop (cheatDeath): the next wave waits (the room can still be cleared if no waves are left).
+        if (timeStopped(run.world)) return;
         run.waveTimer -= dt;
         if (run.waveTimer > TIME_EPSILON) return;
         spawnWave(run, content, maps, rng, events);
@@ -358,6 +360,8 @@ function updateRoom(run: RunState, input: RunInput, content: Content, maps: Maps
       return;
     }
     case 'summoning': {
+      // Time stop (cheatDeath): the boss summon waits too.
+      if (timeStopped(run.world)) return;
       run.waveTimer -= dt;
       if (run.waveTimer > TIME_EPSILON) return;
       const boss = maps.rules.boss;

@@ -52,6 +52,8 @@ function conditionText(c: PassiveCondition): string {
       return t('cond.lifeBelow', { pct: pct(c.fraction) });
     case 'soulsAtMost':
       return t('cond.soulsAtMost', { value: num(c.value) });
+    case 'cheatDeathRecharging':
+      return t('cond.cheatDeathRecharging');
     case 'targetHasStatus':
       return t('cond.targetHasStatus', { status: statusText(c.status, 'target') });
   }
@@ -152,6 +154,7 @@ export function formatMechanic(m: PassiveMechanic, resourceId?: string): string[
     case 'lifeOnCrit':
     case 'critAfterSkill':
     case 'souls':
+    case 'cheatDeath':
       return [];
   }
 }

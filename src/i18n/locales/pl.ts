@@ -278,6 +278,7 @@ export const pl: LocaleTable = {
   'cond.stationaryFor': 'Gdy stoisz w miejscu co najmniej {seconds} s',
   'cond.lifeBelow': 'Gdy życie spada poniżej {pct}',
   'cond.soulsAtMost': 'Gdy masz najwyżej {value} dusz',
+  'cond.cheatDeathRecharging': 'Gdy zegar się nakręca',
   'cond.targetHasStatus': 'Przeciw {status} wrogom',
   'mech.bloodMagic.cost': 'Umiejętności kosztują życie zamiast {resGen} ({life} życia za 1 {resAcc})',
   'mech.bloodMagic.noResource': 'Maksimum {resGen} wynosi 0',
@@ -476,6 +477,9 @@ export const pl: LocaleTable = {
   'hud.souls': 'Dusze',
   'hud.soulsReady': 'Gotowe',
   'hud.soulsPenalty': '−{pct} obrażeń',
+  'hud.clock': 'Ostatnia chwila',
+  'hud.clockReady': 'Gotowe',
+  'hud.clockPenalty': '+{pct} otrzymanych obrażeń',
   'arena.talents': 'Talenty',
   'arena.talentsKey': 'Talenty (P)',
   'arena.pause': 'Pauza',
@@ -498,6 +502,7 @@ export const pl: LocaleTable = {
   'arena.hintPause': 'Esc — wznów',
   'arena.hintRetry': 'R — jeszcze raz   ·   Esc — do obozu',
   'arena.levelUp': 'Nowy poziom',
+  'arena.lastMoment': 'Ostatnia chwila!',
   'arena.levelUpLine': 'Poziom {level}  ·  {restored}',
   'arena.restoredBoth': 'Przywrócono życie i {resAcc}',
   'arena.restoredLife': 'Przywrócono życie',
@@ -825,4 +830,7 @@ export const pl: LocaleTable = {
   'unique.devourer_crown.name': 'Korona Pożeracza',
   'unique.devourer_crown.effect':
     'Każde zabójstwo daje duszę (do {max}). Przy {max} duszach twoja następna umiejętność zadająca obrażenia działa dwa razy (echo), a dusze przepadają. Bez dusz zadajesz o {pct} mniej obrażeń',
+  'unique.clock_last_moment.name': 'Zegar Ostatniej Chwili',
+  'unique.clock_last_moment.effect':
+    'Śmiertelne trafienie cię nie zabija: zostajesz z {life} pkt. życia, a czas dla wrogów zatrzymuje się na {seconds} s. Raz na {cooldown} s. Gdy zegar się nakręca, otrzymujesz o {pct} więcej obrażeń',
 };
