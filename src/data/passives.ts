@@ -218,7 +218,7 @@ const wheel: PassiveNodeDef[] = [
   // Keystones #5-6 (interview 2026-10-22). PROPOSAL numbers: balance-analyst to tune.
   // Bloodsucker: leech 5% of all hit damage, capped at 20% of max life (ES under Crystal Shell) per second;
   // no life regen (-100% more, also removes the life regen Crystal Shell turns into ES regen);
-  // life potions heal ×0.5 (consumed when potions are implemented, 0.4).
+  // life potions heal ×0.5 (src/core/world/potion.ts).
   keystone('k_leech', at(ANGLE.warrior, R.keystone), {
     modifiers: [more('lifeRegen', -1)],
     mechanics: [

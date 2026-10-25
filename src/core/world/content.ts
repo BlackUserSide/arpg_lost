@@ -588,6 +588,23 @@ export interface ArenaDef {
   };
 }
 
+/**
+ * The life potion (docs/design/combat.md, decision 2026-10-26): charges refilled by kill points; a drink heals a
+ * fraction of the max life recovery pool (ES under lifeToEnergyShield) evenly over `duration` seconds.
+ */
+export interface LifePotionDef {
+  /** Fraction of the max life recovery pool one drink heals (before lifePotionEffectiveness, e.g. Bloodsucker). */
+  readonly healFraction: number;
+  /** Seconds the heal of one drink is spread over (evenly). */
+  readonly duration: number;
+  /** Max stored charges; every run starts with this many. */
+  readonly maxCharges: number;
+  /** Kill points that make one charge. */
+  readonly pointsPerCharge: number;
+  /** Kill points per killed mob by rank (minions give nothing). */
+  readonly killPoints: Readonly<Record<MobRank, number>>;
+}
+
 export interface Content {
   readonly combat: CombatConfig;
   readonly classes: Readonly<Record<string, ClassDef>>;
@@ -600,4 +617,6 @@ export interface Content {
   readonly supports?: SupportData;
   /** Elite modifiers by id (docs/design/mobs.md «Еліти»). Absent: no mob can have one. */
   readonly eliteModifiers?: Readonly<Record<string, EliteModifierDef>>;
+  /** The life potion (docs/design/combat.md). Absent: the hero has no potion (0 charges, drinking does nothing). */
+  readonly lifePotion?: LifePotionDef;
 }

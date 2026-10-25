@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import { xpToNextLevel, type ProgressionRules } from '../core/progression/levels';
-import type { ActionDef, ClassDef } from '../core/world/content';
+import type { ActionDef, ClassDef, Content } from '../core/world/content';
 import {
   actionCost,
   canAfford,
@@ -16,6 +16,8 @@ import { t, upper } from '../i18n';
 import { skillIcon } from './hudIcons';
 import { formatCost, resourceText } from './resourceText';
 import { ClockBadge } from './clockHud';
+import { POTION_ROSE } from './potionFx';
+import { PotionSlot } from './potionHud';
 import { SoulsBadge } from './soulsHud';
 import { frameTexture, label, makeFrame, UI } from './ui';
 
@@ -63,6 +65,8 @@ const PIP_RIM = 0xc89a3a;
 const SKILL_XP = 0x7fc8e8;
 /** Cost caption colour when skills cost life (Blood Magic). */
 const LIFE_COST_TEXT = '#ff8a7a';
+/** Seconds the life orb's potion glow takes to fade in / out. */
+const POTION_GLOW_FADE = 0.2;
 
 interface Orb {
   ring: Phaser.GameObjects.Image;
@@ -187,12 +191,21 @@ export class Hud {
   /** Where the clock badge goes (bottom edge, screen px) alone / above the souls pill; which one it has now. */
   private clockSpot = { x: 0, alone: 0, stacked: 0, maxRight: 0 };
   private clockStacked: boolean | undefined;
+  /** Life potion slot left of the skill bar (absent without Content.lifePotion). */
+  private readonly potion: PotionSlot | undefined;
+  /** Glow on the life orb while a potion heal runs, 0..1. */
+  private potionGlow = 0;
+  /** Over the orb rings, under the orb numbers: the potion glow. */
+  private readonly orbGlow: Phaser.GameObjects.Graphics;
 
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly classDef: ClassDef,
     private readonly progression: ProgressionRules,
     private readonly skillLevels: SkillLevelData | undefined,
+    content?: Content,
+    /** A tap / click on the potion slot (drink). */
+    onPotionPress: () => void = () => undefined,
   ) {
     this.liquid = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH);
     this.shutters = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 2);
@@ -243,10 +256,13 @@ export class Hud {
         levelGlow: 0,
       };
     });
+    // Created after the orb rings (same depth, drawn above them), below the numbers (DEPTH + 2).
+    this.orbGlow = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 1);
     this.resourceNote = label(scene, 0, 0, t('hud.skillsCostLife'), 12, '#ff8a7a', true).setOrigin(0.5).setAlign('center').setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
     this.resourceNote.setStroke('#000', 3);
     this.souls = new SoulsBadge(scene, DEPTH + 2);
     this.clock = new ClockBadge(scene, DEPTH + 2);
+    this.potion = content?.lifePotion ? new PotionSlot(scene, DEPTH, content.lifePotion, content, classDef, onPotionPress) : undefined;
   }
 
   layout(width: number, height: number): void {
@@ -263,7 +279,8 @@ export class Hud {
     const gap = compact ? 6 : 10;
     const total = this.slots.length * size + (this.slots.length - 1) * gap;
     // Strip under the frames for the skill level row (pips + skill XP bar), clear of the key caption.
-    const levelStrip = this.skillLevels ? (compact ? 10 : 13) : 0;
+    // The potion slot uses the same row for its charge pips.
+    const levelStrip = this.skillLevels || this.potion ? (compact ? 10 : 13) : 0;
     this.slots.forEach((slot, i) => {
       slot.size = size;
       slot.x = width / 2 - total / 2 + size / 2 + i * (size + gap);
@@ -280,6 +297,9 @@ export class Hud {
       slot.chargeBadge.setPosition(bx, by).setRadius(br);
       slot.chargeText.setPosition(bx, by).setFontSize(compact ? 12 : 14);
     });
+    // Potion slot left of the skill bar, a wider gap apart (it is not a skill).
+    const firstSlot = this.slots[0];
+    if (this.potion && firstSlot) this.potion.layout(firstSlot.x - size - gap * 2, firstSlot.y, size, compact);
     this.resourceNote.setPosition(this.resource.x, this.resource.y);
     // Souls pill above the resource name (its caption on top), clear of the skill bar on narrow phones.
     const soulsBottom = this.resourceName.y - this.resourceName.height - (compact ? 6 : 8);
@@ -324,6 +344,16 @@ export class Hud {
       g.beginPath();
       g.arc(this.life.x, this.life.y, this.life.r - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (p.energyShield / maxShield));
       g.strokePath();
+    }
+    // Potion heal running: a rose glow throbbing round the life orb.
+    this.potionGlow = Phaser.Math.Clamp(this.potionGlow + (p.potion.heals.length > 0 ? dt : -dt) / POTION_GLOW_FADE, 0, 1);
+    const og = this.orbGlow.clear();
+    if (this.potionGlow > 0) {
+      const pulse = 0.7 + 0.3 * Math.sin(this.time * 9);
+      const a = this.potionGlow * pulse;
+      og.fillStyle(POTION_ROSE, 0.2 * a).fillCircle(this.life.x, this.life.y, this.life.r);
+      og.lineStyle(4, 0xffb0c0, 0.85 * a).strokeCircle(this.life.x, this.life.y, this.life.r - 3);
+      og.lineStyle(3, POTION_ROSE, 0.75 * a).strokeCircle(this.life.x, this.life.y, this.life.r + 9 + 2 * pulse);
     }
     this.life.text.setText(shieldIsPool ? `${Math.ceil(p.energyShield)}` : `${Math.ceil(p.life)}`);
     this.resource.text.setText(`${Math.floor(p.resource)}`);
@@ -389,6 +419,7 @@ export class Hud {
       this.clock.layout(spot.x, stacked ? spot.stacked : spot.alone, this.compact, spot.maxRight);
     }
     this.clock.update(p, dt);
+    this.potion?.update(p, dt);
     this.drawXp(world, dt);
     this.drawSkillLevels(world, dt);
     this.updateBuffs(world);
@@ -455,6 +486,21 @@ export class Hud {
         g.fillStyle(0xfff2c0, 0.22 * glow).fillRect(slot.x - half + 4, slot.y - half + 4, slot.size - 8, slot.size - 8);
       }
     }
+  }
+
+  /** WorldEvent 'potionDrink': a flash on the potion slot. */
+  potionDrink(): void {
+    this.potion?.drank();
+  }
+
+  /** WorldEvent 'potionDenied': the slot shakes and says why. */
+  potionDenied(reason: 'empty' | 'full', world: WorldState): void {
+    this.potion?.denied(reason, world.player);
+  }
+
+  /** WorldEvent 'potionCharge': a pulse on the potion slot. */
+  potionCharge(): void {
+    this.potion?.charged();
   }
 
   /** Flashes the XP bar and level number after a level-up. */

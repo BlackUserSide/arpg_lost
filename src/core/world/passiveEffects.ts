@@ -12,7 +12,7 @@
 // - stunBar: hero hits fill the target's bar, a full bar stuns (bosses too) and resets (stunBarStats; statuses.ts).
 // - counterAttack: a survived melee hit is answered with the basic attack, with an internal cooldown (actions.ts).
 // - lifeLeech: hits restore a fraction of damage dealt, capped per second (see leechStats, applyLeech).
-// - lifePotionEffectiveness: data only until potions exist (see lifePotionMultiplier).
+// - lifePotionEffectiveness: multiplies the life potion's heal (lifePotionMultiplier; potion.ts).
 // - ignite / freezeSlowed: converted to on-hit statuses of the actions (skillChangeSets); combat in statuses.ts.
 // - deathExplosion / deathExplosionRadius: see deathExplosions.ts (deathExplosionRadiusMultiplier).
 // - distanceDamage: attack projectiles gain more damage by distance travelled (distanceDamageModifier; projectiles.ts).
@@ -254,7 +254,7 @@ export function leechStats(mechanics: readonly PassiveMechanic[]): LeechStats | 
   return found ? { fraction, maxPerSecond } : undefined;
 }
 
-/** Multiplier on life potion recovery (1 without lifePotionEffectiveness). For potions (0.4). */
+/** Multiplier on life potion recovery (1 without lifePotionEffectiveness); see potion.ts. */
 export function lifePotionMultiplier(mechanics: readonly PassiveMechanic[]): number {
   let result = 1;
   for (const m of mechanics) if (m.kind === 'lifePotionEffectiveness') result *= m.multiplier;

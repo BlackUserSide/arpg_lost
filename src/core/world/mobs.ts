@@ -15,6 +15,7 @@ import { decayStunBar, tickBleed, tickIgnite } from './statuses';
 import { resourceOnHeroHitTaken } from './resource';
 import { elementalArmourEffectiveness } from './passiveEffects';
 import { gainSoul } from './souls';
+import { gainPotionPoints } from './potion';
 import { killHero, timeStopped } from './cheatDeath';
 import { mobTarget } from './zones';
 import { allModifiers, clampToArena, getMob, mobRank, playerStat, type Ctx, type MobState, type WorldEvent, type WorldState } from './state';
@@ -249,6 +250,8 @@ export function removeDeadMobs(ctx: Ctx): void {
       if (loot && content.supports) dropSupport(ctx, loot, content.supports, mob, def);
       // Souls mechanic: any non-minion death counts, whatever killed it (designer default 2026-10-25).
       gainSoul(ctx, mob);
+      // Life potion: kill points by rank (decision 2026-10-26; minions give nothing like every other reward).
+      gainPotionPoints(ctx, mobRank(def, mob));
     }
     queue.push(...heroDeathExplosions(ctx, mob));
     // An exploding elite («Вибуховий») leaves its telegraphed death zone (hits the hero ~1 s later).

@@ -162,6 +162,8 @@ export interface PlayerState {
    * mechanic). Counts down on world time, also during a time stop. Render: the clock's recharge on the HUD.
    */
   cheatDeathCooldown: number;
+  /** The life potion (Content.lifePotion; potion.ts). Lives in the world, so it carries across rooms of a run. */
+  potion: PotionState;
   /** Equipped weapon, or the class default. */
   weapon: WeaponDef;
   buffs: Buff[];
@@ -175,6 +177,27 @@ export interface PlayerState {
   igniteDps: number;
   motion: Motion | undefined;
   dead: boolean;
+}
+
+/** One drink's heal still running: `amount` pool points left to restore over the `time` seconds left. */
+export interface PotionHeal {
+  amount: number;
+  time: number;
+}
+
+/**
+ * Life potion state (potion.ts). Render: charges (of LifePotionDef.maxCharges) and `points` towards the next charge
+ * (of pointsPerCharge) on the HUD; `heals.length > 0` = a heal is running.
+ */
+export interface PotionState {
+  /** Stored charges; LifePotionDef.maxCharges at run start (0 without Content.lifePotion). */
+  charges: number;
+  /** Kill points towards the next charge; always 0 at max charges (points are not banked while full). */
+  points: number;
+  /** Running heals, oldest first; several drinks heal side by side (their amounts add up). */
+  heals: PotionHeal[];
+  /** The potion input of the previous step: a drink happens on the press (false → true), holding does not repeat. */
+  held: boolean;
 }
 
 export interface MobState {
@@ -510,6 +533,11 @@ export interface PlayerInput {
   readonly basicAttack: boolean;
   /** Skill slots 1..3. */
   readonly skills: readonly boolean[];
+  /**
+   * Drink the life potion (desktop key 1, mobile button). Edge-triggered in core: one drink per press, holding it
+   * down does not drink again (PotionState.held). Absent = not pressed.
+   */
+  readonly potion?: boolean;
 }
 
 /** What set off an 'area' event besides the plain delivery (see WorldEvent 'area'). */
@@ -649,7 +677,16 @@ export type WorldEvent =
    */
   | { type: 'cheatDeath'; pos: Vec2; stopDuration: number; cooldown: number }
   /** The time stop ran out at the start of this step: the enemies act again from this step on. */
-  | { type: 'timeStopEnd' };
+  | { type: 'timeStopEnd' }
+  /**
+   * The hero drank the life potion: `amount` pool points (life, or ES under lifeToEnergyShield) will be restored over
+   * `duration` seconds; `charges` left. `pos`: the hero.
+   */
+  | { type: 'potionDrink'; amount: number; duration: number; charges: number; pos: Vec2 }
+  /** A potion press did nothing: no charges ('empty') or the recovery pool is already full ('full'). */
+  | { type: 'potionDenied'; reason: 'empty' | 'full' }
+  /** Kills filled a potion charge; `charges`: stored now. */
+  | { type: 'potionCharge'; charges: number };
 
 /** Everything a system needs during one step. */
 export interface Ctx {
