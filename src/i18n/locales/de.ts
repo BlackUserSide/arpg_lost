@@ -103,6 +103,10 @@ export const de: LocaleTable = {
   'inv.salvageConfirm': '„{name}“ zerlegen?',
   'inv.salvageButton': 'Zerlegen',
   'inv.clickToSelect': 'Klicken zum Auswählen',
+  'inv.mail': 'Post: {count}',
+  'inv.mailHint': 'Einzigartige und legendäre Gegenstände, die nicht mehr in deine volle Truhe passten, warten hier. Truhe: {stash}/{size}.',
+  'inv.claim': 'Abholen',
+  'inv.mailMoved': 'Aus der Post in die Truhe: {count}',
 
   // ---- Crafting (inventory tab) ----
   'inv.tab.craft': 'Handwerk',
@@ -516,6 +520,7 @@ export const de: LocaleTable = {
   'run.fastClear': { one: 'Schnell geschafft: +{count} Gegenstand', other: 'Schnell geschafft: +{count} Gegenstände' },
   'run.currency': '+{shards}  ·  +{essence}',
   'run.nothing': 'Diesmal keine Belohnung',
+  'run.mailWaiting': { one: 'Truhe voll: {count} Gegenstand wartet in der Post', other: 'Truhe voll: {count} Gegenstände warten in der Post' },
   'run.unlocked': 'Karte {map} freigeschaltet!',
   'run.again': 'Nochmal',
   'run.nextMap': 'Karte {map} →',

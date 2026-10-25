@@ -64,8 +64,12 @@ export interface ProfileRecords {
 
 export interface Profile {
   characters: CharacterRecord[];
-  /** Shared by all characters of the account. */
-  stash: { items: Item[] };
+  /**
+   * Shared by all characters of the account. `overflow` ("пошта", designer decision 2026-10-26): chest items that
+   * did not fit the full stash and are kept rather than salvaged (LootRules.overflow), oldest first; they move into
+   * the stash with claimOverflow / fillStashFromOverflow (core/items/inventory.ts).
+   */
+  stash: { items: Item[]; overflow: Item[] };
   currency: Record<string, number>;
   records: ProfileRecords;
   nextCharacterId: number;
@@ -101,7 +105,7 @@ export type CreateCharacterError = 'limit' | 'name-length' | 'name-chars' | 'unk
 export function createProfile(): Profile {
   return {
     characters: [],
-    stash: { items: [] },
+    stash: { items: [], overflow: [] },
     currency: {},
     records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 0 },
     nextCharacterId: 1,

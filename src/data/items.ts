@@ -383,6 +383,9 @@ const rules: LootRules = {
   tierWeights: [10, 25, 50, 80, 100],
   salvage: { normal: 1, magic: 3, rare: 8, unique: 25, legendary: 100 },
   stashSize: 30,
+  // Designer decision 2026-10-26: uniques and legendaries are never auto-salvaged on a full stash; they wait in the
+  // overflow ("пошта"). PROPOSAL (agent): up to 20 waiting items.
+  overflow: { size: 20, rarities: ['unique', 'legendary'] },
   enforceLevelRequirement: true,
   arenaRewards: { killsPerItem: 20, maxItems: 3, wavesPerItemLevel: 3, maxBonusLevels: 3 },
   rareNameWords: {

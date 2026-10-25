@@ -325,6 +325,23 @@ export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel
   scene.tweens.add({ targets: [panel, text, yes, no], alpha: 1, duration: 160 });
 }
 
+/** Short non-blocking notice near the top of the screen: fades in, stays a moment, fades out and is destroyed. */
+export function showToast(scene: Phaser.Scene, message: string, y = 56, depth = 900): void {
+  const { width } = scene.scale;
+  const maxW = Math.min(460, width - 32);
+  const text = label(scene, 0, 0, message, UI.size.small, UI.goldBrightText, true).setOrigin(0.5).setWordWrapWidth(maxW - 32).setAlign('center');
+  const w = Math.min(maxW, text.width + 40);
+  const h = text.height + 22;
+  const toast = scene.add.container(width / 2, y + h / 2, [makeFrame(scene, 0, 0, w, h, 'panel'), text]);
+  pinToScreen(toast, depth);
+  const recentre = (): void => void toast.setX(scene.scale.width / 2);
+  scene.scale.on('resize', recentre);
+  toast.once('destroy', () => scene.scale.off('resize', recentre));
+  toast.setAlpha(0);
+  scene.tweens.add({ targets: toast, alpha: 1, duration: 200, ease: 'Quad.easeOut' });
+  scene.tweens.add({ targets: toast, alpha: 0, delay: 2600, duration: 250, onComplete: () => toast.destroy() });
+}
+
 /** Framed avatar from a loaded texture, or an initial letter. */
 export function makeAvatar(scene: Phaser.Scene, x: number, y: number, size: number, textureKey: string | undefined, name: string): Phaser.GameObjects.Container {
   const frame = makeFrame(scene, 0, 0, size + 8, size + 8, 'card');

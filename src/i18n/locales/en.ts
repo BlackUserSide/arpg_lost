@@ -102,6 +102,10 @@ export const en = {
   'inv.salvageConfirm': 'Salvage {name}?',
   'inv.salvageButton': 'Salvage',
   'inv.clickToSelect': 'Click to select',
+  'inv.mail': 'Mail: {count}',
+  'inv.mailHint': 'Unique and legendary items that did not fit your full stash wait here. Stash: {stash}/{size}.',
+  'inv.claim': 'Claim',
+  'inv.mailMoved': 'From the mail to your stash: {count}',
 
   // ---- Crafting (inventory tab) ----
   'inv.tab.craft': 'Craft',
@@ -512,6 +516,7 @@ export const en = {
   'run.fastClear': { one: 'Fast clear: +{count} item', other: 'Fast clear: +{count} items' },
   'run.currency': '+{shards}  ·  +{essence}',
   'run.nothing': 'No reward this time',
+  'run.mailWaiting': { one: 'Stash full: {count} item waits in your mail', other: 'Stash full: {count} items wait in your mail' },
   'run.unlocked': 'Map {map} unlocked!',
   'run.again': 'Play again',
   'run.nextMap': 'Map {map} →',

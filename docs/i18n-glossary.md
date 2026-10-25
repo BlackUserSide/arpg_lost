@@ -86,6 +86,7 @@ locale falls back to English.
 | Normal / Magic / Rare / Unique / Legendary | Normal / Magic / Rare / Unique / Legendary | Звичайний / магічний / рідкісний / унікальний / легендарний | Normal / Magisch / Selten / Einzigartig / Legendär | Zwykły / magiczny / rzadki / unikatowy / legendarny |
 | Prefix / Suffix (short) | P / S | П / С | P / S | P / S |
 | Stash | Stash | Сховище | Truhe | Skrytka |
+| Mail (stash overflow: uniques waiting for room) | Mail | Пошта | Post | Poczta |
 | Inventory | Inventory | Інвентар | Inventar | Ekwipunek |
 | Equip / Unequip | Equip / Unequip | Вдягнути / зняти | Anlegen / Ablegen | Załóż / zdejmij |
 | Run (one map / arena session) | Run | Забіг | Lauf | Wyprawa |

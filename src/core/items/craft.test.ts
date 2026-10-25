@@ -39,6 +39,7 @@ const items: ItemsData = {
     tierWeights: [10, 25, 50, 80, 100],
     salvage: { normal: 1, magic: 3, rare: 8, unique: 25, legendary: 100 },
     stashSize: 10,
+    overflow: { size: 2, rarities: ['unique', 'legendary'] },
     enforceLevelRequirement: true,
     arenaRewards: { killsPerItem: 10, maxItems: 2, wavesPerItemLevel: 2, maxBonusLevels: 3 },
     rareNameWords: { first: ['Grim'], second: ['Bane'] },

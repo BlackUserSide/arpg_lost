@@ -828,6 +828,12 @@ export class RunScene extends Phaser.Scene {
     if (list.length === 0 && currency.length === 0) notes.push({ text: t('run.nothing'), size: small, color: UI.muted });
     const salvagedShards = Math.max(0, shards - (summary?.plan.shards ?? 0));
     if ((rewards?.salvagedIds.length ?? 0) > 0) notes.push({ text: t('arena.stashFull', { shards: shardsWord(salvagedShards) }), size: small, color: UI.muted });
+    // Uniques / legendaries that did not fit wait in the mail (claimed in the inventory); mail items that took room
+    // freed before the chest are mentioned too.
+    const toMail = rewards?.overflowIds.length ?? 0;
+    if (toMail > 0) notes.push({ text: t('run.mailWaiting', { count: toMail }), size: small, color: UI.goldText, bold: true });
+    const fromMail = summary?.claimedFromOverflow.length ?? 0;
+    if (fromMail > 0) notes.push({ text: t('inv.mailMoved', { count: fromMail }), size: small, color: UI.muted });
     const tabSalvaged = summary?.supports?.salvagedCount ?? 0;
     if (tabSalvaged > 0) notes.push({ text: t('arena.tabFull', { supports: supportsWord(tabSalvaged), shards: shardsWord(summary?.supports?.shards ?? 0) }), size: small, color: UI.muted });
     const found = world.supportDrops.length;
@@ -866,7 +872,7 @@ export class RunScene extends Phaser.Scene {
     if (this.summary !== undefined) return;
     const app = getApp(this);
     this.setGameplay(false);
-    this.summary = finishRun(app.profile, this.characterId, this.run, { maps: mapsData, items: itemsData, ...(this.content.supports ? { supports: this.content.supports } : {}) });
+    this.summary = finishRun(app.profile, this.characterId, this.run, { maps: mapsData, items: itemsData, classes: this.content.classes, ...(this.content.supports ? { supports: this.content.supports } : {}) });
     app.save();
     // PROPOSAL (docs/design/account.md): the first finished run is the "meaningful moment".
     if (!app.user && app.loginHint === 'none') app.loginHint = 'pending';

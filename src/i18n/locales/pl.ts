@@ -104,6 +104,10 @@ export const pl: LocaleTable = {
   'inv.salvageConfirm': 'Rozebrać „{name}”?',
   'inv.salvageButton': 'Rozbierz',
   'inv.clickToSelect': 'Kliknij, aby wybrać',
+  'inv.mail': 'Poczta: {count}',
+  'inv.mailHint': 'Unikatowe i legendarne przedmioty, które nie zmieściły się w pełnej skrytce, czekają tutaj. Skrytka: {stash}/{size}.',
+  'inv.claim': 'Odbierz',
+  'inv.mailMoved': 'Z poczty do skrytki: {count}',
 
   // ---- Crafting (inventory tab) ----
   'inv.tab.craft': 'Rzemiosło',
@@ -540,6 +544,7 @@ export const pl: LocaleTable = {
   },
   'run.currency': '+{shards}  ·  +{essence}',
   'run.nothing': 'Tym razem bez nagrody',
+  'run.mailWaiting': { one: 'Skrytka pełna: {count} przedmiot czeka na poczcie', few: 'Skrytka pełna: {count} przedmioty czekają na poczcie', many: 'Skrytka pełna: {count} przedmiotów czeka na poczcie', other: 'Skrytka pełna: {count} przedmiotu czeka na poczcie' },
   'run.unlocked': 'Odblokowano mapę {map}!',
   'run.again': 'Jeszcze raz',
   'run.nextMap': 'Mapa {map} →',

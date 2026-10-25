@@ -4,7 +4,7 @@ import { createRng } from '../rng';
 import { computeStat } from '../stats/modifiers';
 import { canEquip, equippedWeapon, equipmentModifiers, equipSlotsFor } from './equipment';
 import { generateItem, itemModifiers, rollRarity, rollValue } from './generate';
-import { addToStash, equipFromStash, rollItem, salvageFromStash, SALVAGE_CURRENCY, unequipToStash } from './inventory';
+import { addToStash, claimOverflow, equipFromStash, fillStashFromOverflow, rollItem, salvageFromStash, SALVAGE_CURRENCY, storeLoot, unequipToStash } from './inventory';
 import type { AffixDef, BaseDef, Item, ItemsData } from './types';
 import { itemsData } from '../../data/items';
 
@@ -41,6 +41,7 @@ const data: ItemsData = {
     tierWeights: [10, 25, 50, 80, 100],
     salvage: { normal: 1, magic: 3, rare: 8, unique: 25, legendary: 100 },
     stashSize: 3,
+    overflow: { size: 2, rarities: ['unique', 'legendary'] },
     enforceLevelRequirement: true,
     arenaRewards: { killsPerItem: 10, maxItems: 2, wavesPerItemLevel: 2, maxBonusLevels: 3 },
     rareNameWords: { first: ['Grim'], second: ['Bane'] },
@@ -263,5 +264,44 @@ describe('inventory', () => {
     expect(salvageFromStash(profile, item.id, data)).toBe(8);
     expect(profile.currency[SALVAGE_CURRENCY]).toBe(8);
     expect(profile.stash.items).toHaveLength(0);
+  });
+});
+
+describe('stash overflow (designer decision 2026-10-26)', () => {
+  // Fixture rules: stash 3, overflow 2 for unique / legendary.
+  const item = (id: string, rarity: Item['rarity']): Item => ({ id, baseId: 'ring', level: 1, rarity, name: '', affixes: [] });
+  const fullProfile = (): ReturnType<typeof createProfile> => {
+    const profile = createProfile();
+    for (const id of ['s1', 's2', 's3']) storeLoot(profile, item(id, 'normal'), data);
+    return profile;
+  };
+
+  it('storeLoot: stash first; on a full stash uniques and legendaries wait in the overflow up to its size, others nowhere', () => {
+    const profile = createProfile();
+    expect(storeLoot(profile, item('a', 'unique'), data)).toBe('stash');
+    const full = fullProfile();
+    expect(['normal', 'magic', 'rare'].map((r, i) => storeLoot(full, item(`x${i}`, r as Item['rarity']), data))).toEqual([null, null, null]);
+    expect(storeLoot(full, item('u1', 'unique'), data)).toBe('overflow');
+    expect(storeLoot(full, item('l1', 'legendary'), data)).toBe('overflow');
+    expect(storeLoot(full, item('u2', 'unique'), data)).toBeNull();
+    expect(full.stash.items.map((i) => i.id)).toEqual(['s1', 's2', 's3']);
+    expect(full.stash.overflow.map((i) => i.id)).toEqual(['u1', 'l1']);
+  });
+
+  it('claimOverflow moves one item when there is room; fillStashFromOverflow moves the oldest while there is room', () => {
+    const profile = fullProfile();
+    for (const id of ['u1', 'u2']) storeLoot(profile, item(id, 'unique'), data);
+    expect(claimOverflow(profile, 'u2', data)).toBe('stash-full');
+    expect(claimOverflow(profile, 'nope', data)).toBe('no-item');
+    expect(fillStashFromOverflow(profile, data)).toEqual([]);
+    salvageFromStash(profile, 's1', data);
+    expect(claimOverflow(profile, 'u2', data)).toBeNull();
+    expect(profile.stash.items.map((i) => i.id)).toEqual(['s2', 's3', 'u2']);
+    expect(profile.stash.overflow.map((i) => i.id)).toEqual(['u1']);
+    salvageFromStash(profile, 's2', data);
+    salvageFromStash(profile, 's3', data);
+    expect(fillStashFromOverflow(profile, data)).toEqual(['u1']);
+    expect(profile.stash.items.map((i) => i.id)).toEqual(['u2', 'u1']);
+    expect(profile.stash.overflow).toEqual([]);
   });
 });

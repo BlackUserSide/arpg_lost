@@ -54,7 +54,7 @@ describe('profile store', () => {
     const { profile } = loadProfile(storage);
     expect(profile.records.bossKills).toBe(2);
     expect(profile.records.bestClearTime).toBeNull();
-    expect(profile.stash).toEqual({ items: [] });
+    expect(profile.stash).toEqual({ items: [], overflow: [] });
   });
 });
 
@@ -364,7 +364,7 @@ describe('profile store migrations', () => {
     profile.stash.items.push(gone, plain);
     profile.characters[0]!.equipment.weapon = reaper;
     saveProfile(storage, profile);
-    expect(JSON.parse(storage.getItem(SAVE_KEY)!).version).toBe(7);
+    expect(JSON.parse(storage.getItem(SAVE_KEY)!).version).toBe(SAVE_VERSION);
     const loaded = loadProfile(storage).profile;
     expect(loaded).toEqual(profile);
     expect(loaded.stash.items[1]).not.toHaveProperty('unique');
@@ -394,7 +394,7 @@ describe('profile store migrations', () => {
       storage.setItem(SAVE_KEY, JSON.stringify({ version: SAVE_VERSION, profile: { ...createProfile(), stash } }));
       const result = loadProfile(storage);
       expect(result.backupKey).toBeUndefined();
-      expect(result.profile.stash).toEqual({ items: [] });
+      expect(result.profile.stash).toEqual({ items: [], overflow: [] });
     }
   });
 
@@ -429,10 +429,6 @@ describe('profile store: map ladder (v7)', () => {
       profile: { characters, stash: { items: [] }, currency: {}, records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 0 }, nextCharacterId: 9, nextItemId: 1 },
     });
 
-  it('is save version 7', () => {
-    expect(SAVE_VERSION).toBe(7);
-  });
-
   it('upgrades v6 heroes: maps up to their level are unlocked (at least 1, at most 40), other fields kept', () => {
     const storage = memoryStorage();
     storage.setItem(SAVE_KEY, v6([v6Character(1), { ...v6Character(12), id: 'c2' }, { ...v6Character(40), id: 'c3' }, { ...v6Character(55), id: 'c4' }, { ...v6Character('x'), id: 'c5' }]));
@@ -464,5 +460,73 @@ describe('profile store: map ladder (v7)', () => {
     storage.setItem(SAVE_KEY, JSON.stringify(raw));
     const loaded = loadProfile(storage, undefined, undefined, undefined, { maxLinearMap: 40 }).profile;
     expect(loaded.characters.map((c) => c.maps)).toEqual([{ unlocked: 7 }, { unlocked: 40 }, { unlocked: 1 }, { unlocked: 1 }, { unlocked: 3, key: 2 }]);
+  });
+});
+
+describe('profile store: stash overflow (v8)', () => {
+  const ring = (id: string, rarity: 'unique' | 'legendary' | 'rare'): Record<string, unknown> => ({
+    id,
+    baseId: 'iron_ring',
+    level: 5,
+    rarity,
+    name: '',
+    affixes: [],
+    implicit: 9,
+    ...(rarity === 'rare' ? {} : { unique: { id: 'bloody_pupil', rolls: [{ tier: 5, value: 1 }] } }),
+  });
+  const v7 = (stash: unknown): string =>
+    JSON.stringify({
+      version: 7,
+      profile: { characters: [], stash, currency: { shards: 4 }, records: { bestMapLevel: 0, bossKills: 0, bestClearTime: null, mostKillsInRun: 0 }, nextCharacterId: 1, nextItemId: 3 },
+    });
+
+  it('is save version 8', () => {
+    expect(SAVE_VERSION).toBe(8);
+  });
+
+  it('upgrades a v7 stash with an empty overflow; items and the rest are kept', () => {
+    const storage = memoryStorage();
+    storage.setItem(SAVE_KEY, v7({ items: [ring('i1', 'rare'), ring('i2', 'unique')] }));
+    const { profile, backupKey } = loadProfile(storage);
+    expect(backupKey).toBeUndefined();
+    expect(profile.stash.overflow).toEqual([]);
+    expect(profile.stash.items.map((i) => i.id)).toEqual(['i1', 'i2']);
+    expect(profile.stash.items[1]!.unique).toEqual({ id: 'bloody_pupil', rolls: [{ tier: 5, value: 1 }] });
+    expect(profile.currency).toEqual({ shards: 4 });
+    expect(profile.nextItemId).toBe(3);
+  });
+
+  it('overflow items round-trip in order, sanitized like stash items', () => {
+    const storage = memoryStorage();
+    const profile = createProfile();
+    profile.stash.overflow.push(ring('i7', 'legendary') as never, ring('i5', 'unique') as never);
+    saveProfile(storage, profile);
+    expect(loadProfile(storage).profile).toEqual(profile);
+    const raw = JSON.parse(storage.getItem(SAVE_KEY)!) as { profile: { stash: { overflow: unknown[] } } };
+    raw.profile.stash.overflow.push({ ...ring('i8', 'unique'), unique: { id: 3 } });
+    storage.setItem(SAVE_KEY, JSON.stringify(raw));
+    const loaded = loadProfile(storage).profile.stash.overflow;
+    expect(loaded.map((i) => i.id)).toEqual(['i7', 'i5', 'i8']);
+    expect(loaded[2]).not.toHaveProperty('unique');
+  });
+
+  it('the overflow keeps only its rarities and at most its size, oldest first', () => {
+    const storage = memoryStorage();
+    const overflow = [ring('i1', 'rare'), ring('i2', 'unique'), ring('i3', 'legendary'), ring('i4', 'unique'), ring('i5', 'unique')];
+    storage.setItem(SAVE_KEY, JSON.stringify({ version: SAVE_VERSION, profile: { ...createProfile(), stash: { items: [], overflow } } }));
+    const loaded = loadProfile(storage, undefined, undefined, undefined, undefined, { size: 2, rarities: ['unique', 'legendary'] }).profile;
+    expect(loaded.stash.overflow.map((i) => i.id)).toEqual(['i2', 'i3']);
+    // Real data (size 20): only the rare item is dropped.
+    expect(loadProfile(storage).profile.stash.overflow.map((i) => i.id)).toEqual(['i2', 'i3', 'i4', 'i5']);
+  });
+
+  it('a missing or malformed overflow loads as empty', () => {
+    for (const overflow of [undefined, 'oops', { a: 1 }]) {
+      const storage = memoryStorage();
+      storage.setItem(SAVE_KEY, JSON.stringify({ version: SAVE_VERSION, profile: { ...createProfile(), stash: { items: [], overflow } } }));
+      const result = loadProfile(storage);
+      expect(result.backupKey).toBeUndefined();
+      expect(result.profile.stash).toEqual({ items: [], overflow: [] });
+    }
   });
 });

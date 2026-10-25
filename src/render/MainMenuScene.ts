@@ -1,7 +1,9 @@
 import * as Phaser from 'phaser';
 import { unspentPoints } from '../core/passives/allocation';
+import { fillStashFromOverflow } from '../core/items/inventory';
 import { deleteCharacter, findCharacter, type CharacterRecord } from '../core/progression/profile';
 import { availableMaps, unlockedMap } from '../core/run/progress';
+import { itemsData } from '../data/items';
 import { passiveTree } from '../data/passives';
 import { profileRules } from '../data/profile';
 import { getLocale, LOCALE_NAMES, LOCALES, t, type Locale } from '../i18n';
@@ -14,7 +16,7 @@ import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { RunSceneData } from './RunScene';
 import type { SupportsSceneData } from './SupportsScene';
 import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
-import { confirmDialog, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, UI } from './ui';
+import { confirmDialog, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, showToast, UI } from './ui';
 
 const AVATAR_KEY = 'user-avatar';
 
@@ -53,8 +55,12 @@ export class MainMenuScene extends Phaser.Scene {
     this.languageOpen = false;
     this.languageBusy = false;
     this.mapsOpen = false;
+    // Mail items take any stash room freed since they arrived (oldest first).
+    const moved = fillStashFromOverflow(this.app.profile, itemsData);
+    if (moved.length > 0) this.app.save();
     this.build();
     fadeIn(this);
+    if (moved.length > 0) showToast(this, t('inv.mailMoved', { count: moved.length }));
 
     const rebuild = (): void => this.build();
     this.scale.on('resize', rebuild);

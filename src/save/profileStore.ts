@@ -1,6 +1,6 @@
 import { craftCount } from '../core/items/craft';
 import type { Equipment } from '../core/items/equipment';
-import type { Item, UniqueRoll, UniqueStatRoll } from '../core/items/types';
+import type { Item, LootRules, UniqueRoll, UniqueStatRoll } from '../core/items/types';
 import { createAllocation, validateAllocation } from '../core/passives/allocation';
 import type { PassiveAllocation, PassiveTreeData } from '../core/passives/types';
 import { createProfile, type MapProgress, type Profile } from '../core/progression/profile';
@@ -11,6 +11,7 @@ import { validateSockets } from '../core/supports/tab';
 import type { SupportData, SupportItem } from '../core/supports/types';
 import type { ClassDef } from '../core/world/content';
 import { classes } from '../data/classes';
+import { itemsData } from '../data/items';
 import { mapsData } from '../data/maps';
 import { supportsData } from '../data/supports';
 import type { KeyValueStorage } from '../platform/platform';
@@ -18,7 +19,7 @@ import type { KeyValueStorage } from '../platform/platform';
 // Versioned profile persistence. Bump SAVE_VERSION and add a migration whenever the Profile shape changes.
 
 export const SAVE_KEY = 'arpg.profile';
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 interface SaveFile {
   version: number;
@@ -77,6 +78,11 @@ const migrations: Record<number, (profile: unknown) => unknown> = {
       }),
     };
   },
+  // v8: stash overflow ("пошта", designer decision 2026-10-26). The stash gets an empty overflow list.
+  7: (data) => {
+    const p = data as { stash?: Record<string, unknown> };
+    return typeof p.stash === 'object' && p.stash !== null ? { ...p, stash: { overflow: [], ...p.stash } } : p;
+  },
 };
 
 const V7_MAX_MAP = 40;
@@ -130,7 +136,8 @@ export interface SupportValidation {
 /**
  * `tree` is used to validate passive allocations; a character with an invalid one gets a free full reset.
  * `supportCheck`: supports of unknown defs are dropped, tiers clamped, and socketed supports that are no longer valid
- * (unknown skill, bad slot, duplicate, lost compatibility) return to the tab.
+ * (unknown skill, bad slot, duplicate, lost compatibility) return to the tab. `overflowCheck`: the stash overflow keeps
+ * only its rarities, at most its size (oldest first).
  */
 export function loadProfile(
   storage: KeyValueStorage,
@@ -138,6 +145,7 @@ export function loadProfile(
   skillRules: SkillLevelRules = skillLevels.rules,
   supportCheck: SupportValidation = { classes, supports: supportsData },
   mapCheck: MapValidation = mapsData.rules,
+  overflowCheck: LootRules['overflow'] = itemsData.rules.overflow,
 ): LoadResult {
   const raw = storage.getItem(SAVE_KEY);
   if (!raw) return { profile: createProfile() };
@@ -150,7 +158,7 @@ export function loadProfile(
       if (!migrate) throw new Error(`No migration from version ${v}`);
       data = migrate(data);
     }
-    const profile = normalize(data, skillRules, supportCheck, mapCheck);
+    const profile = normalize(data, skillRules, supportCheck, mapCheck, overflowCheck);
     resetInvalidPassives(profile, tree);
     return { profile };
   } catch {
@@ -166,7 +174,13 @@ export function saveProfile(storage: KeyValueStorage, profile: Profile): void {
 }
 
 /** Fills fields missing from older or partial saves with defaults. */
-function normalize(data: unknown, skillRules: SkillLevelRules, supportCheck: SupportValidation, mapCheck: MapValidation): Profile {
+function normalize(
+  data: unknown,
+  skillRules: SkillLevelRules,
+  supportCheck: SupportValidation,
+  mapCheck: MapValidation,
+  overflowCheck: LootRules['overflow'],
+): Profile {
   if (typeof data !== 'object' || data === null) throw new Error('Profile is not an object');
   const base = createProfile();
   const p = data as Partial<Profile>;
@@ -180,8 +194,16 @@ function normalize(data: unknown, skillRules: SkillLevelRules, supportCheck: Sup
       supports: normalizeSupports(c.supports, supportCheck.classes[c.classId], supportCheck.supports),
       maps: normalizeMaps(c.maps, mapCheck),
     })),
-    // A stash without an item array (malformed / tampered) falls back to an empty one.
-    stash: p.stash && Array.isArray(p.stash.items) ? { ...p.stash, items: p.stash.items.map(normalizeItem) } : base.stash,
+    // A stash without an item array (malformed / tampered) falls back to an empty one; so does a missing or
+    // malformed overflow (its items are not kept: there is no array to read them from).
+    stash:
+      p.stash && Array.isArray(p.stash.items)
+        ? {
+            ...p.stash,
+            items: p.stash.items.map(normalizeItem),
+            overflow: normalizeOverflow(p.stash.overflow, overflowCheck),
+          }
+        : base.stash,
     currency: p.currency ?? base.currency,
     records: { ...base.records, ...p.records },
     nextCharacterId: p.nextCharacterId ?? p.characters.length + 1,
@@ -298,4 +320,16 @@ function resetInvalidPassives(profile: Profile, tree: PassiveTreeData): void {
   for (const character of profile.characters) {
     if (validateAllocation(tree, character) !== null) character.passives = createAllocation();
   }
+}
+
+/**
+ * The stash overflow, sanitized (tampering / data change): not an array → empty; items of a rarity the overflow does
+ * not keep (LootRules.overflow.rarities) are dropped; at most LootRules.overflow.size items, the oldest kept.
+ */
+function normalizeOverflow(raw: unknown, check: LootRules['overflow']): Item[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Item[])
+    .filter((item) => typeof item === 'object' && item !== null && check.rarities.includes(item.rarity))
+    .slice(0, Math.max(0, check.size))
+    .map(normalizeItem);
 }

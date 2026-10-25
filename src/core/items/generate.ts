@@ -16,6 +16,7 @@ import type {
   UniqueRarity,
   UniqueStatRoll,
   ValueRange,
+  WeaponType,
 } from './types';
 
 /** Weighted pick; returns undefined for an empty or zero-weight list. Always consumes one draw. */
@@ -68,6 +69,12 @@ export interface GenerateOptions {
   readonly luck?: number;
   /** Multiplier on the unique rarity weight (boss loot), see rollRarity. Ignored when `rarity` is given. */
   readonly uniqueWeightMultiplier?: number;
+  /**
+   * The weapon type of the hero the loot is for (designer decision 2026-10-26: a unique weapon drops only for the
+   * class that can wield it). A unique on a weapon base of another type is left out of the unique pick (uniquePool);
+   * normal / magic / rare bases and non-weapon uniques are unaffected. Absent: no filter.
+   */
+  readonly uniqueWeaponType?: WeaponType;
 }
 
 /**
@@ -81,7 +88,7 @@ export function generateItem(rng: Rng, id: string, options: GenerateOptions, dat
   if (!base) throw new Error(`No base for level ${options.itemLevel} ${options.slot ?? ''}`);
   const rolledRarity = options.rarity ?? rollRarity(rng, data, options.luck ?? 0, options.uniqueWeightMultiplier ?? 1);
   if (rolledRarity === 'unique') {
-    const def = weightedPick(rng, uniquePool(data, 'unique', options.itemLevel, options.slot), (u) => u.weight);
+    const def = weightedPick(rng, uniquePool(data, 'unique', options.itemLevel, options.slot, options.uniqueWeaponType),(u) => u.weight);
     if (def) return generateUnique(rng, id, def, options.itemLevel, data);
   }
   const rarity = rolledRarity === 'unique' ? 'rare' : rolledRarity;
@@ -225,12 +232,21 @@ export function uniqueLevel(def: UniqueDef, data: ItemsData): number {
 
 /**
  * Uniques of `rarity` that can drop at `itemLevel` (optionally only for `slot`): positive weight, known base, level
- * reached. In data order (the order weightedPick walks).
+ * reached. With `weaponType`, uniques on a weapon base of another weapon type are left out (designer decision
+ * 2026-10-26: unique weapons drop only for their class); non-weapon uniques stay. In data order (the order
+ * weightedPick walks).
  */
-export function uniquePool(data: ItemsData, rarity: UniqueRarity, itemLevel: number, slot?: Slot): UniqueDef[] {
+export function uniquePool(data: ItemsData, rarity: UniqueRarity, itemLevel: number, slot?: Slot, weaponType?: WeaponType): UniqueDef[] {
   return Object.values(data.uniques).filter((u) => {
     const base = data.bases[u.baseId];
-    return u.rarity === rarity && u.weight > 0 && base !== undefined && (!slot || base.slot === slot) && uniqueLevel(u, data) <= itemLevel;
+    return (
+      u.rarity === rarity &&
+      u.weight > 0 &&
+      base !== undefined &&
+      (!slot || base.slot === slot) &&
+      (weaponType === undefined || !base.weapon || base.weapon.type === weaponType) &&
+      uniqueLevel(u, data) <= itemLevel
+    );
   });
 }
 

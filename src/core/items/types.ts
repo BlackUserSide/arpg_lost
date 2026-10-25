@@ -129,6 +129,12 @@ export interface LootRules {
   readonly tierWeights: readonly number[];
   readonly salvage: Readonly<Record<Rarity, number>>;
   readonly stashSize: number;
+  /**
+   * The stash overflow ("пошта", designer decision 2026-10-26): chest items of these rarities that do not fit a full
+   * stash wait here (Profile.stash.overflow) instead of being salvaged, up to `size` items; other rarities are salvaged
+   * as before. Over the cap the item is salvaged after all (see grantRunRewards).
+   */
+  readonly overflow: { readonly size: number; readonly rarities: readonly Rarity[] };
   /** Off until character levels exist (M3); requirements still show in tooltips. */
   readonly enforceLevelRequirement: boolean;
   /**
