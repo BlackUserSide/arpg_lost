@@ -150,6 +150,16 @@ export interface RunRewardRules {
     /** All item level bonuses together never exceed this (designer decision 2026-10-23: map level + 3). */
     readonly maxItemLevelBonus: number;
     readonly speedTiers: readonly SpeedTier[];
+    /**
+     * Multiplier on the unique rarity weight of one chest item (the first) when the boss was killed (designer default
+     * 2026-10-25: ×3). The speed tier's luck does not touch the unique weight.
+     */
+    readonly bossUniqueWeightMultiplier: number;
+    /**
+     * Legendaries (designer decision 2026-10-25): a killed boss on a map of at least minMapLevel rolls `chance` once
+     * for one EXTRA chest item of legendary rarity (at the chest item level).
+     */
+    readonly legendary: { readonly minMapLevel: number; readonly chance: number };
   };
   /** Shards per combat room cleared (a failed run's consolation; a won run gets them too). */
   readonly shardsPerRoom: number;

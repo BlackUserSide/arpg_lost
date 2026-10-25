@@ -1,5 +1,6 @@
 import type { BaseDamage } from '../combat/damage';
-import type { DamageType, ModifierKind, StatId, Tag } from '../stats/types';
+import type { PassiveMechanic } from '../passives/types';
+import type { DamageType, Modifier, ModifierKind, StatId, Tag } from '../stats/types';
 
 export const SLOTS = ['weapon', 'helmet', 'armour', 'gloves', 'boots', 'ring', 'amulet'] as const;
 export type Slot = (typeof SLOTS)[number];
@@ -65,8 +66,45 @@ export interface BaseDef {
   readonly weapon?: WeaponStats;
 }
 
+/** Rarities of hand-made items (UniqueDef); they carry no affixes and are never crafted. */
+export type UniqueRarity = 'unique' | 'legendary';
+
+/** One fixed stat line of a unique: its value is rolled inside the best tier unlocked at the item level. */
+export interface UniqueStatLine extends StatLine {
+  /** Ordered from worst (T5) to best (T1) by minLevel, like AffixDef.tiers. */
+  readonly tiers: readonly AffixTier[];
+}
+
+/**
+ * A unique or legendary item (docs/design/items.md, decisions 2026-10-21 / 2026-10-25): a base (its defences,
+ * implicit and weapon stats roll as usual), a fixed set of rolled stat lines, fixed effect modifiers, fixed costs
+ * ("Ціна") and mechanics (the same PassiveMechanic carrier as keystones). Display text is keyed by id (render:
+ * unique.<id>.name, unique.<id>.effect).
+ */
+export interface UniqueDef {
+  readonly id: string;
+  readonly rarity: UniqueRarity;
+  readonly baseId: string;
+  /** Minimum item level to drop; default: the base's level. */
+  readonly level?: number;
+  /** Drop weight inside its rarity's pool; 0 = never drops (a def may land before its mechanic works). */
+  readonly weight: number;
+  /** Rolled stat lines, in display order (Item.unique.rolls has one entry per line, same order). */
+  readonly stats: readonly UniqueStatLine[];
+  /** Fixed signature-effect modifiers (not rolled), e.g. "+50% more damage". */
+  readonly effectModifiers?: readonly Modifier[];
+  /** Fixed drawback modifiers (not rolled), shown as "Ціна" lines. */
+  readonly costs?: readonly Modifier[];
+  /** Mechanics the item brings while equipped (equipmentMechanics → heroMechanics). */
+  readonly mechanics?: readonly PassiveMechanic[];
+}
+
 export interface LootRules {
-  readonly rarityWeights: Readonly<Record<'normal' | 'magic' | 'rare', number>>;
+  /**
+   * Chest rarity weights (one draw). A `unique` pick with no unique available at the item level becomes rare.
+   * Legendaries are not in this draw: they come only from bosses (RunRewardRules.chest.legendary).
+   */
+  readonly rarityWeights: Readonly<Record<'normal' | 'magic' | 'rare' | 'unique', number>>;
   readonly affixCount: Readonly<Record<'magic' | 'rare', { readonly min: number; readonly max: number }>>;
   readonly maxPrefixes: Readonly<Record<'magic' | 'rare', number>>;
   readonly maxSuffixes: Readonly<Record<'magic' | 'rare', number>>;
@@ -88,6 +126,7 @@ export interface LootRules {
 export interface ItemsData {
   readonly bases: Readonly<Record<string, BaseDef>>;
   readonly affixes: Readonly<Record<string, AffixDef>>;
+  readonly uniques: Readonly<Record<string, UniqueDef>>;
   readonly rules: LootRules;
 }
 
@@ -118,4 +157,21 @@ export interface Item {
    * reset). Missing = 0, so dropped items and older saves need no migration. Read through craftCount (core/items/craft).
    */
   readonly crafts?: number;
+  /**
+   * Unique / legendary items: which UniqueDef and the rolled value of each of its stat lines (same order as
+   * UniqueDef.stats; tier 1 = best). An id missing from the data (a removed unique) gives no unique stats or
+   * mechanics; the item keeps its base and stays salvageable. Absent on other rarities.
+   */
+  readonly unique?: UniqueRoll;
+}
+
+export interface UniqueRoll {
+  readonly id: string;
+  readonly rolls: readonly UniqueStatRoll[];
+}
+
+export interface UniqueStatRoll {
+  /** 1 = best. */
+  readonly tier: number;
+  readonly value: number;
 }

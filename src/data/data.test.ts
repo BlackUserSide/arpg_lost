@@ -144,6 +144,47 @@ describe('item data validation', () => {
   });
 });
 
+describe('unique data validation', () => {
+  it('uniques are sane: ids match keys, known base, 5 ordered tiers per line on the affix tier levels, weights ≥ 0', () => {
+    for (const [key, u] of Object.entries(itemsData.uniques)) {
+      expect(u.id).toBe(key);
+      expect(itemsData.bases[u.baseId], u.id).toBeDefined();
+      expect(u.weight).toBeGreaterThanOrEqual(0);
+      expect(u.stats.length).toBeGreaterThanOrEqual(2);
+      for (const line of u.stats) {
+        expect(line.tiers.map((t) => t.minLevel)).toEqual([1, 8, 15, 23, 30]);
+        for (const t of line.tiers) expect(t.max).toBeGreaterThanOrEqual(t.min);
+        // Worst → best: each tier at least as good as the previous one.
+        for (let i = 1; i < line.tiers.length; i++) expect(line.tiers[i]!.min).toBeGreaterThanOrEqual(line.tiers[i - 1]!.min);
+      }
+    }
+  });
+
+  it('6a uniques: the designed slots / weapon types, and their mechanics name real skills', () => {
+    const slotOf = (id: string): string | undefined => {
+      const base = itemsData.bases[itemsData.uniques[id]!.baseId]!;
+      return base.weapon?.type ?? base.slot;
+    };
+    expect(Object.fromEntries(Object.keys(itemsData.uniques).map((id) => [id, slotOf(id)]))).toEqual({
+      glass_cannon_crown: 'helmet',
+      splitter: 'crossbow',
+      heart_of_winter: 'wand',
+      barrow_reaper: 'sword',
+    });
+    const skillIds = new Set(allActions().map((a) => a.id));
+    for (const u of Object.values(itemsData.uniques)) {
+      expect(u.rarity).toBe('unique');
+      for (const m of u.mechanics ?? []) if (m.kind === 'skillParams') for (const id of m.skillIds ?? []) expect(skillIds.has(id), `${u.id}: ${id}`).toBe(true);
+    }
+  });
+
+  it('chest rules: unique weight 1 of 100, boss ×3, legendaries from map 30 at 1 / 500', () => {
+    expect(itemsData.rules.rarityWeights).toEqual({ normal: 55, magic: 33, rare: 11, unique: 1 });
+    expect(mapsData.rewards.chest.bossUniqueWeightMultiplier).toBe(3);
+    expect(mapsData.rewards.chest.legendary).toEqual({ minMapLevel: 30, chance: 0.002 });
+  });
+});
+
 describe('item generation with real data', () => {
   it('defence affixes only roll on bases with that defence', () => {
     const rng = createRng(11);

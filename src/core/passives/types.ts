@@ -76,6 +76,10 @@ export type PassiveMechanic =
       readonly addOnHit?: readonly (AddedStatus & { readonly status: PassiveStatusId })[];
       /** Duration changes for one on-hit status only (see SkillChangeSet.statusDurations). */
       readonly statusDurations?: NonNullable<SkillChangeSet['statusDurations']>;
+      /** Damage conversion of the skill's hits (see SkillChangeSet.damageConversion); uniques (Heart of Winter). */
+      readonly damageConversion?: NonNullable<SkillChangeSet['damageConversion']>;
+      /** Class resource per enemy hit by the skill (see SkillChangeSet.resourcePerHit); uniques (Barrow Reaper). */
+      readonly resourcePerHit?: number;
     }
   /**
    * Hits fill the target's stun bar by baseFill + damage / maxLife × damageFill; full bar stuns and resets.

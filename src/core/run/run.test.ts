@@ -100,7 +100,7 @@ const maps: MapsData = {
     mobScaling: { life: { linear: 0, compound: 0 }, damage: { linear: 0, compound: 0 }, armour: { linear: 0, compound: 0 } },
   },
   rewards: {
-    chest: { items: 2, bossItemLevelBonus: 1, maxItemLevelBonus: 3, speedTiers: [] },
+    chest: { items: 2, bossItemLevelBonus: 1, maxItemLevelBonus: 3, speedTiers: [], bossUniqueWeightMultiplier: 3, legendary: { minMapLevel: 30, chance: 0.002 } },
     shardsPerRoom: 2,
     bossRoomConsolationItems: 1,
     essence: { perElite: 0.1, perBoss: 0.5 },

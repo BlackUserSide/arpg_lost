@@ -1,7 +1,7 @@
 // Permanent hero modifiers outside of level stats: equipment + allocated passives.
 // This is the one place the hero's "loadout modifiers" are assembled (run start, character screen).
 
-import { equipmentModifiers, type Equipment } from '../items/equipment';
+import { equipmentMechanics, equipmentModifiers, type Equipment } from '../items/equipment';
 import type { ItemsData } from '../items/types';
 import { passiveMechanics, passiveModifiers } from '../passives/allocation';
 import type { PassiveAllocation, PassiveMechanic, PassiveTreeData } from '../passives/types';
@@ -20,7 +20,10 @@ export function heroModifiers(hero: HeroLoadoutSource, items: ItemsData, tree: P
   return [...equipmentModifiers(hero.equipment, items), ...passiveModifiers(tree, hero.passives)];
 }
 
-/** Passive tree mechanics the hero brings into a run (Loadout.mechanics / setLoadoutModifiers). */
-export function heroMechanics(hero: Pick<HeroLoadoutSource, 'passives'>, tree: PassiveTreeData): PassiveMechanic[] {
-  return passiveMechanics(tree, hero.passives);
+/**
+ * Mechanics the hero brings into a run (Loadout.mechanics / setLoadoutModifiers): passive tree mechanics first, then
+ * those of the equipped uniques / legendaries (equipmentMechanics, EQUIP_SLOTS order).
+ */
+export function heroMechanics(hero: HeroLoadoutSource, tree: PassiveTreeData, items: ItemsData): PassiveMechanic[] {
+  return [...passiveMechanics(tree, hero.passives), ...equipmentMechanics(hero.equipment, items)];
 }

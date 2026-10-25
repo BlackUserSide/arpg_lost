@@ -30,8 +30,9 @@ const bases: Record<string, BaseDef> = {
 const items: ItemsData = {
   bases,
   affixes,
+  uniques: {},
   rules: {
-    rarityWeights: { normal: 55, magic: 33, rare: 11 },
+    rarityWeights: { normal: 55, magic: 33, rare: 11, unique: 0 },
     affixCount: { magic: { min: 1, max: 2 }, rare: { min: 3, max: 6 } },
     maxPrefixes: { magic: 1, rare: 3 },
     maxSuffixes: { magic: 1, rare: 3 },

@@ -16,6 +16,7 @@ import type { SupportData, SupportDef, SupportItem } from '../core/supports/type
 import { actionCost, classSkillProgress, deriveFromMechanics, getClass, type ActionSet } from '../core/world/world';
 import type { ActionDef, ClassDef } from '../core/world/content';
 import { content } from '../data';
+import { itemsData } from '../data/items';
 import { passiveTree } from '../data/passives';
 import { getApp, type App } from './app';
 import { skillIcon } from './hudIcons';
@@ -139,7 +140,7 @@ export class SupportsScene extends Phaser.Scene {
 
   /** Effective skills without and with the socketed supports (passives and skill levels in both): for costs. */
   private skillSets(character: CharacterRecord, classDef: ClassDef): { base: ActionSet; current: ActionSet; mechanics: ReturnType<typeof heroMechanics> } {
-    const mechanics = heroMechanics(character, passiveTree);
+    const mechanics = heroMechanics(character, passiveTree, itemsData);
     const skillProgress = content.skillLevels ? classSkillProgress(classDef, character.skills, content.skillLevels.rules) : {};
     const base = deriveFromMechanics(content, classDef, { mechanics, skillProgress, supports: {} }).actions;
     const current = deriveFromMechanics(content, classDef, { mechanics, skillProgress, supports: socketedSupports(character) }).actions;

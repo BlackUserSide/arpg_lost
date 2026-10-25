@@ -3,6 +3,7 @@ import type { BaseDef, Rarity } from '../core/items/types';
 import { UI } from './ui';
 
 // Procedural item icons: a metal-toned glyph per item type on a tile tinted by rarity. Cached per base+rarity.
+// Uniques and legendaries get a framed tile in their rarity colour; legendaries also a pulsing glow (legendaryGlow).
 
 export const ITEM_ICON_SIZE = 64;
 
@@ -48,9 +49,70 @@ export function itemIcon(scene: Phaser.Scene, base: BaseDef, rarity: Rarity): st
   ctx.shadowBlur = 4;
   drawGlyph(ctx, glyphOf(base));
   ctx.restore();
+  if (rarity === 'unique' || rarity === 'legendary') drawUniqueFrame(ctx, s, tint);
 
   scene.textures.addCanvas(key, canvas);
   return key;
+}
+
+/** Double border with corner notches in the rarity colour: a unique reads apart from a rare at a glance. */
+function drawUniqueFrame(ctx: CanvasRenderingContext2D, s: number, tint: string): void {
+  ctx.save();
+  ctx.strokeStyle = tint;
+  ctx.shadowColor = tint;
+  ctx.shadowBlur = 6;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(7.5, 7.5, s - 15, s - 15);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = tint;
+  const c = 9;
+  for (const [x, y, dx, dy] of [[0, 0, 1, 1], [s, 0, -1, 1], [0, s, 1, -1], [s, s, -1, -1]] as const) {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + c * dx, y);
+    ctx.lineTo(x, y + c * dy);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/** Soft ring texture (rarity colour) drawn round a legendary's icon; pulsed by legendaryGlow. */
+function glowTexture(scene: Phaser.Scene, tint: string): string {
+  const key = `item:glow:${tint}`;
+  if (scene.textures.exists(key)) return key;
+  const s = ITEM_ICON_SIZE + GLOW_PAD * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = s;
+  const ctx = canvas.getContext('2d')!;
+  ctx.strokeStyle = tint;
+  ctx.shadowColor = tint;
+  ctx.lineWidth = 4;
+  for (const blur of [16, 8]) {
+    ctx.shadowBlur = blur;
+    ctx.strokeRect(GLOW_PAD, GLOW_PAD, ITEM_ICON_SIZE, ITEM_ICON_SIZE);
+  }
+  scene.textures.addCanvas(key, canvas);
+  return key;
+}
+
+const GLOW_PAD = 14;
+const GLOW_PULSE_MS = 900;
+
+/**
+ * A pulsing glow border round a legendary's icon of display size `size` at (x, y). The caller adds it to its
+ * container (under or over the icon); the tween dies with the object.
+ */
+export function legendaryGlow(scene: Phaser.Scene, x: number, y: number, size: number): Phaser.GameObjects.Image {
+  const scale = size / ITEM_ICON_SIZE;
+  const glow = scene.add.image(x, y, glowTexture(scene, UI.rarity.legendary)).setScale(scale).setBlendMode('ADD').setAlpha(0.35);
+  const tween = scene.tweens.add({ targets: glow, alpha: 1, scale: scale * 1.04, duration: GLOW_PULSE_MS, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  glow.once('destroy', () => tween.remove());
+  return glow;
 }
 
 function drawGlyph(ctx: CanvasRenderingContext2D, glyph: Glyph): void {

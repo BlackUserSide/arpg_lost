@@ -76,6 +76,7 @@ export const en = {
   'inv.error.stashFull': 'Your stash is full.',
   'inv.error.noItem': 'Nothing selected.',
   'inv.error.noCharacter': 'No hero selected.',
+  'inv.error.uniqueDuplicate': 'You already wear this unique item.',
   'inv.stat.life': 'Life',
   'inv.stat.energyShield': 'Energy Shield',
   'inv.stat.armour': 'Armour',
@@ -150,6 +151,7 @@ export const en = {
   'item.suffixShort': 'S',
   'item.tierShort': 'T{tier}',
   'item.rareName': '{first} {second}',
+  'item.cost': 'Cost: {text}',
 
   // ---- Stats and modifier lines (items, passives, supports) ----
   'stat.life': 'maximum Life',
@@ -495,6 +497,7 @@ export const en = {
   'run.summary': '{time}  ·  {kills}',
   'run.bonusXp': 'incl. map clear bonus +{xp} XP',
   'run.chest': 'Chest',
+  'run.legendary': 'Legendary!',
   'run.consolation': 'Consolation',
   'run.fastClear': { one: 'Fast clear: +{count} item', other: 'Fast clear: +{count} items' },
   'run.currency': '+{shards}  ·  +{essence}',
@@ -756,4 +759,13 @@ export const en = {
   'item.rare.second.Crown': 'Crown',
   'item.rare.second.Stride': 'Stride',
   'item.rare.second.Whisper': 'Whisper',
+  // Uniques and legendaries: name + effect line; the effect's numbers come from data (render/uniqueText).
+  'unique.glass_cannon_crown.name': 'Glass Cannon Crown',
+  'unique.glass_cannon_crown.effect': '{pct} more Damage',
+  'unique.splitter.name': 'Splitter',
+  'unique.splitter.effect': { one: 'Bolts pierce {count} more enemy', other: 'Bolts pierce {count} more enemies' },
+  'unique.heart_of_winter.name': 'Heart of Winter',
+  'unique.heart_of_winter.effect': 'Fireball turns to ice: it deals Cold damage instead of Fire and Slows enemies by {pct} for {seconds} s',
+  'unique.barrow_reaper.name': 'Barrow Reaper',
+  'unique.barrow_reaper.effect': 'Cleave grants {amount} {resGen} for every enemy it hits',
 } satisfies Record<string, Message>;

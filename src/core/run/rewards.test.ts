@@ -13,6 +13,7 @@ import { finishRun, keepsSupportDrops } from './finish';
 import { availableMaps, canEnterMap, unlockedMap, unlockNextMap } from './progress';
 import { essenceFor, grantRunRewards, planRunRewards, rewardItemLevel, speedTier, type RunOutcome } from './rewards';
 import { createRun, currentTemplate, openDoor, stepRun } from './run';
+import type { ItemsData, UniqueDef } from '../items/types';
 import type { RunInput, RunRewardRules, RunState } from './types';
 
 const rules: RunRewardRules = {
@@ -24,6 +25,8 @@ const rules: RunRewardRules = {
       { minTimeLeft: 0.4, extraItems: 2, itemLevelBonus: 2, luck: 0.3 },
       { minTimeLeft: 0.2, extraItems: 1, itemLevelBonus: 1, luck: 0.15 },
     ],
+    bossUniqueWeightMultiplier: 3,
+    legendary: { minMapLevel: 30, chance: 0.002 },
   },
   shardsPerRoom: 2,
   bossRoomConsolationItems: 1,
@@ -50,11 +53,16 @@ describe('reward planning', () => {
   });
 
   it('chest: more and better items the more time is left; item level = map + boss + speed, never above map + 3', () => {
-    expect(planRunRewards(won(0.1), rules)).toEqual({ items: [{ itemLevel: 11, luck: 0 }, { itemLevel: 11, luck: 0 }], shards: 6, essence: 0.9 });
+    // The boss was killed: the first chest item has the boss unique weight multiplier.
+    expect(planRunRewards(won(0.1), rules)).toEqual({
+      items: [{ itemLevel: 11, luck: 0, uniqueWeightMultiplier: 3 }, { itemLevel: 11, luck: 0 }],
+      shards: 6,
+      essence: 0.9,
+    });
     const mid = planRunRewards(won(0.25), rules);
-    expect(mid.items).toEqual(Array(3).fill({ itemLevel: 12, luck: 0.15 }));
+    expect(mid.items).toEqual([{ itemLevel: 12, luck: 0.15, uniqueWeightMultiplier: 3 }, ...Array(2).fill({ itemLevel: 12, luck: 0.15 })]);
     expect(mid.speedTier).toBe(rules.chest.speedTiers[1]);
-    expect(planRunRewards(won(0.5), rules).items).toEqual(Array(4).fill({ itemLevel: 13, luck: 0.3 }));
+    expect(planRunRewards(won(0.5), rules).items).toEqual([{ itemLevel: 13, luck: 0.3, uniqueWeightMultiplier: 3 }, ...Array(3).fill({ itemLevel: 13, luck: 0.3 })]);
     // Boss +2 and speed +2 would be +4: capped at +3.
     const greedy = { ...rules, chest: { ...rules.chest, bossItemLevelBonus: 2 } };
     expect(planRunRewards(won(0.5), greedy).items[0]!.itemLevel).toBe(13);
@@ -100,6 +108,63 @@ describe('reward planning', () => {
     const salvage = overflow.items.slice(1).reduce((sum, i) => sum + small.rules.salvage[i.rarity], 0);
     expect(overflow.shards).toBe(6 + salvage);
     expect(full.currency[SALVAGE_CURRENCY]).toBe(6 + salvage);
+  });
+});
+
+describe('uniques and legendaries in the chest', () => {
+  const legend: UniqueDef = {
+    id: 'test_legend',
+    rarity: 'legendary',
+    baseId: 'amber_amulet',
+    weight: 1,
+    stats: [{ stat: 'life', kind: 'flat', tiers: [{ min: 10, max: 20, step: 1, minLevel: 1 }] }],
+  };
+  const withLegend: ItemsData = { ...itemsData, uniques: { ...itemsData.uniques, test_legend: legend } };
+
+  it('boss loot: only the first chest item gets the ×3 unique weight, and only when the boss was killed', () => {
+    expect(planRunRewards(won(0.1), rules).items.map((i) => i.uniqueWeightMultiplier)).toEqual([3, undefined]);
+    expect(planRunRewards(won(0.1, { bossKilled: false }), rules).items.map((i) => i.uniqueWeightMultiplier)).toEqual([undefined, undefined]);
+  });
+
+  it('the boss multiplier reaches the rarity roll of that item', () => {
+    const items: ItemsData = { ...itemsData, rules: { ...itemsData.rules, rarityWeights: { normal: 1, magic: 0, rare: 0, unique: 1e-9 } } };
+    const plan = planRunRewards(won(0.1), { ...rules, chest: { ...rules.chest, bossUniqueWeightMultiplier: 1e12 } });
+    const got = grantRunRewards(createProfile(), createRng(42), plan, items);
+    expect(got.items.map((i) => i.rarity)).toEqual(['unique', 'normal']);
+  });
+
+  it('legendary roll: a killed boss on map 30+, at the chest item level; never on a fail or without the boss', () => {
+    expect(planRunRewards(won(0.1, { mapLevel: 29 }), rules).legendary).toBeUndefined();
+    expect(planRunRewards(won(0.1, { mapLevel: 30 }), rules).legendary).toEqual({ itemLevel: 31, chance: 0.002 });
+    expect(planRunRewards(won(0.5, { mapLevel: 40 }), rules).legendary).toEqual({ itemLevel: 43, chance: 0.002 });
+    expect(planRunRewards(won(0.1, { mapLevel: 30, bossKilled: false }), rules).legendary).toBeUndefined();
+    const fail = { won: false, mapLevel: 35, timeLeftFraction: 0, roomsCleared: 3, reachedBossRoom: true, elitesKilled: 0, bossKilled: false };
+    expect(planRunRewards(fail, rules).legendary).toBeUndefined();
+  });
+
+  it('a won legendary roll adds one extra legendary item after the chest items, which stay as they were', () => {
+    const base = planRunRewards(won(0.1, { mapLevel: 30 }), rules);
+    const plan = { ...base, legendary: { itemLevel: 31, chance: 1 } };
+    const profile = createProfile();
+    const got = grantRunRewards(profile, createRng(42), plan, withLegend);
+    expect(got.items.map((i) => i.id)).toEqual(['i1', 'i2', 'i3']);
+    expect(got.items[2]).toMatchObject({ rarity: 'legendary', level: 31, baseId: 'amber_amulet', unique: { id: 'test_legend' } });
+    expect(got.legendaryId).toBe('i3');
+    const without = grantRunRewards(createProfile(), createRng(42), { ...base, legendary: { itemLevel: 31, chance: 0 } }, withLegend);
+    expect(without.items).toEqual(got.items.slice(0, 2));
+    expect(without.legendaryId).toBeUndefined();
+    // The legendary takes the stash first.
+    expect(profile.stash.items.map((i) => i.id)).toEqual(['i3', 'i1', 'i2']);
+    const small = { ...withLegend, rules: { ...withLegend.rules, stashSize: 1 } };
+    const tight = grantRunRewards(createProfile(), createRng(42), plan, small);
+    expect(tight.salvagedIds).toEqual(['i1', 'i2']);
+  });
+
+  it('no legendary in the data (6a): a won roll gives nothing extra', () => {
+    const plan = { ...planRunRewards(won(0.1, { mapLevel: 30 }), rules), legendary: { itemLevel: 31, chance: 1 } };
+    const got = grantRunRewards(createProfile(), createRng(42), plan, itemsData);
+    expect(got.items).toHaveLength(2);
+    expect(got.legendaryId).toBeUndefined();
   });
 });
 

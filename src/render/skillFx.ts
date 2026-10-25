@@ -46,6 +46,8 @@ interface Burst {
   age: number;
   ttl: number;
   spin: number;
+  /** Split of a fireball converted to cold (Heart of Winter): frost colours instead of fire. */
+  icy: boolean;
 }
 
 interface Ghost {
@@ -65,6 +67,8 @@ interface ZoneView {
   readonly kind: string;
   readonly radius: number;
   readonly remaining: number;
+  /** The action snapshot: a fire zone whose action converts to cold (Heart of Winter) is drawn as frost. */
+  readonly action?: { readonly damageConversion?: { readonly to: string } };
 }
 
 /** Hashes an id into 0..1 (stable per zone, so its patches do not jump between frames). */
@@ -147,7 +151,7 @@ export class SkillFx {
     if (fade <= 0) return;
     const rx = zone.radius;
     const ry = zone.radius / 2;
-    if (zone.kind === 'ice_field') this.drawIceField(ground, zone, x, y, rx, ry, fade, time, dt);
+    if (zone.kind === 'ice_field' || zone.action?.damageConversion?.to === 'cold') this.drawIceField(ground, zone, x, y, rx, ry, fade, time, dt);
     else this.drawFirePuddle(ground, zone, x, y, rx, ry, fade, time, dt);
   }
 
@@ -270,10 +274,16 @@ export class SkillFx {
     }
   }
 
-  /** Fireball split at screen (x, y) (already lifted to projectile height): a small hot pop and a few embers. */
-  split(x: number, y: number): void {
-    if (!this.startBurst('split', x, y, 26, SPLIT_TTL)) return;
-    for (let i = 0; i < 5; i++) this.embers.emitParticleAt(x + (Math.random() - 0.5) * 14, y + (Math.random() - 0.5) * 8, 1);
+  /**
+   * Fireball split at screen (x, y) (already lifted to projectile height): a small hot pop and a few embers; `icy`
+   * (converted to cold): a frosty pop with glints.
+   */
+  split(x: number, y: number, icy = false): void {
+    const burst = this.startBurst('split', x, y, 26, SPLIT_TTL);
+    if (!burst) return;
+    burst.icy = icy;
+    const sparks = icy ? this.frost : this.embers;
+    for (let i = 0; i < 5; i++) sparks.emitParticleAt(x + (Math.random() - 0.5) * 14, y + (Math.random() - 0.5) * 8, 1);
   }
 
   /** Cleave's every-N-th full circle at screen (x, y), world radius `radius`: a white-hot swoosh spinning round. */
@@ -305,11 +315,11 @@ export class SkillFx {
     }
   }
 
-  private startBurst(kind: SkillBurstKind, x: number, y: number, radius: number, ttl: number, spin = Math.random() * Math.PI * 2): boolean {
+  private startBurst(kind: SkillBurstKind, x: number, y: number, radius: number, ttl: number, spin = Math.random() * Math.PI * 2): Burst | undefined {
     let burst = this.bursts.find((b) => !b.active);
     if (!burst) {
-      if (this.bursts.length >= MAX_BURSTS) return false;
-      burst = { active: false, kind, x: 0, y: 0, radius: 0, age: 0, ttl: 1, spin: 0 };
+      if (this.bursts.length >= MAX_BURSTS) return undefined;
+      burst = { active: false, kind, x: 0, y: 0, radius: 0, age: 0, ttl: 1, spin: 0, icy: false };
       this.bursts.push(burst);
     }
     burst.active = true;
@@ -320,15 +330,16 @@ export class SkillFx {
     burst.age = 0;
     burst.ttl = ttl;
     burst.spin = spin;
-    return true;
+    burst.icy = false;
+    return burst;
   }
 
   private drawSplit(top: Phaser.GameObjects.Graphics, b: Burst): void {
     const t = b.age / b.ttl;
     const fade = 1 - t;
     const r = b.radius * (0.4 + 0.6 * (1 - (1 - t) ** 2));
-    top.fillStyle(0xffe08a, 0.8 * fade * fade).fillCircle(b.x, b.y, r * 0.55);
-    top.lineStyle(2.5, 0xff7a1a, 0.9 * fade).strokeCircle(b.x, b.y, r);
+    top.fillStyle(b.icy ? 0xe6f8ff : 0xffe08a, 0.8 * fade * fade).fillCircle(b.x, b.y, r * 0.55);
+    top.lineStyle(2.5, b.icy ? 0x8fd3ff : 0xff7a1a, 0.9 * fade).strokeCircle(b.x, b.y, r);
   }
 
   /**

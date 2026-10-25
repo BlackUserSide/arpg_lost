@@ -77,6 +77,7 @@ export const de: LocaleTable = {
   'inv.error.stashFull': 'Deine Truhe ist voll.',
   'inv.error.noItem': 'Nichts ausgewählt.',
   'inv.error.noCharacter': 'Kein Held ausgewählt.',
+  'inv.error.uniqueDuplicate': 'Diesen einzigartigen Gegenstand trägst du bereits.',
   'inv.stat.life': 'Leben',
   'inv.stat.energyShield': 'Energieschild',
   'inv.stat.armour': 'Rüstung',
@@ -151,6 +152,7 @@ export const de: LocaleTable = {
   'item.suffixShort': 'S',
   'item.tierShort': 'T{tier}',
   'item.rareName': '{first}{second}',
+  'item.cost': 'Preis: {text}',
 
   // ---- Stats and modifier lines (nominative noun phrases: "+4% max. Leben") ----
   'stat.life': 'max. Leben',
@@ -499,6 +501,7 @@ export const de: LocaleTable = {
   'run.summary': '{time}  ·  {kills}',
   'run.bonusXp': 'davon Kartenbonus +{xp} EP',
   'run.chest': 'Schatzkiste',
+  'run.legendary': 'Legendär!',
   'run.consolation': 'Trostpreis',
   'run.fastClear': { one: 'Schnell geschafft: +{count} Gegenstand', other: 'Schnell geschafft: +{count} Gegenstände' },
   'run.currency': '+{shards}  ·  +{essence}',
@@ -760,4 +763,12 @@ export const de: LocaleTable = {
   'item.rare.second.Crown': 'krone',
   'item.rare.second.Stride': 'schritt',
   'item.rare.second.Whisper': 'flüstern',
+  'unique.glass_cannon_crown.name': 'Krone der Glaskanone',
+  'unique.glass_cannon_crown.effect': '{pct} mehr Schaden',
+  'unique.splitter.name': 'Spalter',
+  'unique.splitter.effect': { one: 'Bolzen durchbohren {count} weiteren Gegner', other: 'Bolzen durchbohren {count} weitere Gegner' },
+  'unique.heart_of_winter.name': 'Herz des Winters',
+  'unique.heart_of_winter.effect': 'Feuerball wird zu Eis: verursacht Kälte- statt Feuerschaden und verlangsamt Gegner um {pct} für {seconds} s',
+  'unique.barrow_reaper.name': 'Hügelgrabschnitter',
+  'unique.barrow_reaper.effect': 'Spaltschlag gibt {amount} {resGen} für jeden getroffenen Gegner',
 };

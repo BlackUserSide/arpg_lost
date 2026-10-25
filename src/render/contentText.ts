@@ -20,6 +20,9 @@ export const contentKey = {
   eliteModifierName: (id: string): string => `eliteModifier.${id}.name`,
   resource: (id: string, form: 'name' | 'gen' | 'acc'): string => `resource.${id}.${form}`,
   rareWord: (position: 'first' | 'second', word: string): string => `item.rare.${position}.${word}`,
+  uniqueName: (id: string): string => `unique.${id}.name`,
+  /** The unique's effect line; its placeholders are filled from the UniqueDef's mechanics / effect modifiers. */
+  uniqueEffect: (id: string): string => `unique.${id}.effect`,
 } as const;
 
 export const className = (id: string): string => tx(contentKey.className(id), undefined, id);
@@ -50,8 +53,12 @@ export function rareItemName(stored: string): string {
   });
 }
 
-/** Normal and magic items are named by their base; rares by their rolled name. */
-export function itemName(item: Pick<Item, 'rarity' | 'name' | 'baseId'>): string {
+/** A unique / legendary item's own name; an id without text (a removed unique) falls back to the base name. */
+export const uniqueName = (id: string, baseId: string): string => tx(contentKey.uniqueName(id), undefined, baseName(baseId));
+
+/** Normal and magic items are named by their base; rares by their rolled name; uniques and legendaries by their own. */
+export function itemName(item: Pick<Item, 'rarity' | 'name' | 'baseId' | 'unique'>): string {
+  if (item.unique) return uniqueName(item.unique.id, item.baseId);
   return item.rarity === 'rare' && item.name ? rareItemName(item.name) : baseName(item.baseId);
 }
 
@@ -75,6 +82,7 @@ export function requiredContentKeys(content: Content, tree: PassiveTreeData, ite
   for (const base of Object.values(items.bases)) keys.push(contentKey.baseName(base.id));
   for (const word of items.rules.rareNameWords.first) keys.push(contentKey.rareWord('first', word));
   for (const word of items.rules.rareNameWords.second) keys.push(contentKey.rareWord('second', word));
+  for (const def of Object.values(items.uniques)) keys.push(contentKey.uniqueName(def.id), contentKey.uniqueEffect(def.id));
   for (const def of Object.values(supports.supports)) keys.push(contentKey.supportName(def.id), contentKey.supportDescription(def.id));
   return keys;
 }

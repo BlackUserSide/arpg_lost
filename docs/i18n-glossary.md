@@ -15,7 +15,10 @@ locale falls back to English.
 - Stat names (`stat.*`) are shown inside modifier lines (`mod.*`): pick the grammatical form your `mod.*` templates
   need (Ukrainian uses the genitive: "+4% життя").
 - Content names are keyed by content id: `class.<id>.name`, `skill.<id>.name`, `support.<id>.name` / `.description`,
-  `passive.<id>.name`, `spec.<id>.name`, `base.<id>.name`, `mob.<id>.name`, `item.rare.first|second.<Word>`.
+  `passive.<id>.name`, `spec.<id>.name`, `base.<id>.name`, `mob.<id>.name`, `item.rare.first|second.<Word>`,
+  `unique.<id>.name` / `unique.<id>.effect` (uniques and legendaries; the effect's numbers are placeholders filled from
+  data: `{pct}` is a formatted percentage, `{count}` selects the plural, `{seconds}` / `{amount}` are numbers, `{resGen}`
+  is the class resource after a number).
 - Numbers get the locale decimal separator automatically ("0.5" / "0,5").
 - German and Polish run ~30% longer than Ukrainian: buttons shrink their caption to fit, but prefer the shorter of
   two equally good wordings for buttons, tabs and HUD captions.
@@ -123,3 +126,15 @@ locale falls back to English.
 | k_swift | Swift Feet | Швидкі ноги | Flinke Füße | Chyże stopy |
 | k_leech | Bloodsucker | Кровопивець | Blutsauger | Krwiopijca |
 | k_glass | Glass Cannon | Скляна гармата | Glaskanone | Szklane działo |
+
+## Uniques and legendaries
+
+Names are proper names: translate the meaning, keep them short; Ukrainian names come from the designer (`docs/design/items.md`).
+A unique's drawback lines read `item.cost` ("Cost: …" / "Ціна: …"); the chest banner for a legendary drop is `run.legendary`.
+
+| id | English | Українська | Deutsch | Polski |
+|---|---|---|---|---|
+| glass_cannon_crown | Glass Cannon Crown | Вінець Скляної Гармати | Krone der Glaskanone | Korona Szklanego Działa |
+| splitter | Splitter | Розщеплювач | Spalter | Rozszczepiacz |
+| heart_of_winter | Heart of Winter | Серце Зими | Herz des Winters | Serce Zimy |
+| barrow_reaper | Barrow Reaper | Жнець Курганів | Hügelgrabschnitter | Żniwiarz Kurhanów |
