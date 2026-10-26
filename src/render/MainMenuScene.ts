@@ -19,6 +19,11 @@ import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './s
 import { confirmDialog, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, showToast, UI } from './ui';
 
 const AVATAR_KEY = 'user-avatar';
+/** Portrait phones narrower than this get the stacked menu (px): account line, list top, room kept for the play group. */
+const PORTRAIT_MAX_WIDTH = 560;
+const PORTRAIT_ACCOUNT_Y = 76;
+const PORTRAIT_LIST_TOP = 104;
+const PORTRAIT_PLAY_ROOM = 300;
 
 /** Hub entry: hero by the campfire, character list, account widget, records, play. */
 export class MainMenuScene extends Phaser.Scene {
@@ -93,17 +98,21 @@ export class MainMenuScene extends Phaser.Scene {
     const selected = findCharacter(this.app.profile, this.app.selectedCharacterId ?? '');
 
     // Right column: character list. Left area: campfire scene, title, play.
-    const listW = compact ? Math.min(250, width * 0.4) : 320;
-    const listX = width - listW / 2 - (compact ? 12 : 28);
-    const sceneW = width - listW - (compact ? 24 : 56);
+    // Narrow portrait phones: the account line moves under the title row and the list spans the width above the scene.
+    const portrait = width < PORTRAIT_MAX_WIDTH && height > width;
+    const listW = portrait ? width - 24 : compact ? Math.min(250, width * 0.4) : 320;
+    const listX = portrait ? width / 2 : width - listW / 2 - (compact ? 12 : 28);
+    const sceneW = portrait ? width : width - listW - (compact ? 24 : 56);
 
-    this.backdrop.layout(sceneW * 0.55, height * (compact ? 0.6 : 0.62), width, height);
+    this.backdrop.layout(sceneW * 0.55, height * (portrait ? 0.7 : compact ? 0.6 : 0.62), width, height);
     this.backdrop.setHero(selected ? CLASS_LOOKS.find((l) => l.classId === selected.classId)?.sprite : undefined);
 
     const title = heading(this, compact ? 16 : 32, compact ? 10 : 22, 'ARPG Lost', compact ? 30 : UI.size.display);
     this.root.add(title);
-    this.buildAccountWidget(width, compact);
-    this.buildCharacterList(listX, listW, compact ? 72 : 104, height - (compact ? 12 : 28), compact);
+    this.buildAccountWidget(width, compact, portrait ? PORTRAIT_ACCOUNT_Y : undefined);
+    const listTop = portrait ? PORTRAIT_LIST_TOP : compact ? 72 : 104;
+    // Portrait: the play button group keeps the bottom of the screen.
+    const listBottom = this.buildCharacterList(listX, listW, listTop, portrait ? height - PORTRAIT_PLAY_ROOM : height - (compact ? 12 : 28), compact);
 
     const playY = height - (compact ? 40 : 64);
     if (selected) {
@@ -164,7 +173,7 @@ export class MainMenuScene extends Phaser.Scene {
       this.root.add(label(this, sceneW / 2, playY, t('menu.noHero'), UI.size.heading, UI.muted).setOrigin(0.5));
     }
     if (!compact) this.buildRecords(32, 92);
-    this.buildLoginHint(sceneW, compact);
+    this.buildLoginHint(sceneW, compact, portrait ? listBottom + 8 : undefined);
     this.root.add(label(this, 12, height - 8, `v${__APP_VERSION__}`, 12, UI.muted).setOrigin(0, 1).setAlpha(0.6));
     // Last, so its list draws over everything else.
     this.buildLanguageSwitcher(title.x + title.width + (compact ? 12 : 20), title.y + title.height / 2, compact);
@@ -309,12 +318,13 @@ export class MainMenuScene extends Phaser.Scene {
     if (this.scene.isActive()) this.build();
   }
 
-  private buildAccountWidget(width: number, compact: boolean): void {
+  /** Guest / user name, avatar and the login link in the top right; `top`: its centre line when not the default. */
+  private buildAccountWidget(width: number, compact: boolean, top?: number): void {
     const { user, platform } = this.app;
     const name = user?.username ?? t('menu.guest');
     const size = compact ? 30 : 38;
     const right = width - (compact ? 12 : 28);
-    const y = compact ? 30 : 44;
+    const y = top ?? (compact ? 30 : 44);
     this.root.add(makeAvatar(this, right - size / 2, y, size, user ? AVATAR_KEY : undefined, name));
     const nameText = label(this, right - size - 14, y - (user ? 10 : 18), name, compact ? UI.size.small : UI.size.body, UI.text, true).setOrigin(1, 0);
     this.root.add(nameText);
@@ -327,7 +337,8 @@ export class MainMenuScene extends Phaser.Scene {
     }
   }
 
-  private buildCharacterList(x: number, w: number, top: number, bottom: number, compact: boolean): void {
+  /** The character list panel from `top`; returns its bottom edge. */
+  private buildCharacterList(x: number, w: number, top: number, bottom: number, compact: boolean): number {
     const characters = this.app.profile.characters;
     const slots = profileRules.maxCharacters;
     const rowH = compact ? 50 : 72;
@@ -348,8 +359,9 @@ export class MainMenuScene extends Phaser.Scene {
       const card = makeCard(this, x, y, w - 24, rowH, false, () => this.scene.start('create-character'));
       this.root.add(card);
       this.root.add(heading(this, x - (w - 24) / 2 + 26, y, '+', compact ? 24 : 30).setOrigin(0.5));
-      this.root.add(label(this, x - (w - 24) / 2 + 48, y, t('menu.createHero'), compact ? UI.size.small : UI.size.body, UI.goldText).setOrigin(0, 0.5));
+      this.root.add(fitText(label(this, x - (w - 24) / 2 + 48, y, t('menu.createHero'), compact ? UI.size.small : UI.size.body, UI.goldText).setOrigin(0, 0.5), w - 24 - 58));
     }
+    return top + panelH;
   }
 
   private buildCharacterRow(character: CharacterRecord, x: number, y: number, w: number, h: number, compact: boolean): void {
@@ -409,14 +421,15 @@ export class MainMenuScene extends Phaser.Scene {
     });
   }
 
-  private buildLoginHint(sceneW: number, compact: boolean): void {
+  /** `top`: the hint's top edge when not the default spot. */
+  private buildLoginHint(sceneW: number, compact: boolean, top?: number): void {
     const { app } = this;
     if (app.user || app.loginHint !== 'pending' || !app.platform.isLoginAvailable()) return;
     app.loginHint = 'shown';
     const w = Math.min(460, sceneW - 24);
     const h = compact ? 52 : 60;
     // Desktop: below the records block in the top left (four rows from y 92), so it never covers them.
-    const y = compact ? 82 : 92 + 4 * 22 + 46;
+    const y = top !== undefined ? top + h / 2 : compact ? 82 : 92 + 4 * 22 + 46;
     const x = sceneW / 2;
     const panel = makeFrame(this, x, y, w, h, 'panel');
     const text = label(this, x - w / 2 + 18, y, t('menu.loginHint'), UI.size.small, UI.text).setOrigin(0, 0.5);
