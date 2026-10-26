@@ -21,6 +21,8 @@ import { POTION_ROSE } from './potionFx';
 import { PotionSlot } from './potionHud';
 import { SoulsBadge } from './soulsHud';
 import { frameTexture, label, makeFrame, UI } from './ui';
+import type { ButtonState } from './touchControls';
+import type { SafeInsets } from './touchMode';
 
 // In-run HUD: Diablo-style life / class-resource orbs, skill bar with cooldown shutters, XP bar, buffs. The map run's
 // timer, room line and boss bar are render/runHud.ts.
@@ -69,6 +71,31 @@ const LIFE_COST_TEXT = '#ff8a7a';
 /** Seconds the life orb's potion glow takes to fade in / out. */
 const POTION_GLOW_FADE = 0.2;
 
+/** A skill slot as a touch button (docs/design/controls.md): slot 0 = basic attack, 1..3 = skills; screen px. */
+export interface TouchButton {
+  readonly slot: number;
+  readonly x: number;
+  readonly y: number;
+  /** Hit radius (a bit larger than the drawn frame). */
+  readonly r: number;
+}
+
+/** Touch layout (px): the big basic attack button, the skill buttons round it, the potion; extra hit margin. */
+const TOUCH_SIZES = {
+  compact: { attack: 84, skill: 60, potion: 56, arcGap: 28, gap: 12, orb: 30, hit: 8 },
+  wide: { attack: 104, skill: 72, potion: 64, arcGap: 28, gap: 16, orb: 40, hit: 10 },
+} as const;
+/** Screen angles (degrees, 0 = right, 90 = down) of skills 1..3 round the attack button: left, up-left, up. */
+const TOUCH_ARC = [180, 225, 270] as const;
+/** Touch button held: scale and rim colour. */
+const PRESSED_SCALE = 0.93;
+const PRESSED_RIM = 0xf3d58a;
+/** Drag-aim brought back onto the button (release cancels): red rim and icon tint. */
+const CANCEL_RIM = 0xff4a3a;
+const CANCEL_TINT = 0xff7a6a;
+/** Buff icon side (px). */
+const BUFF_SIZE = 30;
+
 interface Orb {
   ring: Phaser.GameObjects.Image;
   text: Phaser.GameObjects.Text;
@@ -108,6 +135,8 @@ interface Slot {
   xpFrac: number;
   /** Level-up glow, SKILL_LEVEL_GLOW → 0 seconds. */
   levelGlow: number;
+  /** Touch layout: a finger is on this button (drawn pressed), or its drag-aim would cancel (drawn red). */
+  state: ButtonState;
 }
 
 function orbRingTexture(scene: Phaser.Scene, r: number): string {
@@ -201,6 +230,15 @@ export class Hud {
   private potionGlow = 0;
   /** Over the orb rings, under the orb numbers: the potion glow. */
   private readonly orbGlow: Phaser.GameObjects.Graphics;
+  /** Touch layout is on (layout() got safe insets): skill slots are buttons in the bottom right, orbs top left. */
+  private touch = false;
+  /** Touch layout: the slots as buttons, and the top edge of the button cluster (screen px). */
+  private buttons: TouchButton[] = [];
+  private clusterTop = 0;
+  /** Centre of the first buff icon (more run rightwards from it). */
+  private buffAnchor = { x: 0, y: 0 };
+  /** Touch layout: badges stack downwards from here (top edge, px) under the buffs. */
+  private badgeTop = 0;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -258,6 +296,7 @@ export class Hud {
         maxLevel: 1,
         xpFrac: Number.NaN,
         levelGlow: 0,
+        state: 'idle',
       };
     });
     // Created after the orb rings (same depth, drawn above them), below the numbers (DEPTH + 2).
@@ -270,9 +309,21 @@ export class Hud {
     this.potion = content?.lifePotion ? new PotionSlot(scene, DEPTH, content.lifePotion, content, classDef, onPotionPress) : undefined;
   }
 
-  layout(width: number, height: number): void {
+  /**
+   * Places everything for a screen size. `touch` (the safe area insets) switches to the touch layout: skill slots
+   * become the touch buttons in the bottom right; the orbs, XP bar, buffs and badges move to the top left.
+   */
+  layout(width: number, height: number, touch?: SafeInsets): void {
     const compact = width < 820 || height < 520;
     this.compact = compact;
+    this.touch = touch !== undefined;
+    for (const slot of this.slots) slot.key.setVisible(!touch);
+    this.potion?.setKeyHint(!touch);
+    if (touch) {
+      this.layoutTouch(width, height, touch);
+      return;
+    }
+    this.buttons = [];
     const r = compact ? 38 : 54;
     const margin = compact ? 12 : 22;
     this.placeOrb(this.life, margin + r + 6, height - margin - r - 6, r);
@@ -287,20 +338,7 @@ export class Hud {
     // The potion slot uses the same row for its charge pips.
     const levelStrip = this.skillLevels || this.potion ? (compact ? 10 : 13) : 0;
     this.slots.forEach((slot, i) => {
-      slot.size = size;
-      slot.x = width / 2 - total / 2 + size / 2 + i * (size + gap);
-      slot.y = height - margin - levelStrip - size / 2;
-      slot.frame.setTexture(frameTexture(this.scene, size, size, 'secondary')).setPosition(slot.x, slot.y);
-      slot.icon.setPosition(slot.x, slot.y).setDisplaySize(size - 10, size - 10);
-      slot.key.setPosition(slot.x, slot.y + size / 2 - 2);
-      slot.cdText.setPosition(slot.x, slot.y);
-      slot.costText.setPosition(slot.x - size / 2 + 4, slot.y - size / 2 + 3);
-      // Charge badge on the frame's top-right corner (key caption is bottom-centre, life cost top-left).
-      const br = compact ? 10 : 11;
-      const bx = slot.x + size / 2 - br + 3;
-      const by = slot.y - size / 2 + br - 3;
-      slot.chargeBadge.setPosition(bx, by).setRadius(br);
-      slot.chargeText.setPosition(bx, by).setFontSize(compact ? 12 : 14);
+      this.placeSlot(slot, width / 2 - total / 2 + size / 2 + i * (size + gap), height - margin - levelStrip - size / 2, size);
     });
     // Potion slot left of the skill bar, a wider gap apart (it is not a skill).
     const firstSlot = this.slots[0];
@@ -315,6 +353,125 @@ export class Hud {
     const barH = compact ? 6 : 8;
     this.xpRect = { x: width / 2 - total / 2, y: height - margin - levelStrip - size - (compact ? 10 : 14) - barH, w: total, h: barH };
     this.levelText.setPosition(this.xpRect.x - 8, this.xpRect.y + barH / 2).setFontSize(compact ? 13 : 15);
+    // Buffs above the XP bar, from the first slot's left edge.
+    if (firstSlot) this.buffAnchor = { x: firstSlot.x - firstSlot.size / 2 + BUFF_SIZE / 2, y: firstSlot.y - firstSlot.size / 2 - BUFF_SIZE / 2 - 28 };
+  }
+
+  /**
+   * Touch layout (docs/design/controls.md): bottom right the big basic attack button with skills 1..3 on an arc round
+   * it (left, up-left, up) and the potion beyond (left of skill 1 in landscape, above skill 3 in portrait); top left
+   * the orbs (side by side, stacked on narrow screens), the XP bar under them, then buffs and badges.
+   */
+  private layoutTouch(width: number, height: number, insets: SafeInsets): void {
+    const compact = this.compact;
+    const z = compact ? TOUCH_SIZES.compact : TOUCH_SIZES.wide;
+    const margin = compact ? 12 : 22;
+    const left = margin + insets.left;
+    const right = width - margin - insets.right;
+    const top = (compact ? 8 : 16) + insets.top;
+    const bottom = height - margin - insets.bottom;
+    const strip = compact ? 10 : 13;
+
+    // Orbs, top left; the resource name sits above its orb.
+    const r = z.orb;
+    const nameH = compact ? 14 : 16;
+    const narrow = width < 560;
+    const orbY = top + nameH + r + 4;
+    this.placeOrb(this.life, left + r + 4, orbY, r);
+    if (narrow) this.placeOrb(this.resource, this.life.x, orbY + r * 2 + nameH + 12, r);
+    else this.placeOrb(this.resource, this.life.x + r * 2 + 18, orbY, r);
+    this.resourceName.setPosition(this.resource.x, this.resource.y - r - (compact ? 6 : 8)).setFontSize(compact ? 11 : 12);
+    this.resourceNote.setPosition(this.resource.x, this.resource.y);
+
+    // XP bar under the orbs, the level number left of it.
+    const barH = compact ? 6 : 8;
+    const xpLeft = left + (compact ? 22 : 26);
+    const xpRight = Math.max(xpLeft + 110, this.resource.x + r + 4);
+    this.xpRect = { x: xpLeft, y: this.resource.y + r + (compact ? 12 : 16), w: xpRight - xpLeft, h: barH };
+    this.levelText.setPosition(this.xpRect.x - 8, this.xpRect.y + barH / 2).setFontSize(compact ? 13 : 15);
+    this.buffAnchor = { x: left + BUFF_SIZE / 2, y: this.xpRect.y + barH + 10 + BUFF_SIZE / 2 };
+    // Badges under the buff row (its timer caption included).
+    this.badgeTop = this.buffAnchor.y + BUFF_SIZE / 2 + 22;
+    this.badgeSpot = { x: left + (compact ? 46 : 54), bottom: 0, gap: compact ? 2 : 4, maxRight: width - 4 };
+    this.badgeMask = -1;
+
+    // Buttons, bottom right.
+    const ax = right - z.attack / 2;
+    const ay = bottom - strip - z.attack / 2;
+    const arc = z.attack / 2 + z.skill / 2 + z.arcGap;
+    this.buttons = [];
+    let clusterTop = ay - z.attack / 2;
+    this.slots.forEach((slot, i) => {
+      const size = i === 0 ? z.attack : z.skill;
+      const angle = ((TOUCH_ARC[i - 1] ?? 0) * Math.PI) / 180;
+      const x = i === 0 ? ax : ax + Math.cos(angle) * arc;
+      const y = i === 0 ? ay : ay + Math.sin(angle) * arc;
+      this.placeSlot(slot, x, y, size);
+      this.buttons.push({ slot: i, x, y, r: size / 2 + z.hit });
+      clusterTop = Math.min(clusterTop, y - size / 2);
+    });
+    if (this.potion) {
+      const skill1 = this.slots[1];
+      const skill3 = this.slots[3];
+      const landscape = width >= height;
+      const px = landscape && skill1 ? skill1.x - z.skill / 2 - z.gap - z.potion / 2 : (skill3?.x ?? ax);
+      const py = landscape ? ay + z.attack / 2 - z.potion / 2 : (skill3?.y ?? ay) - z.skill / 2 - strip - z.gap - z.potion / 2;
+      this.potion.layout(px, py, z.potion, compact);
+      clusterTop = Math.min(clusterTop, py - z.potion / 2);
+    }
+    this.clusterTop = clusterTop;
+  }
+
+  /** Touch layout: the slots as touch buttons (empty in the desktop layout). */
+  touchButtons(): readonly TouchButton[] {
+    return this.buttons;
+  }
+
+  /** Touch layout: top edge of the button cluster (screen px), so other controls stay clear of it. */
+  touchClusterTop(): number {
+    return this.clusterTop;
+  }
+
+  /** Touch layout: right edge of the orbs in the top left (screen px). */
+  touchOrbsRight(): number {
+    return Math.max(this.life.x + this.life.r, this.resource.x + this.resource.r) + 6;
+  }
+
+  /**
+   * Touch button look: pressed = lighter frame, sunk a little, gold rim; cancel = red frame, rim and icon tint (a
+   * drag-aim back on its button: releasing casts nothing). Rims and tints are drawn in update.
+   */
+  setSlotState(index: number, state: ButtonState): void {
+    const slot = this.slots[index];
+    if (!slot) return;
+    slot.state = state;
+    this.applySlotState(slot);
+  }
+
+  private applySlotState(slot: Slot): void {
+    const k = slot.state === 'idle' ? 1 : PRESSED_SCALE;
+    const variant = slot.state === 'cancel' ? 'danger' : slot.state === 'pressed' ? 'secondaryHover' : 'secondary';
+    slot.frame.setTexture(frameTexture(this.scene, slot.size, slot.size, variant)).setScale(k);
+    slot.icon.setDisplaySize((slot.size - 10) * k, (slot.size - 10) * k);
+  }
+
+  private placeSlot(slot: Slot, x: number, y: number, size: number): void {
+    const compact = this.compact;
+    slot.size = size;
+    slot.x = x;
+    slot.y = y;
+    slot.frame.setPosition(x, y);
+    slot.icon.setPosition(x, y);
+    this.applySlotState(slot);
+    slot.key.setPosition(x, y + size / 2 - 2);
+    slot.cdText.setPosition(x, y).setFontSize(size > 70 ? 22 : 18);
+    slot.costText.setPosition(x - size / 2 + 4, y - size / 2 + 3);
+    // Charge badge on the frame's top-right corner (key caption is bottom-centre, life cost top-left).
+    const br = compact ? 10 : 11;
+    const bx = x + size / 2 - br + 3;
+    const by = y - size / 2 + br - 3;
+    slot.chargeBadge.setPosition(bx, by).setRadius(br);
+    slot.chargeText.setPosition(bx, by).setFontSize(compact ? 12 : 14);
   }
 
   update(world: WorldState, dt: number): void {
@@ -395,6 +552,11 @@ export class Hud {
       slot.icon.setAlpha(blocked || unaffordable ? 0.45 : 1);
       if (unaffordable) slot.icon.setTint(slot.lifeCost ? 0xb86a6a : this.resourceLook.unaffordable);
       else slot.icon.clearTint();
+      if (slot.state === 'cancel') slot.icon.setTint(CANCEL_TINT);
+      if (slot.state !== 'idle') {
+        const half = (slot.size * PRESSED_SCALE) / 2;
+        s.lineStyle(3, slot.state === 'cancel' ? CANCEL_RIM : PRESSED_RIM, 0.95).strokeRect(slot.x - half + 3, slot.y - half + 3, half * 2 - 6, half * 2 - 6);
+      }
       const shown = multi ? info.charges : -1;
       if (shown !== slot.shownCharges) {
         slot.shownCharges = shown;
@@ -422,7 +584,10 @@ export class Hud {
     // Badges stack upwards from the souls spot: souls, then the clock, then the skeleton counter, each above the
     // visible ones below it (re-laid only when the set of visible badges changes).
     const mask = (this.souls.visible ? 1 : 0) | (this.clock.visible ? 2 : 0) | (this.allies.visible ? 4 : 0);
-    if (mask !== this.badgeMask) {
+    if (mask !== this.badgeMask && this.touch) {
+      this.badgeMask = mask;
+      this.stackBadgesDown();
+    } else if (mask !== this.badgeMask) {
       this.badgeMask = mask;
       const spot = this.badgeSpot;
       let bottom = spot.bottom;
@@ -436,6 +601,22 @@ export class Hud {
     this.drawXp(world, dt);
     this.drawSkillLevels(world, dt);
     this.updateBuffs(world);
+  }
+
+  /** Touch layout: souls, clock and skeleton badges stack downwards from badgeTop (each pill's caption above it). */
+  private stackBadgesDown(): void {
+    const spot = this.badgeSpot;
+    const compact = this.compact;
+    let top = this.badgeTop;
+    // Laid out once to learn the stack height (it does not depend on the position), then placed.
+    this.souls.layout(spot.x, top, compact);
+    this.souls.layout(spot.x, top + this.souls.stackHeight - 6, compact);
+    if (this.souls.visible) top += this.souls.stackHeight + spot.gap;
+    this.clock.layout(spot.x, top, compact, spot.maxRight);
+    this.clock.layout(spot.x, top + this.clock.stackHeight - 6, compact, spot.maxRight);
+    if (this.clock.visible) top += this.clock.stackHeight + spot.gap;
+    this.allies.layout(spot.x, top, compact, spot.maxRight);
+    this.allies.layout(spot.x, top + this.allies.stackHeight - 6, compact, spot.maxRight);
   }
 
   /** Brief glow on the slot of a skill that just levelled up (WorldEvent skillLevelUp). */
@@ -545,13 +726,11 @@ export class Hud {
     this.buffIcons = [];
     const buffs = world.player.buffs;
     if (buffs.length === 0) return;
-    const first = this.slots[0];
-    if (!first) return;
-    const size = 30;
+    const size = BUFF_SIZE;
     buffs.forEach((buff, i) => {
       const source = world.player.actions.skills.find((a) => a.selfEffects?.some((e) => e.kind === 'buff' && e.id === buff.id));
-      const x = first.x - first.size / 2 + size / 2 + i * (size + 6);
-      const y = first.y - first.size / 2 - size / 2 - 28; // above the XP bar
+      const x = this.buffAnchor.x + i * (size + 6);
+      const y = this.buffAnchor.y;
       const icon = this.scene.add.image(x, y, skillIcon(this.scene, source?.id ?? buff.id)).setDisplaySize(size, size).setScrollFactor(0).setDepth(DEPTH);
       const time = label(this.scene, x, y + size / 2 + 6, t('hud.buffSeconds', { seconds: Math.ceil(buff.remaining) }), 12, UI.goldBrightText, true)
         .setOrigin(0.5)
