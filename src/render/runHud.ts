@@ -101,7 +101,8 @@ export class RunHud {
     this.flash = FLASH_TIME;
   }
 
-  update(run: RunState, dt: number): void {
+  /** `bossReady`: the boss can appear (its sprites are loaded); until then the awaken button shows dimmed. */
+  update(run: RunState, dt: number, bossReady = true): void {
     this.time += dt;
     const left = timeLeft(run, this.maps);
     const second = Math.ceil(left - 1e-6);
@@ -136,7 +137,7 @@ export class RunHud {
         this.awaken = undefined;
       }
     }
-    if (this.awaken) this.awaken.setAlpha(0.85 + 0.15 * Math.sin(this.time * 5));
+    if (this.awaken) this.awaken.setAlpha(bossReady ? 0.85 + 0.15 * Math.sin(this.time * 5) : 0.4);
   }
 
   private boss(run: RunState): MobState | undefined {

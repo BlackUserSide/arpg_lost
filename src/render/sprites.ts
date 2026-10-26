@@ -128,6 +128,14 @@ export function loadSprites(scene: Phaser.Scene, sets: Iterable<string>): number
   return queued;
 }
 
+/** The sprite set a sheet's texture key belongs to (textureKey), or undefined for other textures. */
+export function spriteSetOf(key: string): string | undefined {
+  for (const [set, anims] of Object.entries(SPRITE_SETS)) {
+    if (key.startsWith(`${set}_`) && anims[key.slice(set.length + 1)]) return set;
+  }
+  return undefined;
+}
+
 /** Every sheet of `set` is loaded. */
 export function spritesLoaded(scene: Phaser.Scene, set: string): boolean {
   return Object.keys(SPRITE_SETS[set] ?? {}).every((anim) => scene.textures.exists(textureKey(set, anim)));
