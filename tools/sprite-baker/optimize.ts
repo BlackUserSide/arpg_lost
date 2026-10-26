@@ -1,6 +1,6 @@
 // Palette compression of baked sprite sheets (libimagequant via sharp, dev-only; nothing here ships in the game).
 // The baker's save endpoint runs every PNG it writes through optimizePng; the CLI re-compresses existing files:
-//   npm run sprites:optimize                  (public/assets/**.png)
+//   npm run sprites:optimize                  (public/assets/sprites/*.png)
 //   npm run sprites:optimize -- <file.png> …
 // Sheets that are already palette PNGs are skipped, so re-running never stacks lossy passes.
 import fs from 'node:fs';
@@ -38,7 +38,7 @@ function pngsUnder(dir: string): string[] {
 async function main(): Promise<void> {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
   const args = process.argv.slice(2);
-  const files = args.length > 0 ? args.map((f) => path.resolve(f)) : pngsUnder(path.join(root, 'public/assets'));
+  const files = args.length > 0 ? args.map((f) => path.resolve(f)) : pngsUnder(path.join(root, 'public/assets/sprites'));
   let before = 0;
   let after = 0;
   for (const file of files) {
