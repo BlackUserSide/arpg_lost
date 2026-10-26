@@ -2,6 +2,9 @@ import * as Phaser from 'phaser';
 import { distance, normalize, vec, type Vec2 } from '../core/math';
 import type { Content, MobRank } from '../core/world/content';
 import {
+  actionReady,
+  canAfford,
+  clampToArena,
   distanceDamageMore,
   eliteModifierDef,
   getClass,
@@ -64,7 +67,7 @@ import { AllyFx } from './allyFx';
 import { touchControls as touchTuning } from '../data/controls';
 import { TouchControls } from './touchControls';
 import { safeInsets, touchControlsOn } from './touchMode';
-import { deliveryReach, dragFraction, idleAim, isAimed, isDistanceAimed, manualAim, onScreen, tapAim, type AimTarget } from './touchAim';
+import { deliveryReach, dragFraction, firstUsableSkill, idleAim, isAimed, isDistanceAimed, manualAim, onScreen, tapAim, type AimTarget } from './touchAim';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
 // Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
@@ -113,6 +116,9 @@ const ROOM_FADE = 380;
 const AIM_ARROW = 0xff9a3c;
 const AIM_ARROW_RIM = 0x2a1206;
 const AIM_ARROW_MIN = 70;
+/** Aim indicator: ring radius (world units) round the hero for self skills without an area; Teleport landing ring. */
+const SELF_AIM_RING = 60;
+const TELEPORT_LANDING_RING = 30;
 /** Screen px the run timer and its info line need between the top corner buttons; less moves them under the buttons. */
 const MIN_HEADER_WIDTH = 150;
 
@@ -274,6 +280,15 @@ interface DotTally {
 
 type OverlayKind = 'pause' | 'end';
 
+/** How a touch skill press is aimed (RunScene.touchAims). */
+interface TouchSkillAim {
+  manual: boolean;
+  /** Manual: world direction (unit). */
+  readonly dir: Vec2;
+  /** Manual, traps / Teleport: share of the reach (dragFraction). */
+  fraction: number;
+}
+
 /** Lift of Chain Lightning bolts above the floor (screen px): roughly mid-body. */
 const CHAIN_HEIGHT = 30;
 
@@ -423,10 +438,14 @@ export class RunScene extends Phaser.Scene {
   /** Floor indicator of a drag-aimed skill. */
   private aimGfx!: Phaser.GameObjects.Graphics;
   /**
-   * The last released skill button: its skill index (0..2) and manual aim (world direction; undefined = auto-aim).
-   * Steers RunInput.aim while that skill's press is buffered (until it fires or the buffer runs out).
+   * Per skill (0..2): how its last press is aimed (a drag: world direction + share of the reach; else auto-aim). Each
+   * buffered press keeps its own aim; the step's aim is the one of the skill core will fire first (firstUsableSkill).
    */
-  private touchCast: { skill: number; dir: Vec2 | undefined; fraction: number } | undefined;
+  private readonly touchAims: TouchSkillAim[] = [0, 1, 2].map(() => ({ manual: false, dir: vec(1, 0), fraction: 1 }));
+  /** Preallocated per-step arrays of the touch input (no allocations in the fixed step). */
+  private readonly touchKeys: boolean[] = [false, false, false];
+  private readonly touchSkills: boolean[] = [false, false, false];
+  private readonly touchUsable: boolean[] = [false, false, false];
   /** Q / E held at the last step in touch mode (keyboards on tablets): their presses auto-aim like taps. */
   private readonly touchKeysWereDown: boolean[] = [false, false, false];
   /** Auto-aim only picks enemies on screen (designer decision 2026-10-26). */
@@ -576,7 +595,7 @@ export class RunScene extends Phaser.Scene {
     this.announcement = [];
     this.bossFall = undefined;
     this.touch = touchControlsOn(this.game);
-    this.touchCast = undefined;
+    for (const a of this.touchAims) a.manual = false;
     this.touchTaps.fill(false);
     this.touchKeysWereDown.fill(false);
 
@@ -641,6 +660,8 @@ export class RunScene extends Phaser.Scene {
     this.layoutUi();
     this.refreshBanner();
     const relayout = (): void => {
+      // Rotation / resize mid-press: the buttons moved, so drop every finger (no casts) instead of keeping stale spots.
+      this.touchControls?.reset();
       this.layoutUi();
       if (this.overlay && this.overlayKind) this.showOverlay(this.overlayKind);
     };
@@ -826,7 +847,7 @@ export class RunScene extends Phaser.Scene {
     this.interactQueued = false;
     this.potionQueued = false;
     this.uiPress = false;
-    this.touchCast = undefined;
+    for (const a of this.touchAims) a.manual = false;
     this.touchTaps.fill(false);
     this.touchKeysWereDown.fill(false);
     this.touchControls?.reset();
@@ -1262,39 +1283,49 @@ export class RunScene extends Phaser.Scene {
     const moveDir = move.x !== 0 || move.y !== 0 ? normalize(move) : undefined;
     for (let release = controls.nextRelease(); release; release = controls.nextRelease()) {
       const skill = release.slot - 1;
+      const aim = this.touchAims[skill];
+      if (!aim) continue;
       this.touchTaps[skill] = true;
       const dir = release.dir;
-      this.touchCast = {
-        skill,
-        dir: dir ? normalize(screenDirToWorld(dir)) : undefined,
-        fraction: dir ? dragFraction(Math.hypot(dir.x, dir.y), touchTuning.aimDragRadius) : 1,
-      };
+      aim.manual = dir !== undefined;
+      if (dir) {
+        const world = normalize(screenDirToWorld(dir));
+        aim.dir.x = world.x;
+        aim.dir.y = world.y;
+        aim.fraction = dragFraction(Math.hypot(dir.x, dir.y), touchTuning.aimDragRadius);
+      }
     }
     // Keyboard skills (Q / E as on desktop; RMB is mouse aim, left out) cast with auto-aim, held = repeated like keys.
-    const keys = [false, k.Q.isDown, k.E.isDown];
-    for (let i = 0; i < keys.length; i++) {
-      if (keys[i] && !this.touchKeysWereDown[i]) this.touchCast = { skill: i, dir: undefined, fraction: 1 };
+    const keys = this.touchKeys;
+    keys[1] = k.Q.isDown;
+    keys[2] = k.E.isDown;
+    const skills = this.touchSkills;
+    const usable = this.touchUsable;
+    for (let i = 0; i < skills.length; i++) {
+      if (keys[i] && !this.touchKeysWereDown[i]) this.touchAims[i]!.manual = false;
       this.touchKeysWereDown[i] = keys[i] === true;
-    }
-    const skills = this.touchTaps.map((tap, i) => {
-      const down = tap || keys[i] === true;
+      const down = this.touchTaps[i] === true || keys[i] === true;
       if (down && !this.skillWasDown[i]) this.skillBuffer[i] = INPUT_BUFFER;
       this.skillWasDown[i] = down;
       this.skillBuffer[i] = Math.max(0, (this.skillBuffer[i] ?? 0) - DT);
-      return down || (this.skillBuffer[i] ?? 0) > 0;
-    });
+      skills[i] = down || (this.skillBuffer[i] ?? 0) > 0;
+      const action = player.actions.skills[i];
+      usable[i] = action !== undefined && actionReady(player, action) && canAfford(player, action);
+    }
     this.touchTaps.fill(false);
     const attack = controls.attackHeld();
+    // Aim of the skill core fires first; none can fire: the held attack's auto-aim, else keep facing / movement.
+    const first = firstUsableSkill(skills, usable);
+    const castAction = first >= 0 ? player.actions.skills[first] : undefined;
+    const castAim = first >= 0 ? this.touchAims[first] : undefined;
     let aim: Vec2;
-    const cast = this.touchCast;
-    const castAction = cast && skills[cast.skill] ? player.actions.skills[cast.skill] : undefined;
-    if (cast && castAction) {
-      aim = cast.dir ? manualAim(castAction.delivery, player, cast.dir, cast.fraction) : tapAim(castAction.delivery, player, this.world.mobs, moveDir, touchTuning, this.aimFilter);
+    if (castAction && castAim) {
+      aim = castAim.manual ? manualAim(castAction.delivery, player, castAim.dir, castAim.fraction) : tapAim(castAction.delivery, player, this.world.mobs, moveDir, touchTuning, this.aimFilter);
     } else {
-      this.touchCast = undefined;
       aim = attack ? tapAim(player.actions.basicAttack.delivery, player, this.world.mobs, moveDir, touchTuning, this.aimFilter) : idleAim(player, moveDir);
     }
-    const interact = k.F.isDown || this.interactQueued;
+    // The altar waits for the boss's sheets (bossReady), as with the keyboard.
+    const interact = (k.F.isDown || this.interactQueued) && this.bossReady();
     this.interactQueued = false;
     const potion = k.ONE.isDown || this.potionQueued;
     this.potionQueued = false;
@@ -1315,7 +1346,7 @@ export class RunScene extends Phaser.Scene {
     const delivery = action.delivery;
     if (!isAimed(delivery)) {
       // Full circle / self: the area round the hero (iso ellipse: a world circle of radius r is 2r x r on screen).
-      const r = delivery.kind === 'arc' ? delivery.radius : 60;
+      const r = delivery.kind === 'arc' ? delivery.radius : SELF_AIM_RING;
       g.lineStyle(4, AIM_ARROW, 0.75).strokeEllipse(from.x, from.y, r * 2, r);
       g.fillStyle(AIM_ARROW, 0.12).fillEllipse(from.x, from.y, r * 2, r);
       return;
@@ -1324,7 +1355,9 @@ export class RunScene extends Phaser.Scene {
     const distance = isDistanceAimed(delivery);
     const reach = deliveryReach(delivery) * (distance ? dragFraction(Math.hypot(drag.dx, drag.dy), touchTuning.aimDragRadius) : 1);
     const hero = this.hero.display;
-    const end = toScreen(vec(hero.x + dir.x * reach, hero.y + dir.y * reach));
+    const target = vec(hero.x + dir.x * reach, hero.y + dir.y * reach);
+    // Traps / Teleport land where core puts them: kept inside the room and out of obstacles (core clampToArena).
+    const end = toScreen(distance ? clampToArena(target, delivery.kind === 'teleport' ? this.world.player.radius : 0, this.world) : target);
     let ex = end.x - from.x;
     let ey = end.y - from.y;
     const len = Math.hypot(ex, ey) || 1;
@@ -1348,7 +1381,7 @@ export class RunScene extends Phaser.Scene {
     g.fillStyle(AIM_ARROW, 0.85).fillTriangle(tipX, tipY, baseX + nx * 14, baseY + ny * 14, baseX - nx * 14, baseY - ny * 14);
     // Where a trap lands / a teleport ends: its spot on the floor.
     if (delivery.kind === 'trap' || delivery.kind === 'teleport') {
-      const r = delivery.kind === 'trap' ? delivery.explodeRadius : 30;
+      const r = delivery.kind === 'trap' ? delivery.explodeRadius : TELEPORT_LANDING_RING;
       g.lineStyle(3, AIM_ARROW, 0.7).strokeEllipse(tipX, tipY, r * 2, r);
     }
   }

@@ -9,8 +9,9 @@ import { pinToScreen } from './ui';
 // slots as buttons on the right (Hud.touchButtons). Multi-touch: every finger is tracked by its pointer id, so the
 // stick and a button (or two buttons) work at once. Input only: RunScene turns this into RunInput (aim rules in
 // touchAim.ts); the potion button is the HUD's own interactive potion slot.
-// Drag-aim: past aimDragThreshold a skill press aims manually; once the finger has left the button, bringing it back
-// onto the button cancels (released there, nothing is cast).
+// Drag-aim: a skill press aims manually once the finger is past aimDragThreshold and off the button (a drag that
+// never leaves the button is a tap: auto-aim); bringing it back onto the button cancels (released there, nothing is
+// cast). A cancelled touch (system gesture, notification shade, call) never casts.
 
 /** Stick look (screen px): base ring and knob radii. */
 const STICK = {
@@ -43,10 +44,8 @@ interface Press {
   readonly startY: number;
   x: number;
   y: number;
-  /** Dragged past the threshold: manual aim (skills only). */
+  /** Dragged past the threshold and off the button: manual aim (skills only). */
   dragging: boolean;
-  /** The finger has been outside the button's hit circle since the drag began. */
-  left: boolean;
   /** Dragging, came back onto the button: releasing now cancels. */
   cancel: boolean;
 }
@@ -146,15 +145,19 @@ export class TouchControls {
 
   /** Per frame: forgets fingers whose release was missed (left the page, cancelled touch), draws the stick. */
   update(): void {
-    const pointers = this.scene.input.manager.pointers;
-    const isDown = (id: number): boolean => pointers.some((p) => p.id === id && p.isDown);
-    if (this.stick && !isDown(this.stick.id)) this.stick = undefined;
+    if (this.stick && !this.isDown(this.stick.id)) this.stick = undefined;
     for (const [id, press] of this.presses) {
-      if (isDown(id)) continue;
+      if (this.isDown(id)) continue;
       this.presses.delete(id);
       this.onButtonState(press.button.slot, 'idle');
     }
     this.draw();
+  }
+
+  private isDown(id: number): boolean {
+    const pointers = this.scene.input.manager.pointers;
+    for (let i = 0; i < pointers.length; i++) if (pointers[i]!.id === id) return pointers[i]!.isDown;
+    return false;
   }
 
   private stickLook(): { base: number; knob: number } {
@@ -171,7 +174,7 @@ export class TouchControls {
     if (button) {
       // One finger per button: a second finger on a held button does nothing.
       for (const press of this.presses.values()) if (press.button.slot === button.slot) return;
-      this.presses.set(pointer.id, { button, startX: pointer.x, startY: pointer.y, x: pointer.x, y: pointer.y, dragging: false, left: false, cancel: false });
+      this.presses.set(pointer.id, { button, startX: pointer.x, startY: pointer.y, x: pointer.x, y: pointer.y, dragging: false, cancel: false });
       this.onButtonState(button.slot, 'pressed');
       return;
     }
@@ -201,11 +204,10 @@ export class TouchControls {
     press.x = pointer.x;
     press.y = pointer.y;
     if (press.button.slot === 0) return;
-    if (!press.dragging && Math.hypot(press.x - press.startX, press.y - press.startY) >= this.tuning.aimDragThreshold) press.dragging = true;
-    if (!press.dragging) return;
     const onButton = Math.hypot(press.x - press.button.x, press.y - press.button.y) <= press.button.r;
-    if (!onButton) press.left = true;
-    const cancel = press.left && onButton;
+    if (!press.dragging && !onButton && Math.hypot(press.x - press.startX, press.y - press.startY) >= this.tuning.aimDragThreshold) press.dragging = true;
+    if (!press.dragging) return;
+    const cancel = onButton;
     if (cancel !== press.cancel) {
       press.cancel = cancel;
       this.onButtonState(press.button.slot, cancel ? 'cancel' : 'pressed');
@@ -219,7 +221,8 @@ export class TouchControls {
     this.presses.delete(pointer.id);
     const slot = press.button.slot;
     this.onButtonState(slot, 'idle');
-    if (!this.enabled || slot === 0 || press.cancel) return;
+    // A cancelled touch (Phaser reports touchcancel as a pointer up) is dropped like a cancelled aim.
+    if (!this.enabled || slot === 0 || press.cancel || pointer.wasCanceled) return;
     this.releases.push({ slot, dir: press.dragging ? vec(press.x - press.startX, press.y - press.startY) : undefined });
   }
 

@@ -188,3 +188,12 @@ export function stickDirection(dx: number, dy: number, radius: number, deadZone:
   if (len <= 0 || len < radius * deadZone) return vec(0, 0);
   return vec(dx / len, dy / len);
 }
+
+/**
+ * Which buffered skill press the next step's aim belongs to: core tries the pressed skills in slot order and uses the
+ * first one that is ready and affordable (pickAction), so that one's aim goes out. -1: none of them can fire now.
+ */
+export function firstUsableSkill(pending: readonly boolean[], usable: readonly boolean[]): number {
+  for (let i = 0; i < pending.length; i++) if (pending[i] && usable[i]) return i;
+  return -1;
+}

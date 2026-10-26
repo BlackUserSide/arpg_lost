@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { vec } from '../core/math';
 import { toWorld } from './iso';
 import type { Delivery } from '../core/world/content';
-import { autoAimRange, deliveryReach, dragFraction, forwardDir, idleAim, isAimed, isDistanceAimed, manualAim, MIN_DRAG_DISTANCE, nearestEnemy, onScreen, stickDirection, tapAim, tapStyle } from './touchAim';
+import { autoAimRange, deliveryReach, dragFraction, firstUsableSkill, forwardDir, idleAim, isAimed, isDistanceAimed, manualAim, MIN_DRAG_DISTANCE, nearestEnemy, onScreen, stickDirection, tapAim, tapStyle } from './touchAim';
 
 const TUNING = { autoAimRadius: 400 };
 const ARC: Delivery = { kind: 'arc', radius: 95, angleDeg: 150 };
@@ -164,5 +164,15 @@ describe('drag distance', () => {
     expect(manualAim(TELEPORT, hero, vec(0, 1), 0.5)).toEqual(vec(100, 275));
     // Direction-only skills ignore it.
     expect(manualAim(BOLT, hero, vec(1, 0), 0.5)).toEqual(vec(720, 100));
+  });
+});
+
+describe('firstUsableSkill', () => {
+  it('picks the first pending skill core can fire, like core pickAction', () => {
+    // Skill 1 pending but on cooldown, skill 2 pending and ready: skill 2's aim must go out.
+    expect(firstUsableSkill([true, true, false], [false, true, true])).toBe(1);
+    expect(firstUsableSkill([true, true, false], [true, true, true])).toBe(0);
+    expect(firstUsableSkill([false, false, true], [true, true, false])).toBe(-1);
+    expect(firstUsableSkill([false, false, false], [true, true, true])).toBe(-1);
   });
 });
