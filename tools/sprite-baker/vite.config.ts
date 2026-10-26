@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
+import { optimizePng } from './optimize';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 const root = path.resolve(here, '../..');
 
-/** Dev-only endpoint: the baker page POSTs finished sheets here and they land in the repo. */
+/** Dev-only endpoint: the baker page POSTs finished sheets here and they land in the repo (PNGs palette-compressed). */
 function saveFiles(): Plugin {
   return {
     name: 'sprite-baker-save',
@@ -21,7 +22,7 @@ function saveFiles(): Plugin {
       server.middlewares.use('/__save', (req, res) => {
         let body = '';
         req.on('data', (chunk: Buffer) => (body += chunk.toString()));
-        req.on('end', () => {
+        req.on('end', async () => {
           const { file, data, encoding } = JSON.parse(body) as { file: string; data: string; encoding: 'base64' | 'utf8' };
           const allowed = ['public/assets/sprites/', 'src/render/'];
           const target = path.resolve(root, file);
@@ -31,7 +32,9 @@ function saveFiles(): Plugin {
             return;
           }
           fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.writeFileSync(target, Buffer.from(data, encoding));
+          const bytes = Buffer.from(data, encoding);
+          // Sheets land palette-compressed (optimize.ts).
+          fs.writeFileSync(target, target.endsWith('.png') ? await optimizePng(bytes) : bytes);
           res.end('ok');
         });
       });

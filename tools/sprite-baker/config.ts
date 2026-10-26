@@ -18,6 +18,11 @@ export interface BakeAnim {
   readonly hide?: readonly string[];
   /** Cut everything below the floor (rising-from-the-ground spawns start underground). */
   readonly clipBelowGround?: boolean;
+  /**
+   * Pin the root bone's ground-plane position to its first key: drops root motion (Death_C_Skeletons throws the whole
+   * body backwards, so the corpse slid away from where the mob died and left the frame).
+   */
+  readonly inPlace?: boolean;
 }
 
 export interface BakeAttachment {
@@ -65,18 +70,19 @@ export interface BakeCharacter {
    * scale by this (a boss drawn at radius scale 1.75 with nativeScale 1.75 is shown 1:1). Default 1.
    */
   readonly nativeScale?: number;
-  /**
-   * Write trimmed atlases (PNG + Phaser JSON hash) instead of grid sheets: empty frame margins are cut,
-   * which matters for big frames (GPU memory is width x height x 4 regardless of PNG compression).
-   */
-  readonly trim?: boolean;
   readonly anims: readonly BakeAnim[];
 }
 
+/**
+ * Every sheet is written as a trimmed atlas (PNG + Phaser JSON hash): empty frame margins are cut, so a roomy
+ * frame (no clipping when a character falls, lunges or rises from the floor) costs neither file size nor GPU memory
+ * (which is width x height x 4 regardless of PNG compression). The baker's save endpoint then palette-compresses
+ * the PNG (optimize.ts).
+ */
 export const BAKE = {
-  frameSize: 128,
+  frameSize: 192,
   /** Feet position inside a frame, from the top. */
-  originY: 104,
+  originY: 136,
   /** Render at frameSize / pixelScale and upscale with nearest filter for a chunkier pixel look. */
   pixelScale: 1,
   outlineColor: [12, 10, 14] as const,
@@ -146,8 +152,8 @@ export const CHARACTERS: readonly BakeCharacter[] = [
       { id: 'run', clip: 'Walking_D_Skeletons', frames: 14, loop: true },
       { id: 'attack', clip: '1H_Melee_Attack_Chop', frames: 8, fps: 19, loop: false },
       { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
-      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false },
-      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false },
+      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false, inPlace: true },
+      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false, clipBelowGround: true },
     ],
   },
   {
@@ -161,8 +167,8 @@ export const CHARACTERS: readonly BakeCharacter[] = [
       { id: 'run', clip: 'Walking_D_Skeletons', frames: 14, loop: true },
       { id: 'attack', clip: '1H_Ranged_Shoot', frames: 8, fps: 19, loop: false },
       { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
-      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false },
-      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false },
+      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false, inPlace: true },
+      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false, clipBelowGround: true },
     ],
   },
   {
@@ -175,14 +181,13 @@ export const CHARACTERS: readonly BakeCharacter[] = [
       { id: 'run', clip: 'Running_C', frames: 14, loop: true },
       { id: 'attack', clip: 'Unarmed_Melee_Attack_Punch_A', frames: 8, fps: 21, loop: false },
       { id: 'hit', clip: 'Hit_A', frames: 4, fps: 20, loop: false },
-      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false },
-      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false },
+      { id: 'death', clip: 'Death_C_Skeletons', frames: 8, fps: 14, loop: false, inPlace: true },
+      { id: 'spawn', clip: 'Spawn_Ground_Skeletons', frames: 8, fps: 14, loop: false, clipBelowGround: true },
     ],
   },
   // Map mobs added in 0.4 (docs/design/mobs.md). Not summoned, so no spawn sheet; casters have no `attack` sheet
   // (render ATTACK_ANIMS maps their basic attack onto the cast sheet). Death_A falls flat without the root-motion
-  // drift of Death_C_Skeletons but does not fit a 128 px frame, so these get a roomier 192 px frame, trimmed (the
-  // margins cost neither file size nor GPU memory). Fewer idle / run frames than the older sets keep the build small.
+  // drift of Death_C_Skeletons. Fewer idle / run frames than the older sets keep the build small.
   {
     // Slow heavy melee: big shield held in front, axe, steel-blue helmet and cloak (the zombie is unarmed, red).
     id: 'shieldbearer',
@@ -194,9 +199,6 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     ],
     tint: [{ meshes: ['Skeleton_Warrior_Helmet', 'Skeleton_Warrior_Cloak'], color: 0x6f9fe0 }],
     height: 66,
-    frameSize: 192,
-    originY: 136,
-    trim: true,
     anims: [
       { id: 'idle', clip: 'Blocking', frames: 8, loop: true },
       { id: 'run', clip: 'Walking_A', frames: 10, loop: true },
@@ -212,9 +214,6 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     hide: ['Skeleton_Rogue_Hood'],
     tint: [{ meshes: ['Skeleton_Rogue_Cape'], color: 0x3fa070 }],
     height: 56,
-    frameSize: 192,
-    originY: 136,
-    trim: true,
     anims: [
       { id: 'idle', clip: 'Idle_Combat', frames: 8, loop: true },
       { id: 'run', clip: 'Walking_D_Skeletons', frames: 10, loop: true },
@@ -233,9 +232,6 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     attach: [{ model: 'Skeleton_Axe.gltf', bone: 'handslot.r' }],
     tint: [{ meshes: ['Skeleton_Rogue_Hood', 'Skeleton_Rogue_Cape'], color: 0xb08850, brightness: 0.9 }],
     height: 58,
-    frameSize: 192,
-    originY: 136,
-    trim: true,
     anims: [
       { id: 'idle', clip: '2H_Melee_Idle', frames: 8, loop: true },
       { id: 'run', clip: 'Walking_C', frames: 10, loop: true },
@@ -252,9 +248,6 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     hide: [],
     tint: [{ meshes: ['Skeleton_Mage_Hat', 'Skeleton_Mage_Body'], color: 0x9a5cf0 }],
     height: 62,
-    frameSize: 192,
-    originY: 136,
-    trim: true,
     anims: [
       { id: 'idle', clip: 'Idle', frames: 8, loop: true },
       { id: 'run', clip: 'Walking_B', frames: 10, loop: true },
@@ -274,7 +267,6 @@ export const CHARACTERS: readonly BakeCharacter[] = [
     height: 108,
     frameSize: 288,
     originY: 180,
-    trim: true,
     nativeScale: 1.75,
     anims: [
       // 2H_Melee_Idle holds the staff across the body; the plain Idle lets it dangle skull-down.

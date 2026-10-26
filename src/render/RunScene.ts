@@ -51,7 +51,8 @@ import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
 import { ISO_K, screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
-import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, textureKey } from './sprites';
+import { mobSprite, runSpriteSets, type RunSpriteSets } from './runSprites';
+import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadedSpriteKeys, loadSprites, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, spritesLoaded, spriteSetOf, textureKey, unloadSprites } from './sprites';
 import { BossFx } from './bossFx';
 import { EliteFx, eliteLook } from './eliteFx';
 import { UniqueFx } from './uniqueFx';
@@ -88,6 +89,18 @@ const SNAP_DISTANCE = 80;
 const MOB_SMOOTHING = 22;
 /** Below this speed (world units/s) an actor is considered standing. */
 const MOVING_SPEED = 8;
+/** A background sprite sheet whose download failed is requested again after this many ms. */
+const SPRITE_RETRY_MS = 3000;
+
+/** Sprite textures already switched to nearest filtering (a sheet loaded again is a new texture object). */
+const sharpened = new WeakSet<Phaser.Textures.Texture>();
+
+/** Nearest filtering (pixel look) on a sprite sheet, once per texture: set on first use, so late sheets get it too. */
+function sharpen(texture: Phaser.Textures.Texture): void {
+  if (sharpened.has(texture)) return;
+  sharpened.add(texture);
+  texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+}
 /** How fast the displayed stun bar catches up with the core fill (1/s, exponential). */
 const STUN_BAR_SMOOTHING = 18;
 /** Ignite damage is summed per mob and shown as one number this often (seconds). */
@@ -337,8 +350,16 @@ export class RunScene extends Phaser.Scene {
   private runHud!: RunHud;
   private overlay: Phaser.GameObjects.GameObject[] | undefined;
   private paused = false;
-  /** gameplayStart was sent and not yet matched by gameplayStop. */
-  private gameplayActive = false;
+  /** Sprite sets of this run: loaded with the scene (start) and in the background (boss). */
+  private spriteSets: RunSpriteSets = { start: [], boss: [] };
+  /** The boss's sheets were asked for (loadBossSprites); from then on they are re-requested until they land. */
+  private bossSpritesWanted = false;
+  /** Sets requested in the background whose load has not finished yet. */
+  private loadingSets = new Set<string>();
+  /** Scene time (ms) before which a set whose download failed is not requested again. */
+  private spriteRetryAt = new Map<string, number>();
+  /** Sets already reported missing (dev warning once per set). */
+  private warnedSets = new Set<string>();
   private textPool: Phaser.GameObjects.Text[] = [];
   private combatFx!: CombatFx;
   /** Level-3 skill effect visuals (ground zones, decoy ghost, split / whirl / slam bursts). */
@@ -426,11 +447,94 @@ export class RunScene extends Phaser.Scene {
   }
 
   preload(): void {
+    getApp(this).platform.loadingStart();
     if (!this.textures.exists('floor')) this.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
-    loadSprites(this);
+    // Only what this map can show before the boss; the boss's sheets load in the background later (loadBossSprites).
+    const character = findCharacter(getApp(this).profile, this.characterId);
+    const allies = character ? heroMechanics(character, passiveTree, itemsData).flatMap((m) => (m.kind === 'raiseAllies' ? [m.mobId] : [])) : [];
+    this.spriteSets = runSpriteSets(this.content, mapsData.rules, this.resolveMapLevel(character), this.heroSet(), allies);
+    this.bossSpritesWanted = false;
+    this.loadingSets.clear();
+    this.spriteRetryAt.clear();
+    // The other heroes (menus) and mobs of an earlier, harder map are not drawn here: free their GPU memory.
+    unloadSprites(this, [...this.spriteSets.start, ...this.spriteSets.boss]);
+    loadSprites(this, this.spriteSets.start);
+  }
+
+  private heroSet(): string {
+    return CLASS_LOOKS.find((l) => l.classId === this.classId)?.sprite ?? 'knight';
+  }
+
+  /** The requested map if the hero may enter it, else their highest unlocked one (map 1 without a hero). */
+  private resolveMapLevel(character: ReturnType<typeof findCharacter>): number {
+    const requested = this.requestedMap;
+    return character ? (requested !== undefined && canEnterMap(character, requested) ? requested : unlockedMap(character)) : 1;
+  }
+
+  /** Nearest filtering on every loaded sprite sheet of `sets` (pixel look). */
+  private sharpenSprites(sets: readonly string[]): void {
+    for (const set of sets) for (const key of loadedSpriteKeys(this, set)) sharpen(this.textures.get(key));
+  }
+
+  /**
+   * Loads the sheets of `sets` in the background (missing ones only). A set already loading is not queued twice; one
+   * whose download failed is asked for again after SPRITE_RETRY_MS (onSpriteLoadError).
+   */
+  private requestSprites(sets: readonly string[]): void {
+    const now = this.time.now;
+    const missing = sets.filter((set) => !spritesLoaded(this, set) && !this.loadingSets.has(set) && (this.spriteRetryAt.get(set) ?? 0) <= now);
+    if (missing.length === 0) return;
+    for (const set of missing) this.loadingSets.add(set);
+    if (loadSprites(this, missing) > 0) this.load.start();
+  }
+
+  /** Background loads: every finished batch is sharpened; a failed sheet frees its set for a retry later. */
+  private listenToSpriteLoads(): void {
+    this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
+      const set = spriteSetOf(file.key);
+      if (set === undefined) return;
+      // One report per set and attempt (an atlas fails as image and JSON, a set has several sheets).
+      const first = (this.spriteRetryAt.get(set) ?? 0) <= this.time.now;
+      this.spriteRetryAt.set(set, this.time.now + SPRITE_RETRY_MS);
+      if (import.meta.env.DEV && first) console.warn(`Sprite set ${set} failed to load (${file.key}); retrying in ${SPRITE_RETRY_MS / 1000} s`);
+    });
+    this.load.on(Phaser.Loader.Events.COMPLETE, () => {
+      this.sharpenSprites([...this.loadingSets]);
+      this.loadingSets.clear();
+    });
+  }
+
+  /**
+   * Asks for the boss's sheets once the first room is cleared (a calm moment; the downloads, decoding and GPU uploads
+   * then never compete with the opening fight), or on entering the boss room at the latest; re-asks until they land.
+   */
+  private loadBossSprites(): void {
+    if (!this.bossSpritesWanted && this.run.phase === 'waves' && currentTemplate(this.run, mapsData).kind !== 'boss') return;
+    this.bossSpritesWanted = true;
+    this.requestSprites(this.spriteSets.boss);
+  }
+
+  /**
+   * The boss can be shown: the altar only wakes when its sheets are in (a slow or failed download holds the summoning
+   * with a loading mark at the altar instead of letting an invisible boss fight).
+   */
+  private bossReady(): boolean {
+    return this.spriteSets.boss.every((set) => spritesLoaded(this, set));
+  }
+
+  /** `set` is drawable; otherwise it is requested on demand (it should have been loaded up front: dev warning). */
+  private ensureSprites(set: string): boolean {
+    if (spritesLoaded(this, set)) return true;
+    if (import.meta.env.DEV && !this.warnedSets.has(set) && !this.spriteSets.boss.includes(set)) {
+      this.warnedSets.add(set);
+      console.warn(`Sprite set ${set} was not preloaded for this run; loading it on demand`);
+    }
+    this.requestSprites([set]);
+    return false;
   }
 
   create(): void {
+    getApp(this).platform.loadingStop();
     const character = findCharacter(getApp(this).profile, this.characterId);
     const classDef = getClass(this.content, this.classId);
     // Equipment and passives enter the run as modifiers, plus the equipped weapon.
@@ -446,9 +550,7 @@ export class RunScene extends Phaser.Scene {
           supports: socketedSupports(character),
         }
       : {};
-    const requested = this.requestedMap;
-    const mapLevel = character ? (requested !== undefined && canEnterMap(character, requested) ? requested : unlockedMap(character)) : 1;
-    this.run = createRun(this.content, mapsData, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout, mapLevel);
+    this.run = createRun(this.content, mapsData, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout, this.resolveMapLevel(character));
     this.world = this.run.world;
     this.summary = undefined;
     this.legendaryCelebrated = false;
@@ -478,9 +580,8 @@ export class RunScene extends Phaser.Scene {
     this.touchTaps.fill(false);
     this.touchKeysWereDown.fill(false);
 
-    for (const [set, anims] of Object.entries(SPRITE_SETS)) {
-      for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
-    }
+    this.sharpenSprites(Object.keys(SPRITE_SETS));
+    this.listenToSpriteLoads();
 
     this.input.mouse?.disableContextMenu();
     this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,P,F,ESC,ONE') as Keys;
@@ -505,8 +606,7 @@ export class RunScene extends Phaser.Scene {
     this.heroTinted = false;
     this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
-    const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
-    this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
+    this.hero = this.createActor(this.heroSet(), this.world.player.pos);
     this.light = this.createLight();
     this.cameras.main.setBackgroundColor('#07070a');
     this.buildRoom();
@@ -559,7 +659,6 @@ export class RunScene extends Phaser.Scene {
     this.game.events.on(Phaser.Core.Events.FOCUS, back);
     this.game.events.on(Phaser.Core.Events.VISIBLE, back);
 
-    this.gameplayActive = false;
     this.setGameplay(true);
     fadeIn(this);
     this.events.once('shutdown', () => {
@@ -734,10 +833,11 @@ export class RunScene extends Phaser.Scene {
     this.accumulator = 0;
   }
 
-  /** Tells the portal gameplay started / stopped, only on a change (pause, tree, run end can overlap). */
+  /**
+   * Tells the portal gameplay started / stopped. Pause, tree and run end can overlap: the platform passes on only
+   * changes (EventGuardPlatform), so repeats here are harmless.
+   */
   private setGameplay(active: boolean): void {
-    if (active === this.gameplayActive) return;
-    this.gameplayActive = active;
     const platform = getApp(this).platform;
     if (active) platform.gameplayStart();
     else platform.gameplayStop();
@@ -1029,6 +1129,7 @@ export class RunScene extends Phaser.Scene {
       steps++;
     }
     if (steps === MAX_STEPS_PER_FRAME) this.accumulator = 0;
+    this.loadBossSprites();
 
     // Render between the last two sim states so motion is smooth at any refresh rate.
     this.alpha = Math.min(1, this.accumulator / DT);
@@ -1038,6 +1139,7 @@ export class RunScene extends Phaser.Scene {
     this.syncActors(dt);
     this.updateCorpses(dt);
     this.drawFx(dt);
+    this.drawAltarLoading();
     this.clockFx.update(dt, stopped, this.world.timeStop, this.hero.sprite.x, this.hero.sprite.y, BODY_PX, this.world.time);
     // Lifted over the time-stop tint while it shows, so the hero keeps full colour.
     if (this.clockFx.active() && this.hero.oneShot?.anim !== 'death') this.hero.sprite.setDepth(HERO_STOP_DEPTH);
@@ -1055,7 +1157,7 @@ export class RunScene extends Phaser.Scene {
     this.drawDoorPointer();
     this.drawAimIndicator();
     this.hud.update(this.world, dt);
-    this.runHud.update(this.run, dt);
+    this.runHud.update(this.run, dt, this.bossReady());
   }
 
   private altarLook(): AltarLook {
@@ -1129,7 +1231,8 @@ export class RunScene extends Phaser.Scene {
       this.skillBuffer[i] = Math.max(0, (this.skillBuffer[i] ?? 0) - DT);
       return down || (this.skillBuffer[i] ?? 0) > 0;
     });
-    const interact = k.F.isDown || this.interactQueued;
+    // The altar waits for the boss's sheets (bossReady).
+    const interact = (k.F.isDown || this.interactQueued) && this.bossReady();
     this.interactQueued = false;
     // Held key or a queued press; core drinks once per press edge.
     const potion = k.ONE.isDown || this.potionQueued;
@@ -1474,7 +1577,7 @@ export class RunScene extends Phaser.Scene {
         // The dead mob's body gives way to the skeleton climbing out of it.
         for (const corpse of this.corpses) if (corpse.id === event.mobId) corpse.ttl = Math.min(corpse.ttl, RAISED_CORPSE_TIME);
         const view = this.allyView(event.allyId, event.defId, event.pos);
-        if (SPRITE_SETS[view.actor.set]?.spawn) this.playOneShot(view.actor, 'spawn');
+        if (view && SPRITE_SETS[view.actor.set]?.spawn) this.playOneShot(view.actor, 'spawn');
         const s = toScreen(event.pos);
         this.allyFx.rise(s.x, s.y);
         break;
@@ -1707,6 +1810,7 @@ export class RunScene extends Phaser.Scene {
       .sprite(0, 0, textureKey(set, 'idle'), 0)
       .setOrigin(0.5, layout.originY)
       .setScale(scale / layout.nativeScale);
+    sharpen(sprite.texture);
     return { sprite, set, display: pos, facing: vec(1, 1), row: -1, time: 0, runPhase: 0, moving: false, oneShot: undefined, frozen: false, stunBarShown: 0, stunBarFlash: 0, rank, scale, pose: undefined, summonerId: undefined, elite: undefined };
   }
 
@@ -1767,7 +1871,9 @@ export class RunScene extends Phaser.Scene {
       let actor = this.mobs.get(mob.id);
       const def = getMob(this.content, mob.defId);
       if (!actor) {
-        const set = MOB_SPRITES[mob.defId] ?? 'skeleton_warrior';
+        const set = mobSprite(mob.defId);
+        // Sheets still on their way (on demand / a retry after a failed download): the mob shows up once they land.
+        if (!this.ensureSprites(set)) continue;
         // Sets baked bigger (the boss) already show their def's size: their native scale is the normal-mob scale.
         const bodyScale = def.radius > 0 ? mob.radius / def.radius : 1;
         actor = this.createActor(set, mob.pos, mobRank(def, mob), bodyScale * spriteLayout(set).nativeScale);
@@ -1827,6 +1933,7 @@ export class RunScene extends Phaser.Scene {
     for (const ally of this.world.allies) {
       if (ally.life <= 0) continue;
       const view = this.allyView(ally.id, ally.defId, ally.pos);
+      if (!view) continue;
       const actor = view.actor;
       // An attack swing keeps facing its target (the allyAttack event); otherwise the core facing.
       if (!actor.oneShot || actor.oneShot.anim !== (ATTACK_ANIMS[actor.set] ?? 'attack')) actor.facing = ally.facing;
@@ -1844,11 +1951,12 @@ export class RunScene extends Phaser.Scene {
     }
   }
 
-  /** The view of ally `id`, created on first sight (spectral look). */
-  private allyView(id: number, defId: string, pos: Vec2): AllyView {
+  /** The view of ally `id`, created on first sight (spectral look); undefined while its sheets are still loading. */
+  private allyView(id: number, defId: string, pos: Vec2): AllyView | undefined {
     let view = this.allies.get(id);
     if (view) return view;
-    const set = MOB_SPRITES[defId] ?? 'skeleton_warrior';
+    const set = mobSprite(defId);
+    if (!this.ensureSprites(set)) return undefined;
     const actor = this.createActor(set, pos, 'normal', spriteLayout(set).nativeScale);
     view = { actor, glow: this.allyFx.dress(actor.sprite), struck: 0 };
     this.allies.set(id, view);
@@ -1986,7 +2094,10 @@ export class RunScene extends Phaser.Scene {
     else if (anim === 'idle') col = Math.floor(actor.time * def.fps) % def.frames;
 
     const key = textureKey(actor.set, anim);
-    if (actor.sprite.texture.key !== key) actor.sprite.setTexture(key);
+    if (actor.sprite.texture.key !== key) {
+      actor.sprite.setTexture(key);
+      sharpen(actor.sprite.texture);
+    }
     actor.sprite.setFrame(Math.max(0, actor.row) * def.frames + col);
   }
 
@@ -2001,6 +2112,16 @@ export class RunScene extends Phaser.Scene {
       else corpse.actor.sprite.destroy();
     }
     this.corpses = alive;
+  }
+
+  /** Spinning mark over the altar while the hero waits at it for the boss's sheets (bossReady). */
+  private drawAltarLoading(): void {
+    if (this.bossReady() || !canActivateAltar(this.run, mapsData)) return;
+    const t = currentTemplate(this.run, mapsData);
+    if (t.kind !== 'boss') return;
+    const s = toScreen(t.altar);
+    const a = this.time.now / 160;
+    this.fxTop.lineStyle(3, 0xe8c070, 0.9).beginPath().arc(s.x, s.y - 112, 9, a, a + Math.PI * 1.4).strokePath();
   }
 
   private drawFx(dt: number): void {

@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { EventGuardPlatform } from './platform/eventGuard';
 import { LocalPlatform } from './platform/localPlatform';
 import { APP_KEY, createApp } from './render/app';
 import { CreateCharacterScene } from './render/CreateCharacterScene';
@@ -9,7 +10,8 @@ import { PassiveTreeScene } from './render/PassiveTreeScene';
 import { SupportsScene } from './render/SupportsScene';
 
 async function boot(): Promise<void> {
-  const platform = new LocalPlatform();
+  // Portal state events go out only on a change (eventGuard.ts).
+  const platform = new EventGuardPlatform(new LocalPlatform());
   // Resolves the language and loads its fonts before the first scene draws text.
   const app = await createApp(platform);
 

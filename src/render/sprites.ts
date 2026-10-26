@@ -1,4 +1,4 @@
-import * as Phaser from 'phaser';
+import type * as Phaser from 'phaser';
 import manifest from './sprites.json';
 
 // Baked character sprites (tools/sprite-baker) and how game entities map onto them.
@@ -10,7 +10,7 @@ export interface AnimDef {
   loop: boolean;
   /** Direction rows present in the sheet when only a subset was baked (sheet row i = rows[i]). */
   rows?: number[];
-  /** Trimmed atlas (JSON hash) for big sheets; frame names are the grid frame indices, so use is identical. */
+  /** Trimmed atlas (JSON hash); frame names are the grid frame indices, so frames index exactly like a grid sheet. */
   atlas?: string;
 }
 
@@ -107,14 +107,55 @@ export const ACTION_ANIMS: Readonly<Record<string, string>> = {
 
 export const textureKey = (set: string, anim: string): string => `${set}_${anim}`;
 
-export function loadSprites(scene: Phaser.Scene): void {
-  for (const [set, anims] of Object.entries(SPRITE_SETS)) {
+/** Sprite sets of the playable heroes: all that the menus and hub screens draw. */
+export const HERO_SETS: readonly string[] = CLASS_LOOKS.map((look) => look.sprite);
+
+/**
+ * Queues the sheets of `sets` that are not loaded yet on the scene's loader (inside preload it runs with the scene's
+ * loading; elsewhere call `scene.load.start()`). Returns how many were queued.
+ */
+export function loadSprites(scene: Phaser.Scene, sets: Iterable<string>): number {
+  let queued = 0;
+  for (const set of sets) {
     const { frameSize } = spriteLayout(set);
-    for (const [anim, def] of Object.entries(anims)) {
+    for (const [anim, def] of Object.entries(SPRITE_SETS[set] ?? {})) {
       if (!def || scene.textures.exists(textureKey(set, anim))) continue;
       if (def.atlas) scene.load.atlas(textureKey(set, anim), `assets/sprites/${def.file}`, `assets/sprites/${def.atlas}`);
       else scene.load.spritesheet(textureKey(set, anim), `assets/sprites/${def.file}`, { frameWidth: frameSize, frameHeight: frameSize });
+      queued++;
     }
+  }
+  return queued;
+}
+
+/** The sprite set a sheet's texture key belongs to (textureKey), or undefined for other textures. */
+export function spriteSetOf(key: string): string | undefined {
+  for (const [set, anims] of Object.entries(SPRITE_SETS)) {
+    if (key.startsWith(`${set}_`) && anims[key.slice(set.length + 1)]) return set;
+  }
+  return undefined;
+}
+
+/** Every sheet of `set` is loaded. */
+export function spritesLoaded(scene: Phaser.Scene, set: string): boolean {
+  return Object.keys(SPRITE_SETS[set] ?? {}).every((anim) => scene.textures.exists(textureKey(set, anim)));
+}
+
+/** Loaded sheets of `set` (game-wide texture keys). */
+export function loadedSpriteKeys(scene: Phaser.Scene, set: string): string[] {
+  return Object.keys(SPRITE_SETS[set] ?? {})
+    .map((anim) => textureKey(set, anim))
+    .filter((key) => scene.textures.exists(key));
+}
+
+/**
+ * Frees the GPU textures of every sprite set except `keep` (mob and boss sheets once the run is over: the hub only
+ * draws heroes). A later run loads them again (from the HTTP cache).
+ */
+export function unloadSprites(scene: Phaser.Scene, keep: readonly string[]): void {
+  for (const set of Object.keys(SPRITE_SETS)) {
+    if (keep.includes(set)) continue;
+    for (const key of loadedSpriteKeys(scene, set)) scene.textures.remove(key);
   }
 }
 

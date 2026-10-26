@@ -1,16 +1,25 @@
 {
-  "frameSize": 128,
-  "originY": 104,
+  "frameSize": 192,
+  "originY": 136,
+  "layouts": {
+    "necromancer": {
+      "frameSize": 288,
+      "originY": 180,
+      "nativeScale": 1.75
+    }
+  },
   "characters": {
     "knight": {
       "idle": {
         "file": "knight_idle.png",
+        "atlas": "knight_idle.json",
         "frames": 10,
         "fps": 9.37,
         "loop": true
       },
       "sit": {
         "file": "knight_sit.png",
+        "atlas": "knight_sit.json",
         "frames": 12,
         "fps": 3,
         "loop": true,
@@ -20,42 +29,49 @@
       },
       "run": {
         "file": "knight_run.png",
+        "atlas": "knight_run.json",
         "frames": 14,
         "fps": 17.5,
         "loop": true
       },
       "attack": {
         "file": "knight_attack.png",
+        "atlas": "knight_attack.json",
         "frames": 8,
         "fps": 24,
         "loop": false
       },
       "cleave": {
         "file": "knight_cleave.png",
+        "atlas": "knight_cleave.json",
         "frames": 8,
         "fps": 24,
         "loop": false
       },
       "dash": {
         "file": "knight_dash.png",
+        "atlas": "knight_dash.json",
         "frames": 8,
         "fps": 21,
         "loop": false
       },
       "cry": {
         "file": "knight_cry.png",
+        "atlas": "knight_cry.json",
         "frames": 8,
         "fps": 16,
         "loop": false
       },
       "hit": {
         "file": "knight_hit.png",
+        "atlas": "knight_hit.json",
         "frames": 4,
         "fps": 20,
         "loop": false
       },
       "death": {
         "file": "knight_death.png",
+        "atlas": "knight_death.json",
         "frames": 8,
         "fps": 14,
         "loop": false
@@ -64,12 +80,14 @@
     "ranger": {
       "idle": {
         "file": "ranger_idle.png",
+        "atlas": "ranger_idle.json",
         "frames": 10,
         "fps": 6.25,
         "loop": true
       },
       "sit": {
         "file": "ranger_sit.png",
+        "atlas": "ranger_sit.json",
         "frames": 12,
         "fps": 3,
         "loop": true,
@@ -79,42 +97,49 @@
       },
       "run": {
         "file": "ranger_run.png",
+        "atlas": "ranger_run.json",
         "frames": 14,
         "fps": 17.5,
         "loop": true
       },
       "attack": {
         "file": "ranger_attack.png",
+        "atlas": "ranger_attack.json",
         "frames": 8,
         "fps": 24,
         "loop": false
       },
       "volley": {
         "file": "ranger_volley.png",
+        "atlas": "ranger_volley.json",
         "frames": 8,
         "fps": 24,
         "loop": false
       },
       "trap": {
         "file": "ranger_trap.png",
+        "atlas": "ranger_trap.json",
         "frames": 8,
         "fps": 21,
         "loop": false
       },
       "roll": {
         "file": "ranger_roll.png",
+        "atlas": "ranger_roll.json",
         "frames": 8,
         "fps": 21,
         "loop": false
       },
       "hit": {
         "file": "ranger_hit.png",
+        "atlas": "ranger_hit.json",
         "frames": 4,
         "fps": 20,
         "loop": false
       },
       "death": {
         "file": "ranger_death.png",
+        "atlas": "ranger_death.json",
         "frames": 8,
         "fps": 14,
         "loop": false
@@ -123,12 +148,14 @@
     "mage": {
       "idle": {
         "file": "mage_idle.png",
+        "atlas": "mage_idle.json",
         "frames": 10,
         "fps": 9.37,
         "loop": true
       },
       "sit": {
         "file": "mage_sit.png",
+        "atlas": "mage_sit.json",
         "frames": 12,
         "fps": 3,
         "loop": true,
@@ -138,42 +165,49 @@
       },
       "run": {
         "file": "mage_run.png",
+        "atlas": "mage_run.json",
         "frames": 14,
         "fps": 17.5,
         "loop": true
       },
       "attack": {
         "file": "mage_attack.png",
+        "atlas": "mage_attack.json",
         "frames": 8,
         "fps": 24,
         "loop": false
       },
       "fireball": {
         "file": "mage_fireball.png",
+        "atlas": "mage_fireball.json",
         "frames": 8,
         "fps": 19,
         "loop": false
       },
       "nova": {
         "file": "mage_nova.png",
+        "atlas": "mage_nova.json",
         "frames": 8,
         "fps": 19,
         "loop": false
       },
       "teleport": {
         "file": "mage_teleport.png",
+        "atlas": "mage_teleport.json",
         "frames": 8,
         "fps": 21,
         "loop": false
       },
       "hit": {
         "file": "mage_hit.png",
+        "atlas": "mage_hit.json",
         "frames": 4,
         "fps": 20,
         "loop": false
       },
       "death": {
         "file": "mage_death.png",
+        "atlas": "mage_death.json",
         "frames": 8,
         "fps": 14,
         "loop": false
@@ -182,36 +216,42 @@
     "skeleton_warrior": {
       "idle": {
         "file": "skeleton_warrior_idle.png",
+        "atlas": "skeleton_warrior_idle.json",
         "frames": 10,
         "fps": 9.37,
         "loop": true
       },
       "run": {
         "file": "skeleton_warrior_run.png",
+        "atlas": "skeleton_warrior_run.json",
         "frames": 14,
         "fps": 8.75,
         "loop": true
       },
       "attack": {
         "file": "skeleton_warrior_attack.png",
+        "atlas": "skeleton_warrior_attack.json",
         "frames": 8,
         "fps": 19,
         "loop": false
       },
       "hit": {
         "file": "skeleton_warrior_hit.png",
+        "atlas": "skeleton_warrior_hit.json",
         "frames": 4,
         "fps": 20,
         "loop": false
       },
       "death": {
         "file": "skeleton_warrior_death.png",
+        "atlas": "skeleton_warrior_death.json",
         "frames": 8,
         "fps": 14,
         "loop": false
       },
       "spawn": {
         "file": "skeleton_warrior_spawn.png",
+        "atlas": "skeleton_warrior_spawn.json",
         "frames": 8,
         "fps": 14,
         "loop": false
@@ -220,36 +260,42 @@
     "skeleton_archer": {
       "idle": {
         "file": "skeleton_archer_idle.png",
+        "atlas": "skeleton_archer_idle.json",
         "frames": 10,
         "fps": 9.37,
         "loop": true
       },
       "run": {
         "file": "skeleton_archer_run.png",
+        "atlas": "skeleton_archer_run.json",
         "frames": 14,
         "fps": 8.75,
         "loop": true
       },
       "attack": {
         "file": "skeleton_archer_attack.png",
+        "atlas": "skeleton_archer_attack.json",
         "frames": 8,
         "fps": 19,
         "loop": false
       },
       "hit": {
         "file": "skeleton_archer_hit.png",
+        "atlas": "skeleton_archer_hit.json",
         "frames": 4,
         "fps": 20,
         "loop": false
       },
       "death": {
         "file": "skeleton_archer_death.png",
+        "atlas": "skeleton_archer_death.json",
         "frames": 8,
         "fps": 14,
         "loop": false
       },
       "spawn": {
         "file": "skeleton_archer_spawn.png",
+        "atlas": "skeleton_archer_spawn.json",
         "frames": 8,
         "fps": 14,
         "loop": false
@@ -258,96 +304,44 @@
     "skeleton_minion": {
       "idle": {
         "file": "skeleton_minion_idle.png",
+        "atlas": "skeleton_minion_idle.json",
         "frames": 10,
         "fps": 9.37,
         "loop": true
       },
       "run": {
         "file": "skeleton_minion_run.png",
+        "atlas": "skeleton_minion_run.json",
         "frames": 14,
         "fps": 17.5,
         "loop": true
       },
       "attack": {
         "file": "skeleton_minion_attack.png",
+        "atlas": "skeleton_minion_attack.json",
         "frames": 8,
         "fps": 21,
         "loop": false
       },
       "hit": {
         "file": "skeleton_minion_hit.png",
+        "atlas": "skeleton_minion_hit.json",
         "frames": 4,
         "fps": 20,
         "loop": false
       },
       "death": {
         "file": "skeleton_minion_death.png",
+        "atlas": "skeleton_minion_death.json",
         "frames": 8,
         "fps": 14,
         "loop": false
       },
       "spawn": {
         "file": "skeleton_minion_spawn.png",
+        "atlas": "skeleton_minion_spawn.json",
         "frames": 8,
         "fps": 14,
-        "loop": false
-      }
-    },
-    "necromancer": {
-      "idle": {
-        "file": "necromancer_idle.png",
-        "atlas": "necromancer_idle.json",
-        "frames": 8,
-        "fps": 7.5,
-        "loop": true
-      },
-      "run": {
-        "file": "necromancer_run.png",
-        "atlas": "necromancer_run.json",
-        "frames": 10,
-        "fps": 9.37,
-        "loop": true
-      },
-      "spawn": {
-        "file": "necromancer_spawn.png",
-        "atlas": "necromancer_spawn.json",
-        "frames": 10,
-        "fps": 8,
-        "loop": false
-      },
-      "cast_spears": {
-        "file": "necromancer_cast_spears.png",
-        "atlas": "necromancer_cast_spears.json",
-        "frames": 8,
-        "fps": 16,
-        "loop": false
-      },
-      "cast_summon": {
-        "file": "necromancer_cast_summon.png",
-        "atlas": "necromancer_cast_summon.json",
-        "frames": 10,
-        "fps": 10,
-        "loop": false
-      },
-      "cast_nova": {
-        "file": "necromancer_cast_nova.png",
-        "atlas": "necromancer_cast_nova.json",
-        "frames": 8,
-        "fps": 14,
-        "loop": false
-      },
-      "hit": {
-        "file": "necromancer_hit.png",
-        "atlas": "necromancer_hit.json",
-        "frames": 4,
-        "fps": 20,
-        "loop": false
-      },
-      "death": {
-        "file": "necromancer_death.png",
-        "atlas": "necromancer_death.json",
-        "frames": 8,
-        "fps": 8,
         "loop": false
       }
     },
@@ -498,33 +492,64 @@
         "fps": 12,
         "loop": false
       }
-    }
-  },
-  "layouts": {
+    },
     "necromancer": {
-      "frameSize": 288,
-      "originY": 180,
-      "nativeScale": 1.75
-    },
-    "shieldbearer": {
-      "frameSize": 192,
-      "originY": 136,
-      "nativeScale": 1
-    },
-    "bone_thrower": {
-      "frameSize": 192,
-      "originY": 136,
-      "nativeScale": 1
-    },
-    "gravedigger": {
-      "frameSize": 192,
-      "originY": 136,
-      "nativeScale": 1
-    },
-    "cultist": {
-      "frameSize": 192,
-      "originY": 136,
-      "nativeScale": 1
+      "idle": {
+        "file": "necromancer_idle.png",
+        "atlas": "necromancer_idle.json",
+        "frames": 8,
+        "fps": 7.5,
+        "loop": true
+      },
+      "run": {
+        "file": "necromancer_run.png",
+        "atlas": "necromancer_run.json",
+        "frames": 10,
+        "fps": 9.37,
+        "loop": true
+      },
+      "spawn": {
+        "file": "necromancer_spawn.png",
+        "atlas": "necromancer_spawn.json",
+        "frames": 10,
+        "fps": 8,
+        "loop": false
+      },
+      "cast_spears": {
+        "file": "necromancer_cast_spears.png",
+        "atlas": "necromancer_cast_spears.json",
+        "frames": 8,
+        "fps": 16,
+        "loop": false
+      },
+      "cast_summon": {
+        "file": "necromancer_cast_summon.png",
+        "atlas": "necromancer_cast_summon.json",
+        "frames": 10,
+        "fps": 10,
+        "loop": false
+      },
+      "cast_nova": {
+        "file": "necromancer_cast_nova.png",
+        "atlas": "necromancer_cast_nova.json",
+        "frames": 8,
+        "fps": 14,
+        "loop": false
+      },
+      "hit": {
+        "file": "necromancer_hit.png",
+        "atlas": "necromancer_hit.json",
+        "frames": 4,
+        "fps": 20,
+        "loop": false
+      },
+      "death": {
+        "file": "necromancer_death.png",
+        "atlas": "necromancer_death.json",
+        "frames": 8,
+        "fps": 8,
+        "loop": false
+      }
     }
   }
 }
