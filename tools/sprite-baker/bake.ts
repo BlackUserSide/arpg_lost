@@ -112,7 +112,20 @@ function trimToAtlas(sheet: HTMLCanvasElement, image: string, label: string): { 
   const { data, width } = ctx.getImageData(0, 0, sheet.width, sheet.height);
   const cols = sheet.width / FRAME;
   const rows = sheet.height / FRAME;
-  const cells: { i: number; sx: number; sy: number; x0: number; y0: number; w: number; h: number; ax: number; ay: number }[] = [];
+  interface Cell {
+    i: number;
+    sx: number;
+    sy: number;
+    x0: number;
+    y0: number;
+    w: number;
+    h: number;
+    ax: number;
+    ay: number;
+    /** An earlier cell with identical pixels (held end poses, the empty spawn start): its piece is reused. */
+    same?: Cell;
+  }
+  const cells: Cell[] = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       let x0 = FRAME;
@@ -137,8 +150,21 @@ function trimToAtlas(sheet: HTMLCanvasElement, image: string, label: string): { 
       cells.push({ i: r * cols + c, sx: c * FRAME, sy: r * FRAME, x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1, ax: 0, ay: 0 });
     }
   }
+  // Identical pieces are packed once.
+  const seen = new Map<string, { cell: Cell; data: Uint8ClampedArray }[]>();
+  for (const cell of cells) {
+    const own = ctx.getImageData(cell.sx + cell.x0, cell.sy + cell.y0, cell.w, cell.h).data;
+    let hash = 0x811c9dc5;
+    for (let k = 0; k < own.length; k++) hash = Math.imul(hash ^ own[k]!, 0x01000193);
+    const key = `${cell.w}x${cell.h}:${hash >>> 0}`;
+    const bucket = seen.get(key) ?? [];
+    const match = bucket.find((b) => b.data.every((v, k) => v === own[k]));
+    if (match) cell.same = match.cell;
+    else bucket.push({ cell, data: own });
+    seen.set(key, bucket);
+  }
   // Shelf packing, tallest first: rows of pieces left to right.
-  const order = [...cells].sort((a, b) => b.h - a.h);
+  const order = cells.filter((cell) => !cell.same).sort((a, b) => b.h - a.h);
   let x = 0;
   let y = 0;
   let shelf = 0;
@@ -161,9 +187,10 @@ function trimToAtlas(sheet: HTMLCanvasElement, image: string, label: string): { 
   const out = canvas.getContext('2d')!;
   const json: AtlasJson = { frames: {}, meta: { image, size: { w: canvas.width, h: canvas.height }, scale: 1 } };
   for (const cell of cells) {
-    out.drawImage(sheet, cell.sx + cell.x0, cell.sy + cell.y0, cell.w, cell.h, cell.ax, cell.ay, cell.w, cell.h);
+    const piece = cell.same ?? cell;
+    if (!cell.same) out.drawImage(sheet, cell.sx + cell.x0, cell.sy + cell.y0, cell.w, cell.h, cell.ax, cell.ay, cell.w, cell.h);
     json.frames[String(cell.i)] = {
-      frame: { x: cell.ax, y: cell.ay, w: cell.w, h: cell.h },
+      frame: { x: piece.ax, y: piece.ay, w: cell.w, h: cell.h },
       rotated: false,
       trimmed: true,
       spriteSourceSize: { x: cell.x0, y: cell.y0, w: cell.w, h: cell.h },
@@ -244,22 +271,19 @@ async function bakeCharacter(def: BakeCharacter): Promise<Record<string, Manifes
     log(`Baking ${def.id} / ${anim.id}…`);
     const sheet = bakeAnim(model, mixer, gltf.animations, anim);
     outline(sheet);
-    let atlas: string | undefined;
-    let image = sheet;
-    if (def.trim) {
-      const packed = trimToAtlas(sheet, file, `${def.id}/${anim.id}`);
-      image = packed.canvas;
-      atlas = file.replace(/\.png$/, '.json');
-      await save(`public/assets/sprites/${atlas}`, JSON.stringify(packed.json) + '\n', 'utf8');
-    }
+    const packed = trimToAtlas(sheet, file, `${def.id}/${anim.id}`);
+    const image = packed.canvas;
+    const atlas = file.replace(/\.png$/, '.json');
+    await save(`public/assets/sprites/${atlas}`, JSON.stringify(packed.json) + '\n', 'utf8');
     sheetsEl.append(document.createTextNode(`${file} `), image, document.createElement('br'));
+    // The save endpoint palette-compresses PNGs (optimize.ts).
     await save(`public/assets/sprites/${file}`, image.toDataURL('image/png').split(',')[1]!, 'base64');
     const clip = THREE.AnimationClip.findByName(gltf.animations, anim.clip)!;
     // Loops without explicit fps play at the clip's natural speed.
     const fps = anim.fps ?? Math.round((anim.frames / clip.duration) * 100) / 100;
     result[anim.id] = {
       file,
-      ...(atlas ? { atlas } : {}),
+      atlas,
       frames: anim.frames,
       fps,
       loop: anim.loop,
@@ -271,8 +295,9 @@ async function bakeCharacter(def: BakeCharacter): Promise<Record<string, Manifes
 }
 
 function bakeAnim(model: THREE.Object3D, mixer: THREE.AnimationMixer, clips: THREE.AnimationClip[], anim: BakeAnim): HTMLCanvasElement {
-  const clip = THREE.AnimationClip.findByName(clips, anim.clip);
-  if (!clip) throw new Error(`Clip not found: ${anim.clip}`);
+  const source = THREE.AnimationClip.findByName(clips, anim.clip);
+  if (!source) throw new Error(`Clip not found: ${anim.clip}`);
+  const clip = anim.inPlace ? pinRoot(source) : source;
   mixer.stopAllAction();
   const action = mixer.clipAction(clip);
   action.reset();
@@ -311,6 +336,24 @@ function bakeAnim(model: THREE.Object3D, mixer: THREE.AnimationMixer, clips: THR
   for (const obj of hidden) obj.visible = true;
   renderer.clippingPlanes = [];
   return sheet;
+}
+
+/**
+ * Copy of `clip` with the root and hips bones held at their first ground-plane (x, z) positions: the body falls,
+ * rises or turns where it stands. Heights and rotations stay.
+ */
+function pinRoot(clip: THREE.AnimationClip): THREE.AnimationClip {
+  const pinned = clip.clone();
+  for (const bone of ['root', 'hips']) {
+    const track = pinned.tracks.find((t) => t.name === `${bone}.position`);
+    if (!track) throw new Error(`No ${bone}.position track in ${clip.name}`);
+    const v = track.values;
+    for (let i = 3; i < v.length; i += 3) {
+      v[i] = v[0]!;
+      v[i + 2] = v[2]!;
+    }
+  }
+  return pinned;
 }
 
 /** Hard alpha + 1px dark outline so characters read on dark floors and small screens. */

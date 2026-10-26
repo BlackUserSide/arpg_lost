@@ -27,7 +27,7 @@ import { resourceText } from './resourceText';
 import { damageTypeText, num } from './statText';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { SupportsSceneData } from './SupportsScene';
-import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
+import { CLASS_LOOKS, HERO_SETS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, makeFrame, showToast, UI } from './ui';
 
 // Paper doll (8 slots) + shared stash + item details. Select-then-act controls so it works by touch;
@@ -121,7 +121,7 @@ export class InventoryScene extends Phaser.Scene {
   }
 
   preload(): void {
-    loadSprites(this);
+    loadSprites(this, HERO_SETS);
   }
 
   create(): void {
