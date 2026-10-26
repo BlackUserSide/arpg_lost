@@ -115,6 +115,11 @@ export class PotionSlot {
     this.hideTooltip();
   }
 
+  /** Shows the "1" key caption (desktop layout) or hides it (touch layout: no keyboard). */
+  setKeyHint(visible: boolean): void {
+    this.key.setVisible(visible);
+  }
+
   /** A drink was refused: shake, flash and say why. */
   denied(reason: 'empty' | 'full', player: PlayerState): void {
     this.deny = DENY_TTL;

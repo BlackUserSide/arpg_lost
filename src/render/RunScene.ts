@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { distance, vec, type Vec2 } from '../core/math';
+import { distance, normalize, vec, type Vec2 } from '../core/math';
 import type { Content, MobRank } from '../core/world/content';
 import {
   distanceDamageMore,
@@ -60,6 +60,10 @@ import { SOUL_GREEN, SOUL_VIOLET, SoulFx } from './soulFx';
 import { ClockFx, ENEMY_FX_DEPTH, HERO_STOP_DEPTH } from './clockFx';
 import { soulsMax } from '../core/world/souls';
 import { AllyFx } from './allyFx';
+import { touchControls as touchTuning } from '../data/controls';
+import { TouchControls } from './touchControls';
+import { safeInsets, touchControlsOn } from './touchMode';
+import { deliveryReach, idleAim, isAimed, manualAim, tapAim } from './touchAim';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
 // Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
@@ -92,6 +96,12 @@ const DOT_NUMBER_INTERVAL = 0.5;
 const WIN_SCREEN_DELAY = 1.6;
 /** Room change: fade in from black (ms). */
 const ROOM_FADE = 380;
+/** Touch drag-aim indicator on the floor (visual only): colours, shortest arrow (screen px). */
+const AIM_ARROW = 0xff9a3c;
+const AIM_ARROW_RIM = 0x2a1206;
+const AIM_ARROW_MIN = 70;
+/** Screen px the run timer and its info line need between the top corner buttons; less moves them under the buttons. */
+const MIN_HEADER_WIDTH = 150;
 
 /** Visual-only colors per action / damage flavour. */
 const AREA_COLORS: Record<string, number> = { cleave: 0xff9a3c, fireball: 0xff6a1a, explosive_trap: 0xff8a2a, frost_nova: 0x8fd3ff };
@@ -386,6 +396,18 @@ export class RunScene extends Phaser.Scene {
   private announcement: Phaser.GameObjects.Text[] = [];
   /** Where the boss died (the chest burst plays there). */
   private bossFall: Vec2 | undefined;
+  /** Touch controls are on (phones / tablets, or ?touch=1): stick + buttons instead of mouse aim. */
+  private touch = false;
+  private touchControls: TouchControls | undefined;
+  /** Floor indicator of a drag-aimed skill. */
+  private aimGfx!: Phaser.GameObjects.Graphics;
+  /**
+   * The last released skill button: its skill index (0..2) and manual aim (world direction; undefined = auto-aim).
+   * Steers RunInput.aim while that skill's press is buffered (until it fires or the buffer runs out).
+   */
+  private touchCast: { skill: number; dir: Vec2 | undefined } | undefined;
+  /** Skill buttons released since the last step: sent as one-step presses (then buffered like key taps). */
+  private readonly touchTaps: boolean[] = [false, false, false];
 
   constructor() {
     super('run');
@@ -447,6 +469,9 @@ export class RunScene extends Phaser.Scene {
     this.counterShot = undefined;
     this.announcement = [];
     this.bossFall = undefined;
+    this.touch = touchControlsOn(this.game);
+    this.touchCast = undefined;
+    this.touchTaps.fill(false);
 
     for (const [set, anims] of Object.entries(SPRITE_SETS)) {
       for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
@@ -486,6 +511,8 @@ export class RunScene extends Phaser.Scene {
       if (!this.paused && !this.treeOpen && !this.ended()) this.potionQueued = true;
     });
     this.runHud = new RunHud(this, mapsData, () => (this.interactQueued = true), this.content);
+    this.aimGfx = this.add.graphics().setDepth(-999);
+    this.touchControls = this.touch ? new TouchControls(this, () => this.hud.touchButtons(), touchTuning, (slot, pressed) => this.hud.setSlotPressed(slot, pressed)) : undefined;
     this.pointer = pinToScreen(this.add.graphics(), HUD_UI_DEPTH - 2);
     this.overlay = undefined;
     this.paused = false;
@@ -586,7 +613,9 @@ export class RunScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
     const margin = compact ? 12 : 22;
-    this.hud.layout(width, height);
+    // Touch layout keeps out of the notch / home indicator (zero inside the portal iframe).
+    const insets = this.touch ? safeInsets() : undefined;
+    this.hud.layout(width, height, insets);
     this.clockFx.layout(width, height);
     this.treeButton?.destroy();
     this.treeButton = undefined;
@@ -595,19 +624,29 @@ export class RunScene extends Phaser.Scene {
     const w = compact ? 96 : 150;
     const h = compact ? 34 : 40;
     const pw = compact ? 84 : 120;
-    const reserved = margin + w + 10 + pw;
-    this.runHud.layout(width, height, reserved);
-    if (!findCharacter(getApp(this).profile, this.characterId)) return;
-    this.treeButton = pinToScreen(makeButton(this, width - margin - w / 2, margin + 18, w, h, compact ? t('arena.talents') : t('arena.talentsKey'), () => this.openTree()), HUD_UI_DEPTH);
+    const right = margin + (insets?.right ?? 0);
+    const buttonY = margin + 18 + (insets?.top ?? 0);
+    const hasHero = findCharacter(getApp(this).profile, this.characterId) !== undefined;
+    const reserved = right + w + 10 + pw;
+    // Narrow portrait phones: the corner buttons would cover the timer, so the run HUD starts under them.
+    const crowded = hasHero && width - 2 * reserved < MIN_HEADER_WIDTH;
+    const headerTop = (insets?.top ?? 0) + (crowded ? buttonY + h / 2 + 2 : 0);
+    // Under the buttons the centre column only keeps clear of the touch layout's orbs in the top left.
+    const sideReserved = crowded ? (this.touch ? this.hud.touchOrbsRight() + 8 : 0) : reserved;
+    this.runHud.layout(width, height, sideReserved, this.touch ? this.hud.touchClusterTop() : undefined, headerTop);
+    if (!hasHero) return;
+    // Key names only with the keyboard layout.
+    const keyCaptions = !compact && !this.touch;
+    this.treeButton = pinToScreen(makeButton(this, width - right - w / 2, buttonY, w, h, keyCaptions ? t('arena.talentsKey') : t('arena.talents'), () => this.openTree()), HUD_UI_DEPTH);
     // Touch has no Esc: the pause menu (and with it "end the run") needs a button.
     this.pauseButton = pinToScreen(
-      makeButton(this, width - margin - w - 10 - pw / 2, margin + 18, pw, h, compact ? t('arena.pause') : t('arena.pauseKey'), () => {
+      makeButton(this, width - right - w - 10 - pw / 2, buttonY, pw, h, keyCaptions ? t('arena.pauseKey') : t('arena.pause'), () => {
         if (!this.paused && !this.treeOpen && !this.ended()) this.setPaused(true);
       }),
       HUD_UI_DEPTH,
     );
     // The unspent points badge sits on the Talents button's top right corner.
-    this.badge.setPosition(width - margin - 4, margin + 18 - h / 2 + 4, compact ? 10 : 12);
+    this.badge.setPosition(width - right - 4, buttonY - h / 2 + 4, compact ? 10 : 12);
   }
 
   private refreshBanner(): void {
@@ -672,6 +711,9 @@ export class RunScene extends Phaser.Scene {
     this.interactQueued = false;
     this.potionQueued = false;
     this.uiPress = false;
+    this.touchCast = undefined;
+    this.touchTaps.fill(false);
+    this.touchControls?.reset();
     this.accumulator = 0;
   }
 
@@ -727,7 +769,7 @@ export class RunScene extends Phaser.Scene {
     };
     const headerH = compact ? 56 : 78;
     // Key hints (R / Esc) only where there is a keyboard: touch screens get the room for the reward list instead.
-    const keyHints = this.sys.game.device.os.desktop;
+    const keyHints = !this.touch;
     const footerH = compact ? (keyHints ? 92 : 66) : keyHints ? 116 : 86;
     if (kind === 'pause') {
       const pending = this.world.supportDrops.length;
@@ -936,6 +978,11 @@ export class RunScene extends Phaser.Scene {
 
   override update(_time: number, deltaMs: number): void {
     const ended = this.ended();
+    // Touch controls only during live play: paused, in the tree or after the run every finger is dropped.
+    if (this.touchControls) {
+      this.touchControls.setEnabled(!this.paused && !this.treeOpen && !ended && this.overlay === undefined);
+      this.touchControls.update();
+    }
     // While the tree is open (modes that do not pause), its screen owns the keys.
     if (!this.treeOpen) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
@@ -989,6 +1036,7 @@ export class RunScene extends Phaser.Scene {
       summon: this.run.phase === 'summoning' ? 1 - this.run.waveTimer / Math.max(1e-6, mapsData.rules.boss.spawnDelay) : -1,
     });
     this.drawDoorPointer();
+    this.drawAimIndicator();
     this.hud.update(this.world, dt);
     this.runHud.update(this.run, dt);
   }
@@ -1020,7 +1068,7 @@ export class RunScene extends Phaser.Scene {
     const compact = width < 820 || height < 520;
     const inset = compact ? 44 : 70;
     const top = Math.min(cy - 20, this.runHud.bottom() + 30);
-    const bottom = Math.max(cy + 20, height - (compact ? 120 : 160));
+    const bottom = Math.max(cy + 20, this.touch ? this.hud.touchClusterTop() - 30 : height - (compact ? 120 : 160));
     const kx = ux > 0 ? (width - inset - cx) / ux : ux < 0 ? (inset - cx) / ux : Number.POSITIVE_INFINITY;
     const ky = uy > 0 ? (bottom - cy) / uy : uy < 0 ? (top - cy) / uy : Number.POSITIVE_INFINITY;
     const k = Math.min(kx, ky);
@@ -1051,6 +1099,7 @@ export class RunScene extends Phaser.Scene {
 
   private readInput(): RunInput {
     if (this.treeOpen) return { move: NO_MOVE, aim: this.world.player.pos, basicAttack: false, skills: NO_SKILLS };
+    if (this.touchControls) return this.readTouchInput(this.touchControls);
     const k = this.keys;
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
@@ -1077,6 +1126,94 @@ export class RunScene extends Phaser.Scene {
       interact,
       potion,
     };
+  }
+
+  /**
+   * Touch controls (docs/design/controls.md) as RunInput: the stick moves (WASD too); the held attack button attacks
+   * the nearest enemy; a released skill button is a one-step press, buffered like a key tap and aimed while it waits:
+   * a tap by the auto-aim rules (touchAim.tapAim), a drag along the drag. Nothing pressed: face the movement.
+   */
+  private readTouchInput(controls: TouchControls): RunInput {
+    const k = this.keys;
+    const player = this.world.player;
+    const stick = controls.moveDirection();
+    const screenMove = stick.x !== 0 || stick.y !== 0 ? stick : vec((k.D.isDown ? 1 : 0) - (k.A.isDown ? 1 : 0), (k.S.isDown ? 1 : 0) - (k.W.isDown ? 1 : 0));
+    const move = screenDirToWorld(screenMove);
+    const moveDir = move.x !== 0 || move.y !== 0 ? normalize(move) : undefined;
+    for (let release = controls.nextRelease(); release; release = controls.nextRelease()) {
+      const skill = release.slot - 1;
+      this.touchTaps[skill] = true;
+      this.touchCast = { skill, dir: release.dir ? normalize(screenDirToWorld(release.dir)) : undefined };
+    }
+    const skills = this.touchTaps.map((down, i) => {
+      if (down && !this.skillWasDown[i]) this.skillBuffer[i] = INPUT_BUFFER;
+      this.skillWasDown[i] = down;
+      this.skillBuffer[i] = Math.max(0, (this.skillBuffer[i] ?? 0) - DT);
+      return down || (this.skillBuffer[i] ?? 0) > 0;
+    });
+    this.touchTaps.fill(false);
+    const attack = controls.attackHeld();
+    let aim: Vec2;
+    const cast = this.touchCast;
+    const castAction = cast && skills[cast.skill] ? player.actions.skills[cast.skill] : undefined;
+    if (cast && castAction) {
+      aim = cast.dir ? manualAim(castAction.delivery, player, cast.dir) : tapAim(castAction.delivery, player, this.world.mobs, moveDir, touchTuning);
+    } else {
+      this.touchCast = undefined;
+      aim = attack ? tapAim(player.actions.basicAttack.delivery, player, this.world.mobs, moveDir, touchTuning) : idleAim(player, moveDir);
+    }
+    const interact = k.F.isDown || this.interactQueued;
+    this.interactQueued = false;
+    const potion = k.ONE.isDown || this.potionQueued;
+    this.potionQueued = false;
+    return { move, aim, basicAttack: attack, skills, interact, potion };
+  }
+
+  /** Touch drag-aim: an arrow on the floor from the hero to the skill's reach (a ring for skills without a direction). */
+  private drawAimIndicator(): void {
+    const g = this.aimGfx.clear();
+    const drag = this.touchControls?.dragAim();
+    if (!drag) return;
+    const action = this.world.player.actions.skills[drag.slot - 1];
+    if (!action) return;
+    const from = toScreen(this.hero.display);
+    const delivery = action.delivery;
+    if (!isAimed(delivery)) {
+      // Full circle / self: the area round the hero (iso ellipse: a world circle of radius r is 2r x r on screen).
+      const r = delivery.kind === 'arc' ? delivery.radius : 60;
+      g.lineStyle(4, AIM_ARROW, 0.75).strokeEllipse(from.x, from.y, r * 2, r);
+      g.fillStyle(AIM_ARROW, 0.12).fillEllipse(from.x, from.y, r * 2, r);
+      return;
+    }
+    const dir = normalize(screenDirToWorld(vec(drag.dx, drag.dy)));
+    const reach = deliveryReach(delivery);
+    const hero = this.hero.display;
+    const end = toScreen(vec(hero.x + dir.x * reach, hero.y + dir.y * reach));
+    let ex = end.x - from.x;
+    let ey = end.y - from.y;
+    const len = Math.hypot(ex, ey) || 1;
+    if (len < AIM_ARROW_MIN) {
+      ex *= AIM_ARROW_MIN / len;
+      ey *= AIM_ARROW_MIN / len;
+    }
+    const full = Math.max(1, Math.hypot(ex, ey));
+    const ux = ex / full;
+    const uy = ey / full;
+    const tipX = from.x + ex;
+    const tipY = from.y + ey;
+    const head = 22;
+    const baseX = tipX - ux * head;
+    const baseY = tipY - uy * head;
+    const nx = -uy;
+    const ny = ux;
+    g.lineStyle(10, AIM_ARROW_RIM, 0.5).lineBetween(from.x + ux * 18, from.y + uy * 18, baseX, baseY);
+    g.lineStyle(6, AIM_ARROW, 0.7).lineBetween(from.x + ux * 18, from.y + uy * 18, baseX, baseY);
+    g.fillStyle(AIM_ARROW, 0.85).fillTriangle(tipX, tipY, baseX + nx * 14, baseY + ny * 14, baseX - nx * 14, baseY - ny * 14);
+    // Where a trap lands / a teleport ends: its spot on the floor.
+    if (delivery.kind === 'trap' || delivery.kind === 'teleport') {
+      const r = delivery.kind === 'trap' ? delivery.explodeRadius : 30;
+      g.lineStyle(3, AIM_ARROW, 0.7).strokeEllipse(tipX, tipY, r * 2, r);
+    }
   }
 
   private handleEvents(events: readonly RunStepEvent[]): void {

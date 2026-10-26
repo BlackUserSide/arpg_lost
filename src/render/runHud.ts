@@ -6,6 +6,7 @@ import { getMob, type MobState } from '../core/world/world';
 import { t } from '../i18n';
 import { mobName } from './contentText';
 import { formatCountdown, runInfoLine, urgentFrom } from './runText';
+import { touchControlsOn } from './touchMode';
 import { fitText, label, makeButton, pinToScreen, UI } from './ui';
 
 // Map run HUD (docs/design/maps.md): the countdown (always visible, flashes on time warnings), the line under it
@@ -33,6 +34,7 @@ export class RunHud {
   private readonly bossName: Phaser.GameObjects.Text;
   private awaken: Phaser.GameObjects.Container | undefined;
   private compact = false;
+  private touchClusterTop: number | undefined;
   private width = 0;
   private height = 0;
   private infoMaxW = 0;
@@ -69,13 +71,19 @@ export class RunHud {
     this.urgentAt = urgentFrom(maps);
   }
 
-  /** `rightReserved`: screen width taken by the buttons in the top right corner; the centre column stays clear of it. */
-  layout(width: number, height: number, rightReserved: number): void {
+  /**
+   * `rightReserved`: screen width taken by the buttons in the top right corner; the centre column stays clear of it.
+   * `touchClusterTop`: touch layout, top edge of the skill button cluster in the bottom right (the altar button goes
+   * above it); absent in the desktop layout. `top`: px the HUD starts below the screen top (safe area, or under the
+   * corner buttons on narrow screens).
+   */
+  layout(width: number, height: number, rightReserved: number, touchClusterTop?: number, top = 0): void {
     this.width = width;
     this.height = height;
+    this.touchClusterTop = touchClusterTop;
     const compact = width < 820 || height < 520;
     this.compact = compact;
-    const margin = compact ? 6 : 14;
+    const margin = (compact ? 6 : 14) + top;
     // Centred origin: the warning pulse grows the timer both ways instead of into the info line under it.
     this.timer.setFontSize(compact ? 30 : 42);
     if (this.timer.text === '') this.timer.setText('0:00');
@@ -192,14 +200,16 @@ export class RunHud {
     const w = compact ? 190 : 250;
     const h = compact ? 40 : 48;
     const margin = compact ? 12 : 22;
+    // Touch layout: just above the skill buttons.
+    if (this.touchClusterTop !== undefined) return { x: this.width - margin - w / 2, y: this.touchClusterTop - (compact ? 12 : 18) - h / 2, w, h };
     const orbTop = this.height - margin - (compact ? 38 : 54) * 2 - 12;
     return { x: this.width - margin - w / 2, y: orbTop - (compact ? 18 : 26) - h / 2, w, h };
   }
 
   private createAwaken(): void {
     const r = this.awakenRect();
-    // Touch devices have no F key: the caption only names it on desktops.
-    const caption = this.scene.sys.game.device.os.desktop ? t('run.awakenKey') : t('run.awaken');
+    // Touch controls have no F key: the caption only names it with the desktop controls.
+    const caption = touchControlsOn(this.scene.game) ? t('run.awaken') : t('run.awakenKey');
     this.awaken = pinToScreen(makeButton(this.scene, r.x, r.y, r.w, r.h, caption, this.onAwaken, 'primary'), DEPTH + 5);
   }
 
