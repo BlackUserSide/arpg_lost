@@ -1,8 +1,31 @@
 import { normalize, vec, type Vec2 } from '../core/math';
 import type { Delivery } from '../core/world/content';
+import { ISO_K } from './iso';
 
 // Pure aiming rules of the mobile touch controls (docs/design/controls.md). No Phaser: unit-tested in touchAim.test.ts.
 // They only choose the aim point sent as RunInput.aim; what a skill does with it (range caps, facing) stays core's.
+
+/** Which enemies auto-aim may pick (only those on screen); absent = all. */
+export type AimFilter = (target: AimTarget) => boolean;
+
+/** The camera's view in screen (iso) coordinates, as Phaser's camera.worldView. */
+export interface ScreenRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Whether an enemy is on screen: its feet (iso projection of its world position) inside the view grown by its body
+ * radius, so a body at the very edge still counts.
+ */
+export function onScreen(target: AimTarget, view: ScreenRect): boolean {
+  const sx = (target.pos.x - target.pos.y) * ISO_K;
+  const sy = ((target.pos.x + target.pos.y) * ISO_K) / 2;
+  const m = target.radius;
+  return sx >= view.x - m && sx <= view.x + view.width + m && sy >= view.y - m && sy <= view.y + view.height + m;
+}
 
 /** An enemy as auto-aim sees it (MobState fits). */
 export interface AimTarget {
@@ -73,12 +96,12 @@ export function isAimed(delivery: Delivery): boolean {
  * The nearest living enemy whose body edge is within `range` of `from` (centre distance minus its radius, so a big
  * boss counts once its body is in range); undefined when none.
  */
-export function nearestEnemy<T extends AimTarget>(mobs: readonly T[], from: Vec2, range: number): T | undefined {
+export function nearestEnemy<T extends AimTarget>(mobs: readonly T[], from: Vec2, range: number, filter?: AimFilter): T | undefined {
   let best: T | undefined;
   let bestDist = Number.POSITIVE_INFINITY;
   for (let i = 0; i < mobs.length; i++) {
     const mob = mobs[i]!;
-    if (mob.life <= 0) continue;
+    if (mob.life <= 0 || (filter && !filter(mob))) continue;
     const edge = Math.hypot(mob.pos.x - from.x, mob.pos.y - from.y) - mob.radius;
     if (edge <= range && edge < bestDist) {
       best = mob;
@@ -122,20 +145,38 @@ export function autoAimRange(delivery: Delivery, tuning: AimTuning): number {
  * while the hero moves, undefined while standing. Forward aims go to the action's full reach (Teleport and traps use
  * the distance; the rest only the direction).
  */
-export function tapAim(delivery: Delivery, hero: AimHero, mobs: readonly AimTarget[], moveDir: Vec2 | undefined, tuning: AimTuning): Vec2 {
+export function tapAim(delivery: Delivery, hero: AimHero, mobs: readonly AimTarget[], moveDir: Vec2 | undefined, tuning: AimTuning, filter?: AimFilter): Vec2 {
   const style = tapStyle(delivery);
   const reach = deliveryReach(delivery);
   const moving = moveDir !== undefined && (moveDir.x !== 0 || moveDir.y !== 0);
   if (style === 'none') return idleAim(hero, moveDir);
   if (style === 'forward' || (style === 'charge' && moving)) return ahead(hero, forwardDir(hero, moveDir), reach);
-  const target = nearestEnemy(mobs, hero.pos, autoAimRange(delivery, tuning));
+  const target = nearestEnemy(mobs, hero.pos, autoAimRange(delivery, tuning), filter);
   if (target) return vec(target.pos.x, target.pos.y);
   return ahead(hero, forwardDir(hero, moveDir), reach);
 }
 
-/** Aim point of a dragged (manually aimed) action: its full reach along `dir` (world direction, any length). */
-export function manualAim(delivery: Delivery, hero: AimHero, dir: Vec2): Vec2 {
-  return ahead(hero, forwardDir(hero, dir), deliveryReach(delivery));
+/** Actions whose drag aims a distance too (the drag length), not only a direction: traps and Teleport. */
+export function isDistanceAimed(delivery: Delivery): boolean {
+  return delivery.kind === 'trap' || delivery.kind === 'teleport';
+}
+
+/** Shortest share of the reach a distance-aimed drag gives (a tiny drag still lands clearly ahead of the hero). */
+export const MIN_DRAG_DISTANCE = 0.15;
+
+/** Drag length on screen → share of the reach (0..1): the edge of the drag radius = full reach. */
+export function dragFraction(length: number, dragRadius: number): number {
+  if (dragRadius <= 0) return 1;
+  return Math.min(1, Math.max(MIN_DRAG_DISTANCE, length / dragRadius));
+}
+
+/**
+ * Aim point of a dragged (manually aimed) action along `dir` (world direction, any length): traps and Teleport at
+ * `fraction` (dragFraction) of their reach, the rest at full reach (only the direction matters to them).
+ */
+export function manualAim(delivery: Delivery, hero: AimHero, dir: Vec2, fraction = 1): Vec2 {
+  const share = isDistanceAimed(delivery) ? Math.min(1, Math.max(MIN_DRAG_DISTANCE, fraction)) : 1;
+  return ahead(hero, forwardDir(hero, dir), deliveryReach(delivery) * share);
 }
 
 /**

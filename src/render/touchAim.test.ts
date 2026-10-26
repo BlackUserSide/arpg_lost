@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { vec } from '../core/math';
+import { toWorld } from './iso';
 import type { Delivery } from '../core/world/content';
-import { autoAimRange, deliveryReach, forwardDir, idleAim, isAimed, manualAim, nearestEnemy, stickDirection, tapAim, tapStyle } from './touchAim';
+import { autoAimRange, deliveryReach, dragFraction, forwardDir, idleAim, isAimed, isDistanceAimed, manualAim, MIN_DRAG_DISTANCE, nearestEnemy, onScreen, stickDirection, tapAim, tapStyle } from './touchAim';
 
 const TUNING = { autoAimRadius: 400 };
 const ARC: Delivery = { kind: 'arc', radius: 95, angleDeg: 150 };
@@ -117,5 +118,51 @@ describe('stickDirection', () => {
     const d = stickDirection(30, 40, 60, 0.2);
     expect(d.x).toBeCloseTo(0.6);
     expect(d.y).toBeCloseTo(0.8);
+  });
+});
+
+describe('on-screen filter', () => {
+  // A 400 x 200 view whose top-left is the screen origin.
+  const view = { x: 0, y: 0, width: 400, height: 200 };
+  // World (300, 0) projects to screen (212, 106): inside. World (800, 0) projects to (566, 283): outside.
+  const inside = mob(300, 0);
+  const outside = mob(800, 0);
+
+  it('keeps enemies whose feet are on screen (with their body radius as margin)', () => {
+    expect(onScreen(inside, view)).toBe(true);
+    expect(onScreen(outside, view)).toBe(false);
+    // Feet 10 px past the right edge: on screen for a body radius of 20, not of 5.
+    const past = toWorld(vec(410, 100));
+    expect(onScreen({ pos: past, radius: 20, life: 1 }, view)).toBe(true);
+    expect(onScreen({ pos: past, radius: 5, life: 1 }, view)).toBe(false);
+  });
+
+  it('auto-aim skips filtered enemies even if they are nearer', () => {
+    const hero0 = { pos: vec(0, 0), facing: vec(1, 0) };
+    const near = mob(-150, 0);
+    const far = mob(300, 0);
+    const visible = (t: { pos: { x: number } }) => t.pos.x > 0;
+    expect(nearestEnemy([near, far], hero0.pos, 400, visible)).toBe(far);
+    expect(tapAim(BOLT, hero0, [near, far], undefined, TUNING, visible)).toEqual(vec(300, 0));
+    // Nothing visible: forward instead of the off-screen enemy.
+    expect(tapAim(BOLT, hero0, [near], undefined, TUNING, visible)).toEqual(vec(620, 0));
+  });
+});
+
+describe('drag distance', () => {
+  it('maps the drag length to a share of the reach, with a floor', () => {
+    expect(dragFraction(55, 110)).toBe(0.5);
+    expect(dragFraction(500, 110)).toBe(1);
+    expect(dragFraction(1, 110)).toBe(MIN_DRAG_DISTANCE);
+  });
+
+  it('only traps and Teleport use the distance', () => {
+    expect(isDistanceAimed(TRAP)).toBe(true);
+    expect(isDistanceAimed(TELEPORT)).toBe(true);
+    expect(isDistanceAimed(BOLT)).toBe(false);
+    expect(manualAim(TRAP, hero, vec(1, 0), 0.5)).toEqual(vec(250, 100));
+    expect(manualAim(TELEPORT, hero, vec(0, 1), 0.5)).toEqual(vec(100, 275));
+    // Direction-only skills ignore it.
+    expect(manualAim(BOLT, hero, vec(1, 0), 0.5)).toEqual(vec(720, 100));
   });
 });

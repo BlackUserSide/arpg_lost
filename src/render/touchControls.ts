@@ -9,6 +9,8 @@ import { pinToScreen } from './ui';
 // slots as buttons on the right (Hud.touchButtons). Multi-touch: every finger is tracked by its pointer id, so the
 // stick and a button (or two buttons) work at once. Input only: RunScene turns this into RunInput (aim rules in
 // touchAim.ts); the potion button is the HUD's own interactive potion slot.
+// Drag-aim: past aimDragThreshold a skill press aims manually; once the finger has left the button, bringing it back
+// onto the button cancels (released there, nothing is cast).
 
 /** Stick look (screen px): base ring and knob radii. */
 const STICK = {
@@ -20,8 +22,12 @@ const STICK_FILL = 0x0a090c;
 const STICK_RIM = 0xd9a94a;
 const KNOB = 0xf3d58a;
 const AIM_RING = 0xff7a2a;
+const CANCEL_RED = 0xff4a3a;
 /** Milliseconds after a touch during which a mouse press is the browser's emulated one (ignored). */
 const EMULATED_MOUSE_GUARD = 800;
+
+/** How a slot's button looks: free, held by a finger, or a drag-aim brought back onto it (release cancels). */
+export type ButtonState = 'idle' | 'pressed' | 'cancel';
 
 interface Stick {
   readonly id: number;
@@ -32,27 +38,32 @@ interface Stick {
 }
 
 interface Press {
-  readonly slot: number;
+  readonly button: TouchButton;
   readonly startX: number;
   readonly startY: number;
   x: number;
   y: number;
   /** Dragged past the threshold: manual aim (skills only). */
   dragging: boolean;
+  /** The finger has been outside the button's hit circle since the drag began. */
+  left: boolean;
+  /** Dragging, came back onto the button: releasing now cancels. */
+  cancel: boolean;
 }
 
-/** A skill button let go: `dir` is the drag direction on screen (manual aim), undefined for a tap (auto-aim). */
+/** A skill button let go: `dir` is the drag on screen (direction and length) for manual aim, undefined for a tap. */
 export interface SkillRelease {
   /** HUD slot: 1..3 = skills. */
   readonly slot: number;
   readonly dir: Vec2 | undefined;
 }
 
-/** A skill being aimed by dragging: its slot and the drag offset on screen (px). */
+/** A skill being aimed by dragging: its slot, the drag offset on screen (px), whether releasing now cancels. */
 export interface DragAim {
   readonly slot: number;
   readonly dx: number;
   readonly dy: number;
+  readonly cancel: boolean;
 }
 
 export class TouchControls {
@@ -62,14 +73,16 @@ export class TouchControls {
   private readonly releases: SkillRelease[] = [];
   private enabled = true;
   private lastTouch = Number.NEGATIVE_INFINITY;
-  private readonly drag = { slot: 0, dx: 0, dy: 0 };
+  private readonly drag = { slot: 0, dx: 0, dy: 0, cancel: false };
 
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly buttons: () => readonly TouchButton[],
     private readonly tuning: TouchControlsTuning,
-    /** A finger went onto / off a slot's button (the HUD lights it). */
-    private readonly onPressChange: (slot: number, pressed: boolean) => void,
+    /** A slot's button changed look (the HUD draws it). */
+    private readonly onButtonState: (slot: number, state: ButtonState) => void,
+    /** The slot's skill aims a distance by the drag length (the drag radius ring is shown for it). */
+    private readonly distanceAimed: (slot: number) => boolean,
   ) {
     this.gfx = pinToScreen(scene.add.graphics(), STICK_DEPTH);
     const input = scene.input;
@@ -95,7 +108,7 @@ export class TouchControls {
   /** Drops every tracked finger (no casts) and queued releases. */
   reset(): void {
     this.stick = undefined;
-    for (const press of this.presses.values()) this.onPressChange(press.slot, false);
+    for (const press of this.presses.values()) this.onButtonState(press.button.slot, 'idle');
     this.presses.clear();
     this.releases.length = 0;
     this.gfx.clear();
@@ -110,7 +123,7 @@ export class TouchControls {
 
   /** The basic attack button is held. */
   attackHeld(): boolean {
-    for (const press of this.presses.values()) if (press.slot === 0) return true;
+    for (const press of this.presses.values()) if (press.button.slot === 0) return true;
     return false;
   }
 
@@ -124,9 +137,10 @@ export class TouchControls {
     let found: Press | undefined;
     for (const press of this.presses.values()) if (press.dragging) found = press;
     if (!found) return undefined;
-    this.drag.slot = found.slot;
+    this.drag.slot = found.button.slot;
     this.drag.dx = found.x - found.startX;
     this.drag.dy = found.y - found.startY;
+    this.drag.cancel = found.cancel;
     return this.drag;
   }
 
@@ -138,7 +152,7 @@ export class TouchControls {
     for (const [id, press] of this.presses) {
       if (isDown(id)) continue;
       this.presses.delete(id);
-      this.onPressChange(press.slot, false);
+      this.onButtonState(press.button.slot, 'idle');
     }
     this.draw();
   }
@@ -156,9 +170,9 @@ export class TouchControls {
     const button = this.buttonAt(pointer.x, pointer.y);
     if (button) {
       // One finger per button: a second finger on a held button does nothing.
-      for (const press of this.presses.values()) if (press.slot === button.slot) return;
-      this.presses.set(pointer.id, { slot: button.slot, startX: pointer.x, startY: pointer.y, x: pointer.x, y: pointer.y, dragging: false });
-      this.onPressChange(button.slot, true);
+      for (const press of this.presses.values()) if (press.button.slot === button.slot) return;
+      this.presses.set(pointer.id, { button, startX: pointer.x, startY: pointer.y, x: pointer.x, y: pointer.y, dragging: false, left: false, cancel: false });
+      this.onButtonState(button.slot, 'pressed');
       return;
     }
     if (!this.stick && pointer.x < this.scene.scale.width / 2) {
@@ -186,7 +200,16 @@ export class TouchControls {
     if (!press) return;
     press.x = pointer.x;
     press.y = pointer.y;
-    if (press.slot > 0 && !press.dragging && Math.hypot(press.x - press.startX, press.y - press.startY) >= this.tuning.aimDragThreshold) press.dragging = true;
+    if (press.button.slot === 0) return;
+    if (!press.dragging && Math.hypot(press.x - press.startX, press.y - press.startY) >= this.tuning.aimDragThreshold) press.dragging = true;
+    if (!press.dragging) return;
+    const onButton = Math.hypot(press.x - press.button.x, press.y - press.button.y) <= press.button.r;
+    if (!onButton) press.left = true;
+    const cancel = press.left && onButton;
+    if (cancel !== press.cancel) {
+      press.cancel = cancel;
+      this.onButtonState(press.button.slot, cancel ? 'cancel' : 'pressed');
+    }
   }
 
   private onUp(pointer: Phaser.Input.Pointer): void {
@@ -194,9 +217,10 @@ export class TouchControls {
     const press = this.presses.get(pointer.id);
     if (!press) return;
     this.presses.delete(pointer.id);
-    this.onPressChange(press.slot, false);
-    if (!this.enabled || press.slot === 0) return;
-    this.releases.push({ slot: press.slot, dir: press.dragging ? vec(press.x - press.startX, press.y - press.startY) : undefined });
+    const slot = press.button.slot;
+    this.onButtonState(slot, 'idle');
+    if (!this.enabled || slot === 0 || press.cancel) return;
+    this.releases.push({ slot, dir: press.dragging ? vec(press.x - press.startX, press.y - press.startY) : undefined });
   }
 
   /** The button under (x, y): the nearest one whose hit circle contains the point. */
@@ -230,11 +254,16 @@ export class TouchControls {
       g.fillStyle(KNOB, 0.45).fillCircle(kx, ky, look.knob);
       g.lineStyle(2, 0x1a1006, 0.8).strokeCircle(kx, ky, look.knob);
     }
-    // Drag-aiming: a ring under the finger and a line back to the button it started on.
+    // Drag-aiming: a ring under the finger and a line back to where it pressed; for distance-aimed skills a faint
+    // ring of the drag radius (its edge = full range). Red while the release would cancel.
     for (const press of this.presses.values()) {
       if (!press.dragging) continue;
-      g.lineStyle(2, AIM_RING, 0.6).lineBetween(press.startX, press.startY, press.x, press.y);
-      g.lineStyle(3, AIM_RING, 0.85).strokeCircle(press.x, press.y, 18);
+      const color = press.cancel ? CANCEL_RED : AIM_RING;
+      if (!press.cancel && this.distanceAimed(press.button.slot)) {
+        g.lineStyle(2, AIM_RING, 0.3).strokeCircle(press.startX, press.startY, this.tuning.aimDragRadius);
+      }
+      g.lineStyle(2, color, 0.6).lineBetween(press.startX, press.startY, press.x, press.y);
+      g.lineStyle(3, color, 0.85).strokeCircle(press.x, press.y, 18);
     }
   }
 }

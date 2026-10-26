@@ -63,7 +63,7 @@ import { AllyFx } from './allyFx';
 import { touchControls as touchTuning } from '../data/controls';
 import { TouchControls } from './touchControls';
 import { safeInsets, touchControlsOn } from './touchMode';
-import { deliveryReach, idleAim, isAimed, manualAim, tapAim } from './touchAim';
+import { deliveryReach, dragFraction, idleAim, isAimed, isDistanceAimed, manualAim, onScreen, tapAim, type AimTarget } from './touchAim';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
 // Flare floor tiles, characters baked from KayKit 3D models (tools/sprite-baker). Core (core/run) owns every rule:
@@ -405,7 +405,11 @@ export class RunScene extends Phaser.Scene {
    * The last released skill button: its skill index (0..2) and manual aim (world direction; undefined = auto-aim).
    * Steers RunInput.aim while that skill's press is buffered (until it fires or the buffer runs out).
    */
-  private touchCast: { skill: number; dir: Vec2 | undefined } | undefined;
+  private touchCast: { skill: number; dir: Vec2 | undefined; fraction: number } | undefined;
+  /** Q / E held at the last step in touch mode (keyboards on tablets): their presses auto-aim like taps. */
+  private readonly touchKeysWereDown: boolean[] = [false, false, false];
+  /** Auto-aim only picks enemies on screen (designer decision 2026-10-26). */
+  private readonly aimFilter = (target: AimTarget): boolean => onScreen(target, this.cameras.main.worldView);
   /** Skill buttons released since the last step: sent as one-step presses (then buffered like key taps). */
   private readonly touchTaps: boolean[] = [false, false, false];
 
@@ -472,6 +476,7 @@ export class RunScene extends Phaser.Scene {
     this.touch = touchControlsOn(this.game);
     this.touchCast = undefined;
     this.touchTaps.fill(false);
+    this.touchKeysWereDown.fill(false);
 
     for (const [set, anims] of Object.entries(SPRITE_SETS)) {
       for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
@@ -512,7 +517,18 @@ export class RunScene extends Phaser.Scene {
     });
     this.runHud = new RunHud(this, mapsData, () => (this.interactQueued = true), this.content);
     this.aimGfx = this.add.graphics().setDepth(-999);
-    this.touchControls = this.touch ? new TouchControls(this, () => this.hud.touchButtons(), touchTuning, (slot, pressed) => this.hud.setSlotPressed(slot, pressed)) : undefined;
+    this.touchControls = this.touch
+      ? new TouchControls(
+          this,
+          () => this.hud.touchButtons(),
+          touchTuning,
+          (slot, state) => this.hud.setSlotState(slot, state),
+          (slot) => {
+            const action = this.world.player.actions.skills[slot - 1];
+            return action !== undefined && isDistanceAimed(action.delivery);
+          },
+        )
+      : undefined;
     this.pointer = pinToScreen(this.add.graphics(), HUD_UI_DEPTH - 2);
     this.overlay = undefined;
     this.paused = false;
@@ -713,6 +729,7 @@ export class RunScene extends Phaser.Scene {
     this.uiPress = false;
     this.touchCast = undefined;
     this.touchTaps.fill(false);
+    this.touchKeysWereDown.fill(false);
     this.touchControls?.reset();
     this.accumulator = 0;
   }
@@ -1143,9 +1160,21 @@ export class RunScene extends Phaser.Scene {
     for (let release = controls.nextRelease(); release; release = controls.nextRelease()) {
       const skill = release.slot - 1;
       this.touchTaps[skill] = true;
-      this.touchCast = { skill, dir: release.dir ? normalize(screenDirToWorld(release.dir)) : undefined };
+      const dir = release.dir;
+      this.touchCast = {
+        skill,
+        dir: dir ? normalize(screenDirToWorld(dir)) : undefined,
+        fraction: dir ? dragFraction(Math.hypot(dir.x, dir.y), touchTuning.aimDragRadius) : 1,
+      };
     }
-    const skills = this.touchTaps.map((down, i) => {
+    // Keyboard skills (Q / E as on desktop; RMB is mouse aim, left out) cast with auto-aim, held = repeated like keys.
+    const keys = [false, k.Q.isDown, k.E.isDown];
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i] && !this.touchKeysWereDown[i]) this.touchCast = { skill: i, dir: undefined, fraction: 1 };
+      this.touchKeysWereDown[i] = keys[i] === true;
+    }
+    const skills = this.touchTaps.map((tap, i) => {
+      const down = tap || keys[i] === true;
       if (down && !this.skillWasDown[i]) this.skillBuffer[i] = INPUT_BUFFER;
       this.skillWasDown[i] = down;
       this.skillBuffer[i] = Math.max(0, (this.skillBuffer[i] ?? 0) - DT);
@@ -1157,10 +1186,10 @@ export class RunScene extends Phaser.Scene {
     const cast = this.touchCast;
     const castAction = cast && skills[cast.skill] ? player.actions.skills[cast.skill] : undefined;
     if (cast && castAction) {
-      aim = cast.dir ? manualAim(castAction.delivery, player, cast.dir) : tapAim(castAction.delivery, player, this.world.mobs, moveDir, touchTuning);
+      aim = cast.dir ? manualAim(castAction.delivery, player, cast.dir, cast.fraction) : tapAim(castAction.delivery, player, this.world.mobs, moveDir, touchTuning, this.aimFilter);
     } else {
       this.touchCast = undefined;
-      aim = attack ? tapAim(player.actions.basicAttack.delivery, player, this.world.mobs, moveDir, touchTuning) : idleAim(player, moveDir);
+      aim = attack ? tapAim(player.actions.basicAttack.delivery, player, this.world.mobs, moveDir, touchTuning, this.aimFilter) : idleAim(player, moveDir);
     }
     const interact = k.F.isDown || this.interactQueued;
     this.interactQueued = false;
@@ -1169,11 +1198,14 @@ export class RunScene extends Phaser.Scene {
     return { move, aim, basicAttack: attack, skills, interact, potion };
   }
 
-  /** Touch drag-aim: an arrow on the floor from the hero to the skill's reach (a ring for skills without a direction). */
+  /**
+   * Touch drag-aim: an arrow on the floor from the hero to the skill's reach (traps / Teleport: to the landing spot the
+   * drag length picks), a ring for skills without a direction; nothing while the release would cancel.
+   */
   private drawAimIndicator(): void {
     const g = this.aimGfx.clear();
     const drag = this.touchControls?.dragAim();
-    if (!drag) return;
+    if (!drag || drag.cancel) return;
     const action = this.world.player.actions.skills[drag.slot - 1];
     if (!action) return;
     const from = toScreen(this.hero.display);
@@ -1186,13 +1218,15 @@ export class RunScene extends Phaser.Scene {
       return;
     }
     const dir = normalize(screenDirToWorld(vec(drag.dx, drag.dy)));
-    const reach = deliveryReach(delivery);
+    const distance = isDistanceAimed(delivery);
+    const reach = deliveryReach(delivery) * (distance ? dragFraction(Math.hypot(drag.dx, drag.dy), touchTuning.aimDragRadius) : 1);
     const hero = this.hero.display;
     const end = toScreen(vec(hero.x + dir.x * reach, hero.y + dir.y * reach));
     let ex = end.x - from.x;
     let ey = end.y - from.y;
     const len = Math.hypot(ex, ey) || 1;
-    if (len < AIM_ARROW_MIN) {
+    // Direction-only skills: never a stub of an arrow. Traps / Teleport: the tip is exactly the landing spot.
+    if (!distance && len < AIM_ARROW_MIN) {
       ex *= AIM_ARROW_MIN / len;
       ey *= AIM_ARROW_MIN / len;
     }

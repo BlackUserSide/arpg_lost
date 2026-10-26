@@ -11,10 +11,16 @@ export interface TouchControlsTuning {
   readonly stickDeadZone: number;
   /** Screen px a finger must drag from where it pressed a skill button before the press becomes manual aiming. */
   readonly aimDragThreshold: number;
+  /**
+   * Screen px of drag that means full range for distance-aimed skills (traps, Teleport): a shorter drag throws /
+   * teleports proportionally closer (designer decision 2026-10-26).
+   */
+  readonly aimDragRadius: number;
 }
 
 export const touchControls: TouchControlsTuning = {
   autoAimRadius: 420,
   stickDeadZone: 0.18,
   aimDragThreshold: 22,
+  aimDragRadius: 120,
 };

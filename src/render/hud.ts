@@ -21,6 +21,7 @@ import { POTION_ROSE } from './potionFx';
 import { PotionSlot } from './potionHud';
 import { SoulsBadge } from './soulsHud';
 import { frameTexture, label, makeFrame, UI } from './ui';
+import type { ButtonState } from './touchControls';
 import type { SafeInsets } from './touchMode';
 
 // In-run HUD: Diablo-style life / class-resource orbs, skill bar with cooldown shutters, XP bar, buffs. The map run's
@@ -89,6 +90,9 @@ const TOUCH_ARC = [180, 225, 270] as const;
 /** Touch button held: scale and rim colour. */
 const PRESSED_SCALE = 0.93;
 const PRESSED_RIM = 0xf3d58a;
+/** Drag-aim brought back onto the button (release cancels): red rim and icon tint. */
+const CANCEL_RIM = 0xff4a3a;
+const CANCEL_TINT = 0xff7a6a;
 /** Buff icon side (px). */
 const BUFF_SIZE = 30;
 
@@ -131,8 +135,8 @@ interface Slot {
   xpFrac: number;
   /** Level-up glow, SKILL_LEVEL_GLOW → 0 seconds. */
   levelGlow: number;
-  /** Touch layout: a finger is on this button (drawn pressed). */
-  pressed: boolean;
+  /** Touch layout: a finger is on this button (drawn pressed), or its drag-aim would cancel (drawn red). */
+  state: ButtonState;
 }
 
 function orbRingTexture(scene: Phaser.Scene, r: number): string {
@@ -292,7 +296,7 @@ export class Hud {
         maxLevel: 1,
         xpFrac: Number.NaN,
         levelGlow: 0,
-        pressed: false,
+        state: 'idle',
       };
     });
     // Created after the orb rings (same depth, drawn above them), below the numbers (DEPTH + 2).
@@ -433,14 +437,22 @@ export class Hud {
     return Math.max(this.life.x + this.life.r, this.resource.x + this.resource.r) + 6;
   }
 
-  /** A finger is on the slot's touch button: the frame lights up like a hovered button. */
-  setSlotPressed(index: number, pressed: boolean): void {
+  /**
+   * Touch button look: pressed = lighter frame, sunk a little, gold rim; cancel = red frame, rim and icon tint (a
+   * drag-aim back on its button: releasing casts nothing). Rims and tints are drawn in update.
+   */
+  setSlotState(index: number, state: ButtonState): void {
     const slot = this.slots[index];
     if (!slot) return;
-    slot.pressed = pressed;
-    // Pressed: lighter frame, the button sinks a little (a gold rim is drawn over it in update).
-    slot.frame.setTexture(frameTexture(this.scene, slot.size, slot.size, pressed ? 'secondaryHover' : 'secondary')).setScale(pressed ? PRESSED_SCALE : 1);
-    slot.icon.setDisplaySize((slot.size - 10) * (pressed ? PRESSED_SCALE : 1), (slot.size - 10) * (pressed ? PRESSED_SCALE : 1));
+    slot.state = state;
+    this.applySlotState(slot);
+  }
+
+  private applySlotState(slot: Slot): void {
+    const k = slot.state === 'idle' ? 1 : PRESSED_SCALE;
+    const variant = slot.state === 'cancel' ? 'danger' : slot.state === 'pressed' ? 'secondaryHover' : 'secondary';
+    slot.frame.setTexture(frameTexture(this.scene, slot.size, slot.size, variant)).setScale(k);
+    slot.icon.setDisplaySize((slot.size - 10) * k, (slot.size - 10) * k);
   }
 
   private placeSlot(slot: Slot, x: number, y: number, size: number): void {
@@ -448,9 +460,9 @@ export class Hud {
     slot.size = size;
     slot.x = x;
     slot.y = y;
-    const k = slot.pressed ? PRESSED_SCALE : 1;
-    slot.frame.setTexture(frameTexture(this.scene, size, size, slot.pressed ? 'secondaryHover' : 'secondary')).setPosition(x, y).setScale(k);
-    slot.icon.setPosition(x, y).setDisplaySize((size - 10) * k, (size - 10) * k);
+    slot.frame.setPosition(x, y);
+    slot.icon.setPosition(x, y);
+    this.applySlotState(slot);
     slot.key.setPosition(x, y + size / 2 - 2);
     slot.cdText.setPosition(x, y).setFontSize(size > 70 ? 22 : 18);
     slot.costText.setPosition(x - size / 2 + 4, y - size / 2 + 3);
@@ -540,9 +552,10 @@ export class Hud {
       slot.icon.setAlpha(blocked || unaffordable ? 0.45 : 1);
       if (unaffordable) slot.icon.setTint(slot.lifeCost ? 0xb86a6a : this.resourceLook.unaffordable);
       else slot.icon.clearTint();
-      if (slot.pressed) {
+      if (slot.state === 'cancel') slot.icon.setTint(CANCEL_TINT);
+      if (slot.state !== 'idle') {
         const half = (slot.size * PRESSED_SCALE) / 2;
-        s.lineStyle(3, PRESSED_RIM, 0.95).strokeRect(slot.x - half + 3, slot.y - half + 3, half * 2 - 6, half * 2 - 6);
+        s.lineStyle(3, slot.state === 'cancel' ? CANCEL_RIM : PRESSED_RIM, 0.95).strokeRect(slot.x - half + 3, slot.y - half + 3, half * 2 - 6, half * 2 - 6);
       }
       const shown = multi ? info.charges : -1;
       if (shown !== slot.shownCharges) {
