@@ -7,7 +7,7 @@ import { getApp } from './app';
 import { classDescription, className } from './contentText';
 import { BODY_FONT } from './fonts';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
-import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
+import { CLASS_LOOKS, HERO_SETS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
 import { fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
 const SUGGESTED_NAMES: Record<string, readonly string[]> = {
@@ -45,7 +45,7 @@ export class CreateCharacterScene extends Phaser.Scene {
   }
 
   preload(): void {
-    loadSprites(this);
+    loadSprites(this, HERO_SETS);
     preloadBackdrop(this);
   }
 

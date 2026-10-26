@@ -51,7 +51,8 @@ import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
 import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
 import { ISO_K, screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
-import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadSprites, MOB_SPRITES, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, textureKey } from './sprites';
+import { mobSprite, runSpriteSets, type RunSpriteSets } from './runSprites';
+import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadedSpriteKeys, loadSprites, MOB_SPRITES, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, spritesLoaded, textureKey, unloadSprites } from './sprites';
 import { BossFx } from './bossFx';
 import { EliteFx, eliteLook } from './eliteFx';
 import { UniqueFx } from './uniqueFx';
@@ -329,6 +330,9 @@ export class RunScene extends Phaser.Scene {
   private paused = false;
   /** gameplayStart was sent and not yet matched by gameplayStop. */
   private gameplayActive = false;
+  /** Sprite sets of this run: loaded with the scene (start) and in the background (boss). */
+  private spriteSets: RunSpriteSets = { start: [], boss: [] };
+  private bossSpritesQueued = false;
   private textPool: Phaser.GameObjects.Text[] = [];
   private combatFx!: CombatFx;
   /** Level-3 skill effect visuals (ground zones, decoy ghost, split / whirl / slam bursts). */
@@ -400,11 +404,48 @@ export class RunScene extends Phaser.Scene {
   }
 
   preload(): void {
+    getApp(this).platform.loadingStart();
     if (!this.textures.exists('floor')) this.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
-    loadSprites(this);
+    // Only what this map can show before the boss; the boss's sheets load in the background later (loadBossSprites).
+    const character = findCharacter(getApp(this).profile, this.characterId);
+    const allies = character ? heroMechanics(character, passiveTree, itemsData).flatMap((m) => (m.kind === 'raiseAllies' ? [m.mobId] : [])) : [];
+    this.spriteSets = runSpriteSets(this.content, mapsData.rules, this.resolveMapLevel(character), this.heroSet(), allies);
+    this.bossSpritesQueued = false;
+    // The other heroes (menus) and mobs of an earlier, harder map are not drawn here: free their GPU memory.
+    unloadSprites(this, [...this.spriteSets.start, ...this.spriteSets.boss]);
+    loadSprites(this, this.spriteSets.start);
+  }
+
+  private heroSet(): string {
+    return CLASS_LOOKS.find((l) => l.classId === this.classId)?.sprite ?? 'knight';
+  }
+
+  /** The requested map if the hero may enter it, else their highest unlocked one (map 1 without a hero). */
+  private resolveMapLevel(character: ReturnType<typeof findCharacter>): number {
+    const requested = this.requestedMap;
+    return character ? (requested !== undefined && canEnterMap(character, requested) ? requested : unlockedMap(character)) : 1;
+  }
+
+  /** Nearest filtering on every loaded sprite sheet of `sets` (pixel look). */
+  private sharpenSprites(sets: readonly string[]): void {
+    for (const set of sets) for (const key of loadedSpriteKeys(this, set)) this.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST);
+  }
+
+  /**
+   * Queues the boss's sheets once the first room is cleared (a calm moment; the downloads, decoding and GPU uploads
+   * then never compete with the opening fight), or on entering the boss room at the latest.
+   */
+  private loadBossSprites(): void {
+    if (this.bossSpritesQueued || (this.run.phase === 'waves' && currentTemplate(this.run, mapsData).kind !== 'boss')) return;
+    this.bossSpritesQueued = true;
+    const sets = this.spriteSets.boss;
+    if (loadSprites(this, sets) === 0) return;
+    this.load.once(Phaser.Loader.Events.COMPLETE, () => this.sharpenSprites(sets));
+    this.load.start();
   }
 
   create(): void {
+    getApp(this).platform.loadingStop();
     const character = findCharacter(getApp(this).profile, this.characterId);
     const classDef = getClass(this.content, this.classId);
     // Equipment and passives enter the run as modifiers, plus the equipped weapon.
@@ -420,9 +461,7 @@ export class RunScene extends Phaser.Scene {
           supports: socketedSupports(character),
         }
       : {};
-    const requested = this.requestedMap;
-    const mapLevel = character ? (requested !== undefined && canEnterMap(character, requested) ? requested : unlockedMap(character)) : 1;
-    this.run = createRun(this.content, mapsData, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout, mapLevel);
+    this.run = createRun(this.content, mapsData, this.classId, (Math.random() * 2 ** 32) >>> 0, loadout, this.resolveMapLevel(character));
     this.world = this.run.world;
     this.summary = undefined;
     this.legendaryCelebrated = false;
@@ -448,9 +487,7 @@ export class RunScene extends Phaser.Scene {
     this.announcement = [];
     this.bossFall = undefined;
 
-    for (const [set, anims] of Object.entries(SPRITE_SETS)) {
-      for (const anim of Object.keys(anims)) this.textures.get(textureKey(set, anim)).setFilter(Phaser.Textures.FilterMode.NEAREST);
-    }
+    this.sharpenSprites(Object.keys(SPRITE_SETS));
 
     this.input.mouse?.disableContextMenu();
     this.keys = this.input.keyboard!.addKeys('W,A,S,D,Q,E,R,P,F,ESC,ONE') as Keys;
@@ -475,8 +512,7 @@ export class RunScene extends Phaser.Scene {
     this.heroTinted = false;
     this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
-    const look = CLASS_LOOKS.find((l) => l.classId === this.classId);
-    this.hero = this.createActor(look?.sprite ?? 'knight', this.world.player.pos);
+    this.hero = this.createActor(this.heroSet(), this.world.player.pos);
     this.light = this.createLight();
     this.cameras.main.setBackgroundColor('#07070a');
     this.buildRoom();
@@ -965,6 +1001,7 @@ export class RunScene extends Phaser.Scene {
       steps++;
     }
     if (steps === MAX_STEPS_PER_FRAME) this.accumulator = 0;
+    this.loadBossSprites();
 
     // Render between the last two sim states so motion is smooth at any refresh rate.
     this.alpha = Math.min(1, this.accumulator / DT);
@@ -1596,7 +1633,9 @@ export class RunScene extends Phaser.Scene {
       let actor = this.mobs.get(mob.id);
       const def = getMob(this.content, mob.defId);
       if (!actor) {
-        const set = MOB_SPRITES[mob.defId] ?? 'skeleton_warrior';
+        const set = mobSprite(mob.defId);
+        // Background sheets (the boss) still on their way on a slow connection: the mob shows up once they land.
+        if (!spritesLoaded(this, set)) continue;
         // Sets baked bigger (the boss) already show their def's size: their native scale is the normal-mob scale.
         const bodyScale = def.radius > 0 ? mob.radius / def.radius : 1;
         actor = this.createActor(set, mob.pos, mobRank(def, mob), bodyScale * spriteLayout(set).nativeScale);

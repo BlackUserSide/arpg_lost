@@ -15,7 +15,7 @@ import { PointsBanner } from './passiveBanner';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { RunSceneData } from './RunScene';
 import type { SupportsSceneData } from './SupportsScene';
-import { CLASS_LOOKS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
+import { CLASS_LOOKS, HERO_SETS, loadSprites, ORIGIN_Y, spriteFrame, textureKey, unloadSprites } from './sprites';
 import { confirmDialog, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, showToast, UI } from './ui';
 
 const AVATAR_KEY = 'user-avatar';
@@ -39,7 +39,9 @@ export class MainMenuScene extends Phaser.Scene {
   preload(): void {
     this.app = getApp(this);
     this.app.platform.loadingStart();
-    loadSprites(this);
+    // Mob and boss sheets of a finished run are not drawn in the hub: free their GPU memory (phones).
+    unloadSprites(this, HERO_SETS);
+    loadSprites(this, HERO_SETS);
     preloadBackdrop(this);
     const avatar = this.app.user?.avatarUrl;
     if (avatar && !this.textures.exists(AVATAR_KEY)) {
