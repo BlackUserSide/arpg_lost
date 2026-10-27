@@ -67,6 +67,7 @@ import { AllyFx } from './allyFx';
 import { touchControls as touchTuning } from '../data/controls';
 import { makeFullscreenButton } from './fullscreen';
 import { TouchControls } from './touchControls';
+import { ORIENTATION_BLOCKED, orientationBlocked } from './orientationGate';
 import { safeInsets, touchControlsOn } from './touchMode';
 import { deliveryReach, dragFraction, firstUsableSkill, idleAim, isAimed, isDistanceAimed, manualAim, onScreen, tapAim, type AimTarget } from './touchAim';
 
@@ -683,8 +684,16 @@ export class RunScene extends Phaser.Scene {
     this.game.events.on(Phaser.Core.Events.HIDDEN, autoPause);
     this.game.events.on(Phaser.Core.Events.FOCUS, back);
     this.game.events.on(Phaser.Core.Events.VISIBLE, back);
+    // A phone turned upright gets the portrait cover (orientationGate.ts): pause like leaving the tab; turning back
+    // keeps the pause menu open (the player resumes when ready).
+    const turned = (portrait: boolean): void => {
+      if (portrait) autoPause();
+    };
+    this.game.events.on(ORIENTATION_BLOCKED, turned);
 
     this.setGameplay(true);
+    // Started while the cover is up (it went up during the scene switch): begin paused.
+    if (orientationBlocked()) autoPause();
     fadeIn(this);
     this.events.once('shutdown', () => {
       this.scale.off('resize', relayout);
@@ -692,6 +701,7 @@ export class RunScene extends Phaser.Scene {
       this.game.events.off(Phaser.Core.Events.HIDDEN, autoPause);
       this.game.events.off(Phaser.Core.Events.FOCUS, back);
       this.game.events.off(Phaser.Core.Events.VISIBLE, back);
+      this.game.events.off(ORIENTATION_BLOCKED, turned);
       if (this.treeOpen) this.scene.stop('passive-tree');
       this.treeOpen = false;
       // Leaving mid-run (closing the screen) records it as abandoned.
@@ -833,7 +843,7 @@ export class RunScene extends Phaser.Scene {
   private closeTree(): void {
     this.treeOpen = false;
     this.applyPassives(false);
-    const away = this.pauseAfterTree || document.hidden;
+    const away = this.pauseAfterTree || document.hidden || orientationBlocked();
     this.pauseAfterTree = false;
     if (this.mode.pauseOnMenus) this.scene.resume();
     if (away && !this.ended()) {
@@ -869,6 +879,8 @@ export class RunScene extends Phaser.Scene {
   }
 
   private setPaused(paused: boolean): void {
+    // A phone held upright (portrait cover up): stay paused until it is turned back and the player resumes.
+    if (!paused && orientationBlocked()) return;
     this.paused = paused;
     if (paused) {
       this.setGameplay(false);

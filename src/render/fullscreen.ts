@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { t } from '../i18n';
+import { lockLandscape, unlockOrientation } from './orientationGate';
 import { label, makeButton, showToast, UI } from './ui';
 
 // Full-screen toggle (phones lose a lot of height to the browser bars). The Fullscreen API needs a user gesture: the
@@ -26,6 +27,7 @@ export function fullscreenAvailable(scene: Phaser.Scene): boolean {
 export function toggleFullscreen(scene: Phaser.Scene): void {
   const scale = scene.scale;
   if (scale.isFullscreen) {
+    unlockOrientation();
     scale.stopFullscreen();
     return;
   }
@@ -46,10 +48,19 @@ export function toggleFullscreen(scene: Phaser.Scene): void {
     showToast(scene, t('menu.fullscreenFailed'));
     return;
   }
+  // Android phones: in full screen the orientation can be locked to landscape (render/orientationGate.ts). Silent
+  // where it cannot (iOS has no element full screen at all; tablets and desktops are not locked).
+  const game = scene.game;
   if (result instanceof Promise) {
-    result.catch(() => {
-      if (scene.scene.isActive()) showToast(scene, t('menu.fullscreenFailed'));
-    });
+    result.then(
+      () => lockLandscape(game),
+      () => {
+        if (scene.scene.isActive()) showToast(scene, t('menu.fullscreenFailed'));
+      },
+    );
+  } else {
+    // Prefixed APIs without a promise: the switch is not done yet, lock once the browser reports it.
+    scene.scale.once(Phaser.Scale.Events.ENTER_FULLSCREEN, () => lockLandscape(game));
   }
 }
 

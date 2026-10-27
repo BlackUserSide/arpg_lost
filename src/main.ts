@@ -6,6 +6,7 @@ import { CreateCharacterScene } from './render/CreateCharacterScene';
 import { InventoryScene } from './render/InventoryScene';
 import { RunScene } from './render/RunScene';
 import { MainMenuScene } from './render/MainMenuScene';
+import { installOrientationGate } from './render/orientationGate';
 import { PassiveTreeScene } from './render/PassiveTreeScene';
 import { SupportsScene } from './render/SupportsScene';
 
@@ -26,6 +27,9 @@ async function boot(): Promise<void> {
     scene: [MainMenuScene, CreateCharacterScene, InventoryScene, RunScene, PassiveTreeScene, SupportsScene],
     callbacks: { preBoot: (g) => g.registry.set(APP_KEY, app) },
   });
+
+  // Phones play in landscape only: a cover asks to turn the phone while it is held upright.
+  installOrientationGate(game);
 
   // Dev-only handle for debugging from the console.
   if (import.meta.env.DEV) (window as unknown as { __game: Phaser.Game }).__game = game;

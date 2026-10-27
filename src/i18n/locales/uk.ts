@@ -47,6 +47,7 @@ export const uk: LocaleTable = {
   'menu.fullscreen': 'На весь екран',
   'menu.exitFullscreen': 'Вийти з повноекранного режиму',
   'menu.fullscreenFailed': 'Повноекранний режим тут недоступний',
+  'orientation.rotate': 'Поверніть телефон горизонтально, щоб грати',
 
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'Режим QA увімкнено',

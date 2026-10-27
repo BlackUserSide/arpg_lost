@@ -1,4 +1,5 @@
 import type * as Phaser from 'phaser';
+import { phoneLayout } from '../data/controls';
 
 // Which controls the run shows (docs/design/controls.md): the touch layout (stick + buttons) on phones and tablets,
 // the keyboard + mouse one on desktops. `?touch=1` forces the touch layout (desktop testing), `?touch=0` the desktop one.
@@ -21,10 +22,26 @@ function urlOverride(): boolean | undefined {
 export function touchControlsOn(game: Phaser.Game): boolean {
   const override = urlOverride();
   if (override !== undefined) return override;
+  return touchDevice(game);
+}
+
+/** A phone or tablet by the device itself (the `?touch=` override is ignored). */
+export function touchDevice(game: Phaser.Game): boolean {
   const os = game.device.os;
   if (!os.desktop) return true;
   // iPadOS Safari reports a Mac by default; a Mac with a multi-touch screen is an iPad.
   return os.macOS && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1;
+}
+
+/**
+ * A phone: a touch device whose screen's shorter side is below data/controls phoneLayout.maxShortSide. Reads the
+ * device screen, not the window, so it holds inside the portal iframe and does not flip when the device rotates
+ * (iOS keeps screen.width / height in portrait terms, Android swaps them: the shorter side is the same either way).
+ * Phones play in landscape only (render/orientationGate.ts); tablets and desktops are unaffected.
+ */
+export function isPhone(game: Phaser.Game): boolean {
+  if (typeof screen === 'undefined' || !touchDevice(game)) return false;
+  return Math.min(screen.width, screen.height) < phoneLayout.maxShortSide;
 }
 
 export interface SafeInsets {

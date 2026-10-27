@@ -49,6 +49,7 @@ export const de: LocaleTable = {
   'menu.fullscreen': 'Vollbild',
   'menu.exitFullscreen': 'Vollbild beenden',
   'menu.fullscreenFailed': 'Vollbild ist hier nicht verfügbar',
+  'orientation.rotate': 'Dreh dein Handy ins Querformat, um zu spielen',
 
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'QA-Modus an',

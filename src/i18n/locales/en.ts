@@ -48,6 +48,7 @@ export const en = {
   'menu.fullscreen': 'Full screen',
   'menu.exitFullscreen': 'Exit full screen',
   'menu.fullscreenFailed': 'Full screen is not available here',
+  'orientation.rotate': 'Turn your phone sideways to play',
 
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'QA mode on',

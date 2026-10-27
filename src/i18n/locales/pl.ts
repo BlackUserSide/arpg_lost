@@ -50,6 +50,7 @@ export const pl: LocaleTable = {
   'menu.fullscreen': 'Pełny ekran',
   'menu.exitFullscreen': 'Zamknij pełny ekran',
   'menu.fullscreenFailed': 'Pełny ekran jest tu niedostępny',
+  'orientation.rotate': 'Obróć telefon poziomo, aby grać',
 
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'Tryb QA włączony',

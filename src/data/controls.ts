@@ -24,3 +24,16 @@ export const touchControls: TouchControlsTuning = {
   aimDragThreshold: 22,
   aimDragRadius: 120,
 };
+
+/** Phone detection (designer decision 2026-10-27: phones play in landscape only; tablets and desktops in any). */
+export interface PhoneLayoutTuning {
+  /**
+   * A touch device whose screen's shorter side (CSS px) is below this counts as a phone. Phones: ~320..450;
+   * small tablets (iPad mini 744, Android 7" ~600) stay above.
+   */
+  readonly maxShortSide: number;
+}
+
+export const phoneLayout: PhoneLayoutTuning = {
+  maxShortSide: 500,
+};
