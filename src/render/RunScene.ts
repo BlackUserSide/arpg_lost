@@ -65,6 +65,7 @@ import { ClockFx, ENEMY_FX_DEPTH, HERO_STOP_DEPTH } from './clockFx';
 import { soulsMax } from '../core/world/souls';
 import { AllyFx } from './allyFx';
 import { touchControls as touchTuning } from '../data/controls';
+import { makeFullscreenButton } from './fullscreen';
 import { TouchControls } from './touchControls';
 import { safeInsets, touchControlsOn } from './touchMode';
 import { deliveryReach, dragFraction, firstUsableSkill, idleAim, isAimed, isDistanceAimed, manualAim, onScreen, tapAim, type AimTarget } from './touchAim';
@@ -663,6 +664,9 @@ export class RunScene extends Phaser.Scene {
       // Rotation / resize mid-press: the buttons moved, so drop every finger (no casts) instead of keeping stale spots.
       this.touchControls?.reset();
       this.layoutUi();
+      // Paused (pause menu, tree): update() draws nothing, so redraw the view for the new size once now (the full
+      // screen toggle in the pause menu resizes while paused). Visual only, no simulation step.
+      this.redrawStill();
       if (this.overlay && this.overlayKind) this.showOverlay(this.overlayKind);
     };
     this.scale.on('resize', relayout);
@@ -750,7 +754,7 @@ export class RunScene extends Phaser.Scene {
     const compact = width < 820 || height < 520;
     const margin = compact ? 12 : 22;
     // Touch layout keeps out of the notch / home indicator (zero inside the portal iframe).
-    const insets = this.touch ? safeInsets() : undefined;
+    const insets = this.touch ? safeInsets(this.game.canvas) : undefined;
     this.hud.layout(width, height, insets);
     this.clockFx.layout(width, height);
     this.treeButton?.destroy();
@@ -948,6 +952,10 @@ export class RunScene extends Phaser.Scene {
     const buttonH = compact ? 44 : 52;
     const buttonY = top + panelH - (compact ? 38 : 50);
     if (kind === 'pause') {
+      // Full screen toggle in the panel's top right corner (hidden where the browser has no element full screen).
+      const fsSize = compact ? 34 : 38;
+      const fullscreen = makeFullscreenButton(this, width / 2 + panelW / 2 - fsSize / 2 - 12, top + fsSize / 2 + 12, fsSize);
+      if (fullscreen) objects.push(fullscreen);
       objects.push(makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, t('arena.resume'), () => this.setPaused(false), 'primary'));
       objects.push(makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.endRun'), () => this.confirmAbandon()));
     } else {
@@ -1179,6 +1187,16 @@ export class RunScene extends Phaser.Scene {
     this.drawAimIndicator();
     this.hud.update(this.world, dt);
     this.runHud.update(this.run, dt, this.bossReady());
+  }
+
+  /** Camera on the hero, HUD orbs / slots / run header redrawn at their new places; time does not move (dt 0). */
+  private redrawStill(): void {
+    const heroScreen = toScreen(this.hero.display);
+    this.cameras.main.centerOn(heroScreen.x, heroScreen.y - 30);
+    this.light.setPosition(heroScreen.x, heroScreen.y - 30);
+    this.drawDoorPointer();
+    this.hud.update(this.world, 0);
+    this.runHud.update(this.run, 0, this.bossReady());
   }
 
   private altarLook(): AltarLook {

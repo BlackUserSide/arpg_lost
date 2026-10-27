@@ -45,6 +45,9 @@ export const en = {
   'menu.loginHint': 'Log in to keep your heroes\non every device.',
   'menu.login': 'Log in',
   'menu.language': 'Language',
+  'menu.fullscreen': 'Full screen',
+  'menu.exitFullscreen': 'Exit full screen',
+  'menu.fullscreenFailed': 'Full screen is not available here',
 
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'QA mode on',

@@ -10,6 +10,7 @@ import { getLocale, LOCALE_NAMES, LOCALES, t, type Locale } from '../i18n';
 import { getApp, type App } from './app';
 import { className } from './contentText';
 import { loadGlyphs } from './fonts';
+import { makeFullscreenButton } from './fullscreen';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { PointsBanner } from './passiveBanner';
 import { buildQaPanel, QA_UNLOCK_TAPS, QA_UNLOCK_WINDOW_MS, type QaResultLine } from './qaPanel';
@@ -188,10 +189,25 @@ export class MainMenuScene extends Phaser.Scene {
     this.buildLoginHint(sceneW, compact, portrait ? listBottom + 8 : undefined);
     this.buildVersionLabel(height);
     const switcherLeft = title.x + title.width + (compact ? 12 : 20);
-    // QA mode: a small button right of the language switcher (before it, so the language list draws over it).
-    if (this.app.settings.qa === true) this.buildQaButton(switcherLeft + (compact ? 112 : 136) + (compact ? 8 : 12), title.y + title.height / 2, compact);
+    const rowY = title.y + title.height / 2;
+    const rowGap = compact ? 8 : 12;
+    // Full screen toggle and (QA mode) the QA button right of the language switcher; built before it, so the
+    // language list draws over them.
+    let rowLeft = switcherLeft + (compact ? 112 : 136) + rowGap;
+    const fsSize = compact ? 32 : 36;
+    const fullscreen = makeFullscreenButton(this, rowLeft + fsSize / 2, rowY, fsSize);
+    if (fullscreen) {
+      this.root.add(fullscreen);
+      rowLeft += fsSize + rowGap;
+    }
+    if (this.app.settings.qa === true) {
+      // Narrow portrait phones: no room left in the title row, the QA button goes left of the account line below it.
+      const fits = rowLeft + (compact ? 48 : 56) <= width - (compact ? 8 : 16);
+      if (fits) this.buildQaButton(rowLeft, rowY, compact);
+      else this.buildQaButton(title.x, portrait ? PORTRAIT_ACCOUNT_Y : rowY + (compact ? 42 : 48), compact);
+    }
     // Last, so its list draws over everything else.
-    this.buildLanguageSwitcher(switcherLeft, title.y + title.height / 2, compact);
+    this.buildLanguageSwitcher(switcherLeft, rowY, compact);
     if (selected && this.mapsOpen) this.buildMapList(selected, compact);
     if (this.qaOpen && this.app.settings.qa === true) this.buildQa(selected, compact);
   }

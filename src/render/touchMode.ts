@@ -37,10 +37,12 @@ export interface SafeInsets {
 let probe: HTMLDivElement | undefined;
 
 /**
- * The device's safe area insets in CSS px (notch, home indicator), read from env(safe-area-inset-*). Zero where the
- * browser keeps the page inside the safe area itself (no viewport-fit=cover, or inside the portal iframe).
+ * The device's safe area insets in CSS px (notch, home indicator), read from env(safe-area-inset-*), minus what the
+ * page layout already keeps clear around `canvas`: index.html insets the game container by the same env() values, so
+ * with `canvas` given this is normally zero (also inside the portal iframe, where env() is zero). Kept so the HUD
+ * stays safe if the page ever lets the canvas reach under the notch again.
  */
-export function safeInsets(): SafeInsets {
+export function safeInsets(canvas?: Element): SafeInsets {
   if (typeof document === 'undefined') return { top: 0, right: 0, bottom: 0, left: 0 };
   if (!probe) {
     probe = document.createElement('div');
@@ -52,5 +54,13 @@ export function safeInsets(): SafeInsets {
   }
   const s = getComputedStyle(probe);
   const px = (v: string): number => parseFloat(v) || 0;
-  return { top: px(s.paddingTop), right: px(s.paddingRight), bottom: px(s.paddingBottom), left: px(s.paddingLeft) };
+  const env = { top: px(s.paddingTop), right: px(s.paddingRight), bottom: px(s.paddingBottom), left: px(s.paddingLeft) };
+  if (!canvas) return env;
+  const r = canvas.getBoundingClientRect();
+  return {
+    top: Math.max(0, env.top - r.top),
+    right: Math.max(0, env.right - (window.innerWidth - r.right)),
+    bottom: Math.max(0, env.bottom - (window.innerHeight - r.bottom)),
+    left: Math.max(0, env.left - r.left),
+  };
 }

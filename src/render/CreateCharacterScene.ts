@@ -187,20 +187,25 @@ export class CreateCharacterScene extends Phaser.Scene {
     });
     input.addEventListener('focus', () => (input.style.borderColor = '#f3d58a'));
     input.addEventListener('blur', () => (input.style.borderColor = '#8a6a32'));
-    document.body.appendChild(input);
+    // Inside the game container (not body): in full screen only the shell around it is shown (scale fullscreenTarget).
+    // The container blocks text selection and touch gestures for the game: the input opts back in.
+    Object.assign(input.style, { userSelect: 'text', webkitUserSelect: 'text', touchAction: 'manipulation' });
+    (this.game.canvas.parentElement ?? document.body).appendChild(input);
     this.nameInput = input;
     return input;
   }
 
-  /** Places the DOM input over canvas coordinates. */
+  /** Places the DOM input over canvas coordinates (relative to its positioned container). */
   private positionInput(x: number, y: number, w: number, h: number): void {
     if (!this.nameInput) return;
     const rect = this.game.canvas.getBoundingClientRect();
+    const host = this.nameInput.offsetParent ?? document.body;
+    const hostRect = host.getBoundingClientRect();
     const sx = rect.width / this.scale.width;
     const sy = rect.height / this.scale.height;
     Object.assign(this.nameInput.style, {
-      left: `${rect.left + window.scrollX + x * sx}px`,
-      top: `${rect.top + window.scrollY + y * sy}px`,
+      left: `${rect.left - hostRect.left - host.clientLeft + x * sx}px`,
+      top: `${rect.top - hostRect.top - host.clientTop + y * sy}px`,
       width: `${w * sx}px`,
       height: `${h * sy}px`,
     });

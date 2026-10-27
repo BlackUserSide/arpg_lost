@@ -46,6 +46,9 @@ export const de: LocaleTable = {
   'menu.loginHint': 'Melde dich an, um deine Helden\nauf jedem Gerät zu haben.',
   'menu.login': 'Anmelden',
   'menu.language': 'Sprache',
+  'menu.fullscreen': 'Vollbild',
+  'menu.exitFullscreen': 'Vollbild beenden',
+  'menu.fullscreenFailed': 'Vollbild ist hier nicht verfügbar',
 
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'QA-Modus an',

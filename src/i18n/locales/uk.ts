@@ -44,6 +44,9 @@ export const uk: LocaleTable = {
   'menu.loginHint': 'Увійдіть, щоб ваші герої\nбули на кожному пристрої.',
   'menu.login': 'Увійти',
   'menu.language': 'Мова',
+  'menu.fullscreen': 'На весь екран',
+  'menu.exitFullscreen': 'Вийти з повноекранного режиму',
+  'menu.fullscreenFailed': 'Повноекранний режим тут недоступний',
 
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'Режим QA увімкнено',

@@ -19,7 +19,8 @@ async function boot(): Promise<void> {
     type: Phaser.AUTO,
     parent: 'game',
     backgroundColor: '#0b0a0e',
-    scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' },
+    // Full screen takes the page shell around the game (index.html), so DOM overlays such as the name input go with it.
+    scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%', fullscreenTarget: 'shell' },
     // Touch pointers: pinch zoom on the passive tree; in a run the stick, the attack button and a skill / the potion at once.
     input: { activePointers: 4 },
     scene: [MainMenuScene, CreateCharacterScene, InventoryScene, RunScene, PassiveTreeScene, SupportsScene],

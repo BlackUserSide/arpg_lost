@@ -47,6 +47,9 @@ export const pl: LocaleTable = {
   'menu.loginHint': 'Zaloguj się, by mieć swoich bohaterów\nna każdym urządzeniu.',
   'menu.login': 'Zaloguj',
   'menu.language': 'Język',
+  'menu.fullscreen': 'Pełny ekran',
+  'menu.exitFullscreen': 'Zamknij pełny ekran',
+  'menu.fullscreenFailed': 'Pełny ekran jest tu niedostępny',
 
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'Tryb QA włączony',
