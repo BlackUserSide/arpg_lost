@@ -3,6 +3,8 @@ import { vec, type Vec2 } from '../core/math';
 import type { RoomTemplate } from '../core/run/types';
 import type { EnvironmentLook, PillarLook, SlabLook } from '../data/environments';
 import { softDotTexture } from './fxTextures';
+import { css, decorRandom, makeCanvas } from './proceduralArt';
+import { RuinsDecor } from './ruinsDecor';
 import { toScreen } from './iso';
 
 // One room of a map run on screen: floor tiles sized to the room, back walls and a front ledge, round pillars (core
@@ -70,20 +72,6 @@ const lerpColor = (a: number, b: number, k: number): number => {
   const c = Phaser.Display.Color.Interpolate.ColorWithColor(Phaser.Display.Color.IntegerToColor(a), Phaser.Display.Color.IntegerToColor(b), 100, Math.round(k * 100));
   return Phaser.Display.Color.GetColor(c.r, c.g, c.b);
 };
-
-const css = (color: number, alpha = 1): string => `rgba(${(color >> 16) & 255},${(color >> 8) & 255},${color & 255},${alpha})`;
-
-/** Small deterministic generator for procedural decoration (look only, never game state). */
-function decorRandom(seed: number): () => number {
-  let s = seed >>> 0 || 1;
-  return () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 const tileHash = (i: number, j: number): number => (i * 73856093) ^ (j * 19349663);
 
@@ -409,6 +397,10 @@ function slabTileTexture(scene: Phaser.Scene, env: EnvironmentLook, look: SlabLo
     diamond.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
     ctx.clip();
+    if (look.groundTint) {
+      ctx.fillStyle = css(look.groundTint.color, look.groundTint.alpha);
+      ctx.fillRect(ox, oy, TILE_W, TILE_H);
+    }
     // Layout of slabs in tile fractions [u0, v0, u1, v1].
     // Mostly whole flagstones (they read calmer under a crowd), some halves and quarters, two grown-over gaps.
     const quarters: [number, number, number, number][] = [[0, 0, 0.5, 0.5], [0.5, 0, 1, 0.5], [0, 0.5, 0.5, 1], [0.5, 0.5, 1, 1]];
@@ -549,6 +541,31 @@ function slabTileTexture(scene: Phaser.Scene, env: EnvironmentLook, look: SlabLo
   return key;
 }
 
+/** Whole-slab frames a cut edge tile is made from. */
+const PARTIAL_VARIANTS = 4;
+
+/**
+ * Frame `frame` of floor texture `texture` cut to the part of its cell inside the room (tile-local world fractions
+ * `fu` along x, `fv` along y): the room's last row / column when its size is not a whole number of tiles.
+ */
+function partialTileTexture(scene: Phaser.Scene, texture: string, frame: number, fu: number, fv: number): string {
+  const ku = Math.round(fu * 100);
+  const kv = Math.round(fv * 100);
+  const key = `room:part:${texture}:${frame}:${ku}:${kv}`;
+  if (scene.textures.exists(key)) return key;
+  const { canvas, ctx } = makeCanvas(TILE_W, TILE_H);
+  const corners = [tilePoint(0, 0, 0, 0), tilePoint(0, 0, ku / 100, 0), tilePoint(0, 0, ku / 100, kv / 100), tilePoint(0, 0, 0, kv / 100)];
+  ctx.beginPath();
+  corners.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.clip();
+  const source = scene.textures.get(texture);
+  const f = source.get(frame);
+  ctx.drawImage(source.getSourceImage() as CanvasImageSource, f.cutX, f.cutY, f.cutWidth, f.cutHeight, 0, 0, TILE_W, TILE_H);
+  scene.textures.addCanvas(key, canvas);
+  return key;
+}
+
 export class RoomView {
   private objects: Phaser.GameObjects.GameObject[] = [];
   private pillars: Pillar[] = [];
@@ -567,9 +584,13 @@ export class RoomView {
   /** Alpha factor of door / altar glows (plain-alpha glows on light floors are fainter). */
   private glowAlpha = 1;
 
+  /** Open-air environments: the land beyond the room, floor props and sun rays. */
+  private readonly decor: RuinsDecor;
+
   constructor(private readonly scene: Phaser.Scene) {
     this.rings = scene.add.graphics().setDepth(GLOW_DEPTH);
     this.circle = scene.add.graphics().setDepth(GROUND_DEPTH);
+    this.decor = new RuinsDecor(scene);
   }
 
   /** Replaces whatever room was shown with template `t`, in the look of environment `env`. */
@@ -582,6 +603,7 @@ export class RoomView {
     this.glowAlpha = env.light.glowBlend === 'add' ? 1 : NORMAL_GLOW_ALPHA;
     this.buildFloor(t.width, t.height);
     this.buildWalls(t.width, t.height);
+    this.decor.build(t, env);
     for (const o of t.obstacles ?? []) {
       // Ruins: about half the columns are broken off at a height picked by their position.
       const h = Math.abs(tileHash(Math.round(o.pos.x), Math.round(o.pos.y)));
@@ -646,6 +668,7 @@ export class RoomView {
 
   update(dt: number, f: RoomFrame): void {
     this.time += dt;
+    this.decor.update(dt);
     const rings = this.rings.clear();
     const door = this.door;
     if (door) {
@@ -720,9 +743,18 @@ export class RoomView {
           frame = pool[Math.abs(hash >> 3) % pool.length] ?? 0;
         }
         const p = toScreen(vec((i + 0.5) * TILE_WORLD, (j + 0.5) * TILE_WORLD));
+        // Open air: nothing covers the land beyond the room, so the last row / column of tiles is cut at the edge.
+        const fu = Math.min(1, width / TILE_WORLD - i);
+        const fv = Math.min(1, height / TILE_WORLD - j);
+        if (this.env.outside && (fu < 1 || fv < 1)) {
+          const part = partialTileTexture(this.scene, texture, Math.abs(hash >> 3) % PARTIAL_VARIANTS, fu, fv);
+          this.objects.push(this.scene.add.image(p.x, p.y, part).setScale(TILE_SCALE).setDepth(FLOOR_DEPTH));
+          continue;
+        }
         this.objects.push(this.scene.add.image(p.x, p.y, texture, frame).setScale(TILE_SCALE).setDepth(FLOOR_DEPTH));
       }
     }
+    if (this.env.outside) return;
     // Tiles overhang the room edges by up to a tile: darkness over everything outside.
     const v = VOID_BAND;
     const g = this.scene.add.graphics().setDepth(VOID_DEPTH).fillStyle(this.env.light.background, 1);
@@ -784,9 +816,9 @@ export class RoomView {
   }
 
   /**
-   * A ruined wall from `a` to `b`: a whole brick wall whose top line is broken down in places (the part above the
-   * broken profile is painted over with the background), a pale coping along the profile, rubble under the breaks,
-   * cracks and ivy hanging from the top.
+   * A ruined wall from `a` to `b`: a brick wall whose top line is broken down in places (bands and mortar end at the
+   * broken profile, so the land behind shows through the breaks), a pale coping along the profile, rubble under the
+   * breaks, cracks and ivy hanging from the top.
    */
   private ruinedWall(g: Phaser.GameObjects.Graphics, a: Vec2, b: Vec2, shade: number, along: number): void {
     const look = this.env.walls;
@@ -820,34 +852,53 @@ export class RoomView {
       const t = Math.min(1, Math.max(0, (d - dist[k]!) / Math.max(1e-6, dist[k + 1]! - dist[k]!)));
       return profile[k]! + (profile[k + 1]! - profile[k]!) * t;
     };
-    // The whole wall: bands and mortar as in the crypt.
+    // Bands (the crypt's gradient) per profile segment, each band cut by the sloped top of its segment.
     const bands = 8;
-    for (let i = 0; i < bands; i++) {
-      const y0 = (WALL_H * i) / bands;
-      const y1 = (WALL_H * (i + 1)) / bands;
-      g.fillStyle(lerpColor(lerpColor(look.top, look.bottom, i / (bands - 1)), look.shadow, shade), 1);
-      g.fillPoints(pts([at(0, y1), at(len, y1), at(len, y0), at(0, y0)]), true);
-    }
-    g.lineStyle(1, look.mortar, look.mortarAlpha);
     const course = 18;
-    for (let row = 0, y = course; y < WALL_H; y += course, row++) {
-      const p0 = at(0, y);
-      const p1 = at(len, y);
-      g.lineBetween(p0.x, p0.y, p1.x, p1.y);
-      for (let d = (row % 2) * (along / 2); d < len; d += along) {
-        const q = at(d, y);
-        g.lineBetween(q.x, q.y, q.x, q.y + course);
-      }
-    }
-    // Broken away: the background over everything above the profile, then the coping along it.
     for (let k = 0; k < count; k++) {
       const d0 = dist[k]!;
       const d1 = dist[k + 1]!;
       const h0 = profile[k]!;
       const h1 = profile[k + 1]!;
-      if (h0 < WALL_H || h1 < WALL_H) {
-        g.fillStyle(this.env.light.background, 1).fillPoints(pts([at(d0, h0), at(d1, h1), at(d1, WALL_H + 8), at(d0, WALL_H + 8)]), true);
+      for (let i = 0; i < bands; i++) {
+        const y0 = (WALL_H * i) / bands;
+        if (y0 >= Math.max(h0, h1)) break;
+        const y1 = (WALL_H * (i + 1)) / bands;
+        const t0 = Math.max(y0, Math.min(y1, h0));
+        const t1 = Math.max(y0, Math.min(y1, h1));
+        g.fillStyle(lerpColor(lerpColor(look.top, look.bottom, i / (bands - 1)), look.shadow, shade), 1);
+        g.fillPoints(pts([at(d0, t0), at(d1, t1), at(d1, y0), at(d0, y0)]), true);
       }
+    }
+    // Mortar: courses up to the profile, staggered joints where the course above still stands.
+    g.lineStyle(1, look.mortar, look.mortarAlpha);
+    for (let row = 0, y = course; y < WALL_H; y += course, row++) {
+      for (let k = 0; k < count; k++) {
+        const d0 = dist[k]!;
+        const d1 = dist[k + 1]!;
+        const h0 = profile[k]!;
+        const h1 = profile[k + 1]!;
+        if (h0 <= y && h1 <= y) continue;
+        // The part of the segment where the wall still reaches this course.
+        const cut = h0 === h1 ? 0 : (y - h0) / (h1 - h0);
+        const from = h0 > y ? d0 : d0 + (d1 - d0) * cut;
+        const to = h1 > y ? d1 : d0 + (d1 - d0) * cut;
+        const p0 = at(from, y);
+        const p1 = at(to, y);
+        g.lineBetween(p0.x, p0.y, p1.x, p1.y);
+      }
+      for (let d = (row % 2) * (along / 2); d < len; d += along) {
+        if (heightAt(d) < y) continue;
+        const q = at(d, y);
+        g.lineBetween(q.x, q.y, q.x, q.y + course);
+      }
+    }
+    // Coping along the profile; rubble under deep breaks.
+    for (let k = 0; k < count; k++) {
+      const d0 = dist[k]!;
+      const d1 = dist[k + 1]!;
+      const h0 = profile[k]!;
+      const h1 = profile[k + 1]!;
       g.fillStyle(look.coping, 1 - shade * 0.6).fillPoints(pts([at(d0, h0 + 5), at(d1, h1 + 5), at(d1, h1), at(d0, h0)]), true);
       if (Math.min(h0, h1) < WALL_H - 30 && rand() < 0.7) {
         // Rubble at the foot of a deep break.
@@ -902,5 +953,6 @@ export class RoomView {
     this.bossSpawn = undefined;
     this.rings.clear();
     this.circle.clear();
+    this.decor.clear();
   }
 }

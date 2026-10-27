@@ -15,6 +15,8 @@ export interface SlabLook {
   /** Gold inlay of the rare ornamented slab (one tile in `goldEvery`). */
   readonly gold: number;
   readonly goldEvery: number;
+  /** Wash over the ground tiles under the slabs (e.g. sun-dried grass). */
+  readonly groundTint?: { readonly color: number; readonly alpha: number };
 }
 
 export interface FloorLook {
@@ -90,6 +92,38 @@ export interface LightLook {
   readonly textHalo?: string;
 }
 
+/**
+ * The world beyond the room's edges instead of a flat void: a tileable ground with dunes, half-buried ruin fragments
+ * and dry bushes, plus drifts of it creeping over the floor's edges. Counts are per room (around it / along its edges).
+ */
+export interface OutsideLook {
+  readonly sand: number;
+  readonly sandLight: number;
+  readonly sandShadow: number;
+  /** Stone of the fragments: lit, mid, shadow. */
+  readonly stone: readonly [number, number, number];
+  readonly dryBush: readonly number[];
+  readonly dunes: number;
+  readonly fragments: number;
+  readonly bushes: number;
+  /** Sand drifts over the floor per 1000 world units of room edge. */
+  readonly drifts: number;
+}
+
+/** Small props inside a room with no effect on play (no collision, drawn under every body and ground ring). */
+export interface DecorLook {
+  /** Props per 1,000,000 square world units of floor. */
+  readonly density: number;
+  /** World units props keep from the entry, exit, altar, boss spawn and spawn points (and around obstacles). */
+  readonly clearance: number;
+  readonly bush: readonly number[];
+  readonly flowers: readonly number[];
+  /** Urns: lit, mid, shadow. */
+  readonly terracotta: readonly [number, number, number];
+  /** Slanted sun rays over the room, with dust motes drifting in them (no motes with prefers-reduced-motion). */
+  readonly rays: { readonly count: number; readonly color: number; readonly alpha: number; readonly motes: number };
+}
+
 export interface EnvironmentLook {
   readonly id: string;
   readonly floor: FloorLook;
@@ -98,6 +132,8 @@ export interface EnvironmentLook {
   readonly door: DoorLook;
   readonly altar: AltarLook;
   readonly light: LightLook;
+  readonly outside?: OutsideLook;
+  readonly decor?: DecorLook;
 }
 
 /** The dark dungeon: the look every map had before zones (Flare dungeon tiles, deep darkness around the hero). */
@@ -166,10 +202,32 @@ const temple: EnvironmentLook = {
       highlight: 0xfbf6e8,
       shade: 0x86704c,
       crack: 0x8a7656,
-      grass: [0x6f8f3a, 0x88a646, 0x5c7a30, 0x9cb85a],
+      // Sun-dried tufts: the grass of a place half swallowed by the desert.
+      grass: [0x8a9440, 0xa3a452, 0x748236, 0xb3ab60],
       gold: 0xd9a838,
       goldEvery: 67,
+      groundTint: { color: 0xc9a865, alpha: 0.28 },
     },
+  },
+  // Designer decision 2026-10-27 (maps.md «Зони»): sand and dunes beyond the ruins, small props inside the rooms.
+  outside: {
+    sand: 0xd8b47a,
+    sandLight: 0xf0d6a2,
+    sandShadow: 0xae8752,
+    stone: [0xf1e8d2, 0xd3c4a2, 0x9c8a68],
+    dryBush: [0x8a6a3a, 0x9c7c46, 0x6e5530, 0x7d7a3e],
+    dunes: 24,
+    fragments: 18,
+    bushes: 34,
+    drifts: 5,
+  },
+  decor: {
+    density: 11,
+    clearance: 120,
+    bush: [0x5f7f30, 0x76953c, 0x4c6a26],
+    flowers: [0xf2d34a, 0xf5f0e0, 0xe0703a, 0xc65a9a],
+    terracotta: [0xd9895a, 0xb8683e, 0x7e4326],
+    rays: { count: 3, color: 0xfff0c8, alpha: 0.1, motes: 10 },
   },
   walls: {
     top: 0xe6dcc2,
@@ -210,7 +268,7 @@ const temple: EnvironmentLook = {
     spent: 0x9a8f80,
   },
   light: {
-    background: 0x2a3120,
+    background: 0xd8b47a,
     darkness: 0.26,
     darknessColor: 0x2a1a08,
     glowBlend: 'normal',
