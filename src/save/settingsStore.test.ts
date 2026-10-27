@@ -32,8 +32,16 @@ describe('settings store', () => {
     expect(loadSettings(storage)).toEqual({});
     storage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, settings: { language: 42 } }));
     expect(loadSettings(storage)).toEqual({});
+    storage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, settings: { language: 'uk', qa: 'yes' } }));
+    expect(loadSettings(storage)).toEqual({ language: 'uk' });
     storage.setItem(SETTINGS_KEY, 'null');
     expect(loadSettings(storage)).toEqual({});
+  });
+
+  it('round-trips the QA mode flag', () => {
+    const storage = memoryStorage();
+    saveSettings(storage, { qa: true });
+    expect(loadSettings(storage)).toEqual({ qa: true });
   });
 
   it('keeps settings it does not know (written by a newer build)', () => {

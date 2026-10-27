@@ -12,6 +12,7 @@ import { className } from './contentText';
 import { loadGlyphs } from './fonts';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { PointsBanner } from './passiveBanner';
+import { buildQaPanel, QA_UNLOCK_TAPS, QA_UNLOCK_WINDOW_MS, type QaResultLine } from './qaPanel';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { RunSceneData } from './RunScene';
 import type { SupportsSceneData } from './SupportsScene';
@@ -36,6 +37,12 @@ export class MainMenuScene extends Phaser.Scene {
   private languageBusy = false;
   /** The map list (replay a lower map) is open over the menu. */
   private mapsOpen = false;
+  /** The QA panel (closed-beta shortcuts, only in QA mode) is open over the menu. */
+  private qaOpen = false;
+  /** Result of the last QA action, shown in the panel until it closes. */
+  private qaLines: QaResultLine[] = [];
+  /** Recent presses on the version label (secret QA unlock), scene clock ms. */
+  private versionTaps: number[] = [];
 
   constructor() {
     super('main-menu');
@@ -62,6 +69,9 @@ export class MainMenuScene extends Phaser.Scene {
     this.languageOpen = false;
     this.languageBusy = false;
     this.mapsOpen = false;
+    this.qaOpen = false;
+    this.qaLines = [];
+    this.versionTaps = [];
     // Mail items take any stash room freed since they arrived (oldest first).
     const moved = fillStashFromOverflow(this.app.profile, itemsData);
     if (moved.length > 0) this.app.save();
@@ -176,10 +186,70 @@ export class MainMenuScene extends Phaser.Scene {
     }
     if (!compact) this.buildRecords(32, 92);
     this.buildLoginHint(sceneW, compact, portrait ? listBottom + 8 : undefined);
-    this.root.add(label(this, 12, height - 8, `v${__APP_VERSION__}`, 12, UI.muted).setOrigin(0, 1).setAlpha(0.6));
+    this.buildVersionLabel(height);
+    const switcherLeft = title.x + title.width + (compact ? 12 : 20);
+    // QA mode: a small button right of the language switcher (before it, so the language list draws over it).
+    if (this.app.settings.qa === true) this.buildQaButton(switcherLeft + (compact ? 112 : 136) + (compact ? 8 : 12), title.y + title.height / 2, compact);
     // Last, so its list draws over everything else.
-    this.buildLanguageSwitcher(title.x + title.width + (compact ? 12 : 20), title.y + title.height / 2, compact);
+    this.buildLanguageSwitcher(switcherLeft, title.y + title.height / 2, compact);
     if (selected && this.mapsOpen) this.buildMapList(selected, compact);
+    if (this.qaOpen && this.app.settings.qa === true) this.buildQa(selected, compact);
+  }
+
+  /**
+   * Build version in the bottom left. Also the secret QA unlock for closed-beta testers (designer decision): seven
+   * presses within three seconds toggle QA mode. The hit area is padded so it works by touch.
+   */
+  private buildVersionLabel(height: number): void {
+    const version = label(this, 12, height - 8, `v${__APP_VERSION__}`, 12, UI.muted).setOrigin(0, 1).setAlpha(0.6);
+    const pad = 12;
+    version.setInteractive(new Phaser.Geom.Rectangle(-pad, -pad, version.width + pad * 2, version.height + pad * 2), Phaser.Geom.Rectangle.Contains);
+    version.on('pointerdown', () => this.onVersionTap());
+    this.root.add(version);
+  }
+
+  private onVersionTap(): void {
+    const now = this.time.now;
+    this.versionTaps = this.versionTaps.filter((at) => now - at <= QA_UNLOCK_WINDOW_MS);
+    this.versionTaps.push(now);
+    if (this.versionTaps.length < QA_UNLOCK_TAPS) return;
+    this.versionTaps = [];
+    const on = this.app.settings.qa !== true;
+    this.app.setQaMode(on);
+    this.qaOpen = false;
+    this.qaLines = [];
+    this.build();
+    showToast(this, t(on ? 'qa.on' : 'qa.off'));
+  }
+
+  private buildQaButton(left: number, y: number, compact: boolean): void {
+    const w = compact ? 48 : 56;
+    const h = compact ? 32 : 36;
+    const button = makeButton(this, left + w / 2, y, w, h, t('qa.button'), () => {
+      this.qaOpen = true;
+      this.qaLines = [];
+      this.build();
+    });
+    this.root.add(button.setAlpha(0.75));
+  }
+
+  private buildQa(hero: CharacterRecord | undefined, compact: boolean): void {
+    buildQaPanel(this, this.root, {
+      profile: this.app.profile,
+      hero,
+      compact,
+      lines: this.qaLines,
+      onApplied: (lines) => {
+        this.app.save();
+        this.qaLines = lines;
+        this.build();
+      },
+      onClose: () => {
+        this.qaOpen = false;
+        this.qaLines = [];
+        this.build();
+      },
+    });
   }
 
   /** "Enter the dungeon" with the map it leads to (the hero's highest unlocked map) on a second line. */
