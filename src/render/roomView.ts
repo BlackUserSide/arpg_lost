@@ -33,6 +33,8 @@ const WALL_H = 118;
 const LEDGE_H = 16;
 /** World units of darkness drawn beyond each edge (hides floor tiles that overhang the room). */
 const VOID_BAND = 600;
+/** Screen px the ground beyond the room reaches past what the camera can show (camera shake). */
+const GROUND_MARGIN = 96;
 /** Pillar shaft height above its base, screen px. */
 const PILLAR_H = 150;
 
@@ -644,6 +646,22 @@ export class RoomView {
   /** Camera bounds of the room, screen px. */
   cameraBounds(): { x: number; y: number; width: number; height: number } {
     return this.bounds;
+  }
+
+  /**
+   * Fits the ground beyond the room to what the camera can show (`viewW` x `viewH`: the view in world px, the screen
+   * size divided by the camera zoom). A bounded camera stays inside its bounds while the view fits in them; a view
+   * larger than the bounds overhangs them (Phaser aligns it to the bounds' top-left), so the bounds grow by that
+   * overhang on every side, plus a margin for camera shake. Call after build and whenever the screen size or zoom
+   * changes.
+   */
+  fitView(viewW: number, viewH: number): void {
+    const b = this.bounds;
+    const mx = Math.max(0, viewW - b.width) + GROUND_MARGIN;
+    const my = Math.max(0, viewH - b.height) + GROUND_MARGIN;
+    const area = { x: b.x - mx, y: b.y - my, width: b.width + 2 * mx, height: b.height + 2 * my };
+    this.decor.fitGround(area);
+    this.cryptDecor.fitGround(area);
   }
 
   /** Screen position of the door (its threshold), if the room has one. */

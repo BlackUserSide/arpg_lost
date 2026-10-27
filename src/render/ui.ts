@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { phoneLayout } from '../data/controls';
 import { t } from '../i18n';
 import { BODY_FONT, HEADING_FONT } from './fonts';
 
@@ -29,8 +30,11 @@ export const UI = {
  */
 export type Density = 'phone' | 'compact' | 'wide';
 
-/** Screens whose shorter side is at most this (CSS px) use the phone density. */
-export const PHONE_MAX_SHORT_SIDE = 480;
+/**
+ * Screens whose shorter side is at most this (CSS px) use the phone density: the same threshold as the phone device
+ * check (data/controls phoneLayout.maxShortSide), applied to the canvas size, not the device.
+ */
+export const PHONE_MAX_SHORT_SIDE = phoneLayout.maxShortSide;
 /** Smallest touch target (CSS px): buttons drawn smaller still take presses over at least this square. */
 export const TOUCH_MIN = 40;
 

@@ -54,7 +54,7 @@ import { softDotTexture } from './fxTextures';
 import { PointsBadge } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
-import { confirmDialog, densityOf, fadeIn, heading, label, makeButton, makeFrame, makeIconButton, pinToScreen, TOUCH_MIN, UI } from './ui';
+import { confirmDialog, densityOf, heading, label, makeButton, makeFrame, makeIconButton, pinToScreen, TOUCH_MIN, UI } from './ui';
 import { ISO_K, screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { mobSprite, runSpriteSets, type RunSpriteSets } from './runSprites';
 import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadedSpriteKeys, loadSprites, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, spritesLoaded, spriteSetOf, textureKey, unloadSprites } from './sprites';
@@ -71,7 +71,7 @@ import { ZoomedWorldView } from './worldCamera';
 import { makeFullscreenButton } from './fullscreen';
 import { TouchControls } from './touchControls';
 import { ORIENTATION_BLOCKED, orientationBlocked } from './orientationGate';
-import { safeInsets, touchControlsOn } from './touchMode';
+import { isPhone, safeInsets, touchControlsOn } from './touchMode';
 import { deliveryReach, dragFraction, firstUsableSkill, idleAim, isAimed, isDistanceAimed, manualAim, onScreen, tapAim, type AimTarget } from './touchAim';
 
 // A map run (docs/design/maps.md) on screen: combat rooms one after another, then the boss room with its altar.
@@ -119,6 +119,9 @@ const DOT_NUMBER_INTERVAL = 0.5;
 const WIN_SCREEN_DELAY = 1.6;
 /** Room change: fade in from black (ms). */
 const ROOM_FADE = 380;
+/** Screen entrance / exit fades (ms), as render/ui.ts fadeIn; on phones the HUD camera fades with the world. */
+const SCREEN_FADE = 250;
+const SCREEN_EXIT = 200;
 /** Touch drag-aim indicator on the floor (visual only): colours, shortest arrow (screen px). */
 const AIM_ARROW = 0xff9a3c;
 const AIM_ARROW_RIM = 0x2a1206;
@@ -711,7 +714,7 @@ export class RunScene extends Phaser.Scene {
     this.setGameplay(true);
     // Started while the cover is up (it went up during the scene switch): begin paused.
     if (orientationBlocked()) autoPause();
-    fadeIn(this);
+    this.zoomView.fadeIn(SCREEN_FADE, 10, 9, 12);
     this.events.once('shutdown', () => {
       this.scale.off('resize', relayout);
       this.game.events.off(Phaser.Core.Events.BLUR, autoPause);
@@ -740,6 +743,13 @@ export class RunScene extends Phaser.Scene {
     this.hero.display = this.world.player.pos;
     const s = toScreen(this.hero.display);
     this.cameras.main.centerOn(s.x, s.y - 30);
+    this.fitRoomView();
+  }
+
+  /** Sizes the ground beyond the room to the view at the current zoom (on build and on resize). */
+  private fitRoomView(): void {
+    const cam = this.cameras.main;
+    this.room.fitView(this.scale.width / cam.zoom, this.scale.height / cam.zoom);
   }
 
   /** Everything of the previous room is gone in core: drop its sprites and effects too, without interpolation. */
@@ -772,7 +782,7 @@ export class RunScene extends Phaser.Scene {
     this.clockFx.clear(timeStopped(this.world));
     this.immuneShown.clear();
     this.buildRoom();
-    this.cameras.main.fadeIn(ROOM_FADE, 7, 7, 10);
+    this.zoomView.fadeIn(ROOM_FADE, 7, 7, 10);
   }
 
   /** Top right buttons (Talents with the unspent points badge), the run HUD in the top centre. */
@@ -784,8 +794,10 @@ export class RunScene extends Phaser.Scene {
     // Touch layout keeps out of the notch / home indicator (zero inside the portal iframe).
     const insets = this.touch ? safeInsets(this.game.canvas) : undefined;
     // Phones see more of the room (data/controls phoneLayout.runZoom); world text and the auto-aim radius follow.
-    const zoom = phone ? phoneLayout.runZoom : 1;
+    // Keyed on the device, not the canvas: a desktop in a short window or a small portal iframe keeps zoom 1.
+    const zoom = isPhone(this.game) ? phoneLayout.runZoom : 1;
     this.zoomView.set(zoom, width, height);
+    this.fitRoomView();
     this.textScale = 1 / zoom;
     this.aimTuning = zoom === 1 ? touchTuning : { ...touchTuning, autoAimRadius: touchTuning.autoAimRadius / zoom };
     for (const actor of this.mobs.values()) actor.elite?.label.setScale(this.textScale);
@@ -1156,7 +1168,7 @@ export class RunScene extends Phaser.Scene {
 
   private leaveToMenu(): void {
     this.recordRun();
-    this.cameras.main.fadeOut(200, 10, 9, 12);
+    this.zoomView.fadeOut(SCREEN_EXIT, 10, 9, 12);
     this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('main-menu'));
   }
 

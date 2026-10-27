@@ -28,10 +28,6 @@ export interface QaResultLine {
   readonly warn?: boolean;
 }
 
-/** Secret unlock: this many presses on the version label within the window toggle QA mode. */
-export const QA_UNLOCK_TAPS = 7;
-export const QA_UNLOCK_WINDOW_MS = 3000;
-
 const levelLines = (r: QaLevelResult): QaResultLine[] => [
   { text: t('qa.levelSet', { level: r.level }) },
   ...(r.passivesReset ? [{ text: t('qa.passivesReset'), warn: true }] : []),

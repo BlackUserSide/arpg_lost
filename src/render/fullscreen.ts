@@ -11,6 +11,9 @@ import { label, makeButton, showToast, UI } from './ui';
 // web app (public/manifest.webmanifest) is the way to lose the bars there. Inside an iframe without the permission
 // (allowfullscreen) document.fullscreenEnabled is false: hidden too.
 
+/** How long (ms) a prefixed, promise-less request may take to enter full screen before its listener is dropped. */
+const PREFIXED_ENTER_WAIT = 3000;
+
 interface PrefixedDocument {
   readonly webkitFullscreenEnabled?: boolean;
 }
@@ -59,8 +62,15 @@ export function toggleFullscreen(scene: Phaser.Scene): void {
       },
     );
   } else {
-    // Prefixed APIs without a promise: the switch is not done yet, lock once the browser reports it.
-    scene.scale.once(Phaser.Scale.Events.ENTER_FULLSCREEN, () => lockLandscape(game));
+    // Prefixed APIs without a promise: the switch is not done yet, lock once the browser reports it. A refused request
+    // reports nothing Phaser forwards (it only drops its target on fullscreenerror), so the listener is dropped after
+    // a while: a later full screen entered some other way must not lock the orientation.
+    const onEnter = (): void => {
+      window.clearTimeout(timer);
+      lockLandscape(game);
+    };
+    const timer = window.setTimeout(() => scale.off(Phaser.Scale.Events.ENTER_FULLSCREEN, onEnter), PREFIXED_ENTER_WAIT);
+    scale.once(Phaser.Scale.Events.ENTER_FULLSCREEN, onEnter);
   }
 }
 

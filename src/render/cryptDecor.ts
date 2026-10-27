@@ -4,7 +4,7 @@ import type { RoomTemplate } from '../core/run/types';
 import type { BedrockLook, CryptDecorLook, EnvironmentLook, FlameLight } from '../data/environments';
 import { softDotTexture } from './fxTextures';
 import { toScreen } from './iso';
-import { canvasTexture, css, decorRandom, prefersReducedMotion, stringHash } from './proceduralArt';
+import { canvasTexture, css, decorRandom, fitTiles, prefersReducedMotion, stringHash, type GroundArea } from './proceduralArt';
 
 // Decoration of a dungeon environment (the crypt, docs/design/maps.md «Зони»): the bedrock the room is carved into
 // (rock, boulders, stalagmites, chasms glowing faintly from the abyss), and inside bones, cloth, rusty weapons, floor
@@ -31,8 +31,6 @@ const DEPTH_PER_PX = 1e-5;
 
 const ROCK_W = 512;
 const ROCK_H = 256;
-/** Side of the area covered by the bedrock, screen px (far past any camera bound or zoom). */
-const ROCK_EXTENT = 16000;
 /** Boulders closer than this (world units) in front of a front edge are low ones (tall ones would overlap the floor). */
 const FRONT_LOW = 160;
 const PROP_EDGE = 30;
@@ -80,6 +78,7 @@ export class CryptDecor {
   private glows: Glow[] = [];
   private fog: Drifter[] = [];
   private wisps: Drifter[] = [];
+  private ground: Phaser.GameObjects.TileSprite | undefined;
   private time = 0;
   private still = false;
 
@@ -129,13 +128,21 @@ export class CryptDecor {
     this.glows = [];
     this.fog = [];
     this.wisps = [];
+    this.ground = undefined;
+  }
+
+  /** Stretches the ground beyond the room over `area` (screen px); RoomView.fitView calls it on build and resize. */
+  fitGround(area: GroundArea): void {
+    fitTiles(this.ground, area);
   }
 
   // --- Outside: the bedrock ---
 
   private buildBedrock(t: RoomTemplate, env: EnvironmentLook, look: BedrockLook, seed: number): void {
-    const centre = toScreen(vec(t.width / 2, t.height / 2));
-    this.objects.push(this.scene.add.tileSprite(centre.x, centre.y, ROCK_EXTENT, ROCK_EXTENT, this.rockTexture(env, look)).setDepth(ROCK_DEPTH));
+    // Sized by fitGround to what the camera can show, not a huge fixed sheet (the Canvas renderer backs a TileSprite
+    // with a canvas of its full size).
+    this.ground = this.scene.add.tileSprite(0, 0, 1, 1, this.rockTexture(env, look)).setOrigin(0, 0).setDepth(ROCK_DEPTH);
+    this.objects.push(this.ground);
     const rand = decorRandom(seed);
     // A point `o` world units outside side `side` (0: back y = 0, 1: back x = 0, 2: front x = width, 3: front y = height).
     const outside = (side: number, along: number, o: number): Vec2 =>

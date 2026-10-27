@@ -29,20 +29,24 @@ export const touchControls: TouchControlsTuning = {
 /** Phone detection (designer decision 2026-10-27: phones play in landscape only; tablets and desktops in any). */
 export interface PhoneLayoutTuning {
   /**
-   * A touch device whose screen's shorter side (CSS px) is below this counts as a phone. Phones: ~320..450;
-   * small tablets (iPad mini 744, Android 7" ~600) stay above.
+   * The one "phone-sized" threshold: a shorter side (CSS px) at most this is phone-sized. Phones: ~320..450 (the
+   * largest, ~430..450); small tablets (iPad mini 744, Android 7" ~600) stay above. Used for
+   * - the phone (device): a touch device whose *screen* is phone-sized (render/touchMode.ts isPhone): landscape lock
+   *   and the run zoom;
+   * - the phone UI density: a *canvas* that is phone-sized (render/ui.ts densityOf), so a short desktop window gets
+   *   the compact phone layout too (designer accepted).
    */
   readonly maxShortSide: number;
   /**
-   * World camera zoom in a run at the phone UI density (render/ui.ts densityOf: screen short side <= 480 px), so a
-   * landscape phone shows more of the room (designer decision 2026-10-27). Desktop and tablets stay at 1.
-   * World-space text (damage numbers, names) keeps its screen size; the auto-aim radius scales to stay "about half a
-   * phone screen".
+   * World camera zoom in a run on a phone (render/touchMode.ts isPhone: a touch device with a phone-sized screen), so
+   * a landscape phone shows more of the room (designer decision 2026-10-27). Desktops (also in a short window or a
+   * small portal iframe) and tablets stay at 1. World-space text (damage numbers, names) keeps its screen size; the
+   * auto-aim radius scales to stay "about half a phone screen".
    */
   readonly runZoom: number;
 }
 
 export const phoneLayout: PhoneLayoutTuning = {
-  maxShortSide: 500,
+  maxShortSide: 480,
   runZoom: 0.65,
 };

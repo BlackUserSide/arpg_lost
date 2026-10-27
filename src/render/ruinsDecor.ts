@@ -4,7 +4,7 @@ import type { RoomTemplate } from '../core/run/types';
 import type { DecorLook, EnvironmentLook, OutsideLook } from '../data/environments';
 import { softDotTexture } from './fxTextures';
 import { toScreen } from './iso';
-import { css, decorRandom, makeCanvas, prefersReducedMotion, stringHash } from './proceduralArt';
+import { canvasTexture, css, decorRandom, fitTiles, prefersReducedMotion, stringHash, type GroundArea } from './proceduralArt';
 
 // Decoration of an open-air environment (the temple ruins, docs/design/maps.md «Зони»): sand and dunes with
 // half-buried fragments beyond the room, sand drifting over the floor's edges, small props on the floor, sun rays with
@@ -28,8 +28,6 @@ const DEPTH_PER_PX = 1e-5;
 /** Ground sheet size; repeating horizontally and vertically. */
 const SAND_W = 512;
 const SAND_H = 256;
-/** Side of the area covered by the ground beyond the room, screen px (far past any camera bound or zoom). */
-const SAND_EXTENT = 16000;
 /** World units around the room where dunes and fragments are scattered. */
 const OUTSIDE_BAND = 650;
 /** Fragments stay this far (world units) behind the back walls / in front of the front edges (tall ones must not overlap the floor). */
@@ -106,6 +104,7 @@ function sandMound(ctx: CanvasRenderingContext2D, look: OutsideLook, x: number, 
 export class RuinsDecor {
   private objects: Phaser.GameObjects.GameObject[] = [];
   private motes: Mote[] = [];
+  private ground: Phaser.GameObjects.TileSprite | undefined;
   private time = 0;
 
   constructor(private readonly scene: Phaser.Scene) {}
@@ -146,13 +145,20 @@ export class RuinsDecor {
     for (const o of this.objects) o.destroy();
     this.objects = [];
     this.motes = [];
+    this.ground = undefined;
+  }
+
+  /** Stretches the ground beyond the room over `area` (screen px); RoomView.fitView calls it on build and resize. */
+  fitGround(area: GroundArea): void {
+    fitTiles(this.ground, area);
   }
 
   /** The ground far past the room, dunes on it and half-buried fragments and dry bushes around the room. */
   private buildOutside(t: RoomTemplate, env: EnvironmentLook, look: OutsideLook, seed: number): void {
-    const centre = toScreen(vec(t.width / 2, t.height / 2));
-    const sand = this.scene.add.tileSprite(centre.x, centre.y, SAND_EXTENT, SAND_EXTENT, this.sandTexture(env, look)).setDepth(SAND_DEPTH);
-    this.objects.push(sand);
+    // Sized by fitGround to what the camera can show, not a huge fixed sheet (the Canvas renderer backs a TileSprite
+    // with a canvas of its full size).
+    this.ground = this.scene.add.tileSprite(0, 0, 1, 1, this.sandTexture(env, look)).setOrigin(0, 0).setDepth(SAND_DEPTH);
+    this.objects.push(this.ground);
     const rand = decorRandom(seed);
     const band = (): Vec2 => vec(-OUTSIDE_BAND + rand() * (t.width + 2 * OUTSIDE_BAND), -OUTSIDE_BAND + rand() * (t.height + 2 * OUTSIDE_BAND));
     // Outside the room, with room for tall things in front of the front edges.
@@ -271,17 +277,9 @@ export class RuinsDecor {
 
   // --- Textures (one canvas per environment and kind) ---
 
-  private texture(key: string, width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void): string {
-    if (this.scene.textures.exists(key)) return key;
-    const { canvas, ctx } = makeCanvas(width, height);
-    draw(ctx);
-    this.scene.textures.addCanvas(key, canvas);
-    return key;
-  }
-
   /** Seamless sand: soft patches, wind ripples (periods divide the sheet, so it tiles) and grain. */
   private sandTexture(env: EnvironmentLook, look: OutsideLook): string {
-    return this.texture(`ruins:sand:${env.id}`, SAND_W, SAND_H, (ctx) => {
+    return canvasTexture(this.scene, `ruins:sand:${env.id}`, SAND_W, SAND_H, (ctx) => {
       const rand = decorRandom(0x51ed270b);
       ctx.fillStyle = css(look.sand);
       ctx.fillRect(0, 0, SAND_W, SAND_H);
@@ -341,7 +339,7 @@ export class RuinsDecor {
   private duneTexture(env: EnvironmentLook, look: OutsideLook, variant: number): string {
     const w = 480;
     const h = 200;
-    return this.texture(`ruins:dune:${env.id}:${variant}`, w, h, (ctx) => {
+    return canvasTexture(this.scene, `ruins:dune:${env.id}:${variant}`, w, h, (ctx) => {
       const cx = w / 2;
       const cy = h * 0.6;
       const blob = (x: number, y: number, rx: number, ry: number, inner: string, outer: string): void => {
@@ -388,7 +386,7 @@ export class RuinsDecor {
   private driftTexture(env: EnvironmentLook, look: OutsideLook): string {
     const w = 256;
     const h = 96;
-    return this.texture(`ruins:drift:${env.id}`, w, h, (ctx) => {
+    return canvasTexture(this.scene, `ruins:drift:${env.id}`, w, h, (ctx) => {
       ctx.save();
       ctx.translate(w / 2, h / 2);
       ctx.scale(1, (h / w) * 0.95);
@@ -422,7 +420,7 @@ export class RuinsDecor {
     const [lit, mid, dark] = look.stone.map((c) => css(c)) as [string, string, string];
     const crack = css(look.stone[2], 0.6);
     if (kind === 'drum') {
-      return this.texture(`ruins:frag:drum:${env.id}`, 80, 80, (ctx) => {
+      return canvasTexture(this.scene, `ruins:frag:drum:${env.id}`, 80, 80, (ctx) => {
         const cx = 40;
         const base = 64;
         const rx = 24;
@@ -453,7 +451,7 @@ export class RuinsDecor {
       });
     }
     if (kind === 'toppled') {
-      return this.texture(`ruins:frag:toppled:${env.id}`, 170, 90, (ctx) => {
+      return canvasTexture(this.scene, `ruins:frag:toppled:${env.id}`, 170, 90, (ctx) => {
         ctx.save();
         ctx.translate(85, 52);
         ctx.rotate(Math.atan2(0.5, 1));
@@ -497,7 +495,7 @@ export class RuinsDecor {
       });
     }
     if (kind === 'block') {
-      return this.texture(`ruins:frag:block:${env.id}`, 90, 80, (ctx) => {
+      return canvasTexture(this.scene, `ruins:frag:block:${env.id}`, 90, 80, (ctx) => {
         isoBlock(ctx, 45, 58, 30, 15, 26, lit, mid, dark);
         ctx.strokeStyle = crack;
         ctx.lineWidth = 1.2;
@@ -513,7 +511,7 @@ export class RuinsDecor {
         sandMound(ctx, look, 50, 72, 42, 13);
       });
     }
-    return this.texture(`ruins:frag:capital:${env.id}`, 80, 60, (ctx) => {
+    return canvasTexture(this.scene, `ruins:frag:capital:${env.id}`, 80, 60, (ctx) => {
       isoBlock(ctx, 40, 40, 30, 15, 9, lit, mid, dark);
       ctx.fillStyle = mid;
       for (const x of [16, 64]) {
@@ -532,7 +530,7 @@ export class RuinsDecor {
 
   /** A dry desert bush: thin twigs fanning out of the sand. */
   private dryBushTexture(env: EnvironmentLook, look: OutsideLook): string {
-    return this.texture(`ruins:drybush:${env.id}`, 60, 44, (ctx) => {
+    return canvasTexture(this.scene, `ruins:drybush:${env.id}`, 60, 44, (ctx) => {
       const rand = decorRandom(0x3c6ef372);
       ctx.lineCap = 'round';
       for (let i = 0; i < 16; i++) {
@@ -556,7 +554,7 @@ export class RuinsDecor {
     const stone = env.walls;
     const [tLit, tMid, tDark] = look.terracotta.map((c) => css(c)) as [string, string, string];
     if (kind === 'rubble') {
-      return this.texture(`ruins:prop:rubble:${env.id}`, 60, 36, (ctx) => {
+      return canvasTexture(this.scene, `ruins:prop:rubble:${env.id}`, 60, 36, (ctx) => {
         const rand = decorRandom(0x1b873593);
         for (let i = 0; i < 6; i++) {
           const s = 4 + rand() * 6;
@@ -565,7 +563,7 @@ export class RuinsDecor {
       });
     }
     if (kind === 'bush' || kind === 'flowers') {
-      return this.texture(`ruins:prop:${kind}:${env.id}`, 50, 40, (ctx) => {
+      return canvasTexture(this.scene, `ruins:prop:${kind}:${env.id}`, 50, 40, (ctx) => {
         const rand = decorRandom(kind === 'bush' ? 0x7f4a7c15 : 0x2545f491);
         ctx.fillStyle = 'rgba(40,28,10,0.25)';
         ctx.beginPath();
@@ -589,7 +587,7 @@ export class RuinsDecor {
       });
     }
     if (kind === 'urn') {
-      return this.texture(`ruins:prop:urn:${env.id}`, 34, 48, (ctx) => {
+      return canvasTexture(this.scene, `ruins:prop:urn:${env.id}`, 34, 48, (ctx) => {
         ctx.fillStyle = 'rgba(40,28,10,0.25)';
         ctx.beginPath();
         ctx.ellipse(18, 43, 13, 4, 0, 0, Math.PI * 2);
@@ -626,7 +624,7 @@ export class RuinsDecor {
         ctx.stroke();
       });
     }
-    return this.texture(`ruins:prop:urnBroken:${env.id}`, 48, 30, (ctx) => {
+    return canvasTexture(this.scene, `ruins:prop:urnBroken:${env.id}`, 48, 30, (ctx) => {
       ctx.fillStyle = 'rgba(40,28,10,0.22)';
       ctx.beginPath();
       ctx.ellipse(24, 24, 18, 5, 0, 0, Math.PI * 2);
@@ -658,7 +656,7 @@ export class RuinsDecor {
 
   /** White sun shaft: bright along its middle, fading to the sides and towards its lower end. */
   private rayTexture(env: EnvironmentLook): string {
-    return this.texture(`ruins:ray:${env.id}`, RAY_W, RAY_H, (ctx) => {
+    return canvasTexture(this.scene, `ruins:ray:${env.id}`, RAY_W, RAY_H, (ctx) => {
       const across = ctx.createLinearGradient(0, 0, RAY_W, 0);
       across.addColorStop(0, 'rgba(255,255,255,0)');
       across.addColorStop(0.5, 'rgba(255,255,255,1)');

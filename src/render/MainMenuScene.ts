@@ -14,7 +14,9 @@ import { makeFullscreenButton } from './fullscreen';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { PointsBanner } from './passiveBanner';
 import { finishPreloader, trackPreloaderLoader } from './preloader';
-import { buildQaPanel, QA_UNLOCK_TAPS, QA_UNLOCK_WINDOW_MS, type QaResultLine } from './qaPanel';
+// Type only: the panel module is loaded on demand, and not bundled at all where __QA_MODE__ is off (release build).
+import type * as QaPanelModule from './qaPanel';
+import type { QaResultLine } from './qaPanel';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { RunSceneData } from './RunScene';
 import type { SupportsSceneData } from './SupportsScene';
@@ -23,6 +25,9 @@ import { CLASS_LOOKS, HERO_SETS, loadSprites, ORIGIN_Y, spriteFrame, textureKey,
 import { confirmDialog, densityOf, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, showToast, TOUCH_MIN, UI, type Density } from './ui';
 
 const AVATAR_KEY = 'user-avatar';
+/** Secret QA unlock (render/qaPanel.ts): this many presses on the version label within the window toggle QA mode. */
+const QA_UNLOCK_TAPS = 7;
+const QA_UNLOCK_WINDOW_MS = 3000;
 /** Portrait phones narrower than this get the stacked menu (px): account line, list top, room kept for the play group. */
 const PORTRAIT_MAX_WIDTH = 560;
 const PORTRAIT_ACCOUNT_Y = 76;
@@ -116,6 +121,8 @@ export class MainMenuScene extends Phaser.Scene {
   private qaLines: QaResultLine[] = [];
   /** Recent presses on the version label (secret QA unlock), scene clock ms. */
   private versionTaps: number[] = [];
+  /** The QA panel module once loaded (dynamic import on the first open). */
+  private qaPanel: typeof QaPanelModule | undefined;
 
   constructor() {
     super('main-menu');
@@ -275,7 +282,7 @@ export class MainMenuScene extends Phaser.Scene {
       this.root.add(fullscreen);
       rowLeft += fsSize + rowGap;
     }
-    if (this.app.settings.qa === true) {
+    if (__QA_MODE__ && this.app.settings.qa === true) {
       // Narrow portrait phones: no room left in the title row, the QA button goes left of the account line below it.
       const fits = rowLeft + s.qaW <= width - (compact ? 8 : 16);
       if (fits) this.buildQaButton(rowLeft, rowY);
@@ -284,22 +291,26 @@ export class MainMenuScene extends Phaser.Scene {
     // Last, so its list draws over everything else.
     this.buildLanguageSwitcher(switcherLeft, rowY, compact);
     if (selected && this.mapsOpen) this.buildMapList(selected, compact);
-    if (this.qaOpen && this.app.settings.qa === true) this.buildQa(selected, compact);
+    if (__QA_MODE__ && this.qaOpen && this.app.settings.qa === true) this.buildQa(selected, compact);
   }
 
   /**
    * Build version (bottom left; under the title on landscape phones), `originY` 0 = top edge at y, 1 = bottom. Also the secret QA unlock for closed-beta testers (designer decision): seven
-   * presses within three seconds toggle QA mode. The hit area is padded so it works by touch.
+   * presses within three seconds toggle QA mode. The hit area is padded so it works by touch. Builds without
+   * __QA_MODE__ (the CrazyGames release) have no unlock.
    */
   private buildVersionLabel(x: number, y: number, originY: number): void {
     const version = label(this, x, y, `v${__APP_VERSION__}`, 12, UI.muted).setOrigin(0, originY).setAlpha(0.6);
     const pad = 12;
-    version.setInteractive(new Phaser.Geom.Rectangle(-pad, -pad, version.width + pad * 2, version.height + pad * 2), Phaser.Geom.Rectangle.Contains);
-    version.on('pointerdown', () => this.onVersionTap());
+    if (__QA_MODE__) {
+      version.setInteractive(new Phaser.Geom.Rectangle(-pad, -pad, version.width + pad * 2, version.height + pad * 2), Phaser.Geom.Rectangle.Contains);
+      version.on('pointerdown', () => this.onVersionTap());
+    }
     this.root.add(version);
   }
 
   private onVersionTap(): void {
+    if (!__QA_MODE__) return;
     const now = this.time.now;
     this.versionTaps = this.versionTaps.filter((at) => now - at <= QA_UNLOCK_WINDOW_MS);
     this.versionTaps.push(now);
@@ -316,16 +327,32 @@ export class MainMenuScene extends Phaser.Scene {
   private buildQaButton(left: number, y: number): void {
     const w = this.sizes.qaW;
     const h = this.sizes.switcherH;
-    const button = makeButton(this, left + w / 2, y, w, h, t('qa.button'), () => {
-      this.qaOpen = true;
-      this.qaLines = [];
-      this.build();
-    });
+    const button = makeButton(this, left + w / 2, y, w, h, t('qa.button'), () => this.openQa());
     this.root.add(button.setAlpha(0.75));
   }
 
+  /** Opens the QA panel, loading its module first (once). */
+  private openQa(): void {
+    if (!__QA_MODE__) return;
+    const show = (): void => {
+      this.qaOpen = true;
+      this.qaLines = [];
+      this.build();
+    };
+    if (this.qaPanel) {
+      show();
+      return;
+    }
+    void import('./qaPanel').then((module) => {
+      this.qaPanel = module;
+      // The menu may have been left while the chunk loaded.
+      if (this.scene.isActive()) show();
+    });
+  }
+
   private buildQa(hero: CharacterRecord | undefined, compact: boolean): void {
-    buildQaPanel(this, this.root, {
+    if (!__QA_MODE__ || !this.qaPanel) return;
+    this.qaPanel.buildQaPanel(this, this.root, {
       profile: this.app.profile,
       hero,
       compact,

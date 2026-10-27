@@ -42,6 +42,18 @@ export class ZoomedWorldView {
     return this.zoom;
   }
 
+  /** Fades the world camera and the HUD camera (if any) in together. */
+  fadeIn(duration: number, r: number, g: number, b: number): void {
+    this.scene.cameras.main.fadeIn(duration, r, g, b);
+    this.hudCamera?.fadeIn(duration, r, g, b);
+  }
+
+  /** Fades the world camera and the HUD camera (if any) out together; listen on the main camera for the end. */
+  fadeOut(duration: number, r: number, g: number, b: number): void {
+    this.scene.cameras.main.fadeOut(duration, r, g, b);
+    this.hudCamera?.fadeOut(duration, r, g, b);
+  }
+
   /** Sets the world zoom for a screen size (call on create and resize). */
   set(zoom: number, width: number, height: number): void {
     const cams = this.scene.cameras;

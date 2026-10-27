@@ -79,6 +79,13 @@ jobs:
         env:
           BETA_CODE: ${{ secrets.BETA_CODE }}
         run: npm run build
+      # The gate must really be in the bundle (src/main.ts imports render/betaGate.ts only when vite.config.ts baked a hash).
+      - name: Check the beta gate is bundled
+        run: |
+          if ! ls dist/assets/betaGate-*.js > /dev/null 2>&1; then
+            echo "::error title=Beta gate missing::dist/assets/betaGate-*.js not found: the build is ungated and is not deployed."
+            exit 1
+          fi
       - name: Build size
         run: |
           echo "### Test build: $(du -sh dist | cut -f1) (version $(node -p "require('./package.json').version"), ${GITHUB_SHA::7})" >> "$GITHUB_STEP_SUMMARY"
@@ -113,9 +120,11 @@ jobs:
             exit 1
           fi
       # No BETA_CODE here on purpose: the CrazyGames build has no access gate (its code is not even bundled).
-      - name: Build (release, no gate)
+      # Nor the QA panel (closed beta only): QA_MODE=0 leaves its code out of the bundle (vite.config.ts __QA_MODE__).
+      - name: Build (release, no gate, no QA panel)
         env:
           BETA_CODE: ''
+          QA_MODE: '0'
         run: npm run build
       - name: Zip dist/ contents (index.html at the ZIP root)
         run: |

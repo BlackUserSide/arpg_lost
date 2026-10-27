@@ -34,14 +34,14 @@ export function touchDevice(game: Phaser.Game): boolean {
 }
 
 /**
- * A phone: a touch device whose screen's shorter side is below data/controls phoneLayout.maxShortSide. Reads the
+ * A phone: a touch device whose screen's shorter side is at most data/controls phoneLayout.maxShortSide. Reads the
  * device screen, not the window, so it holds inside the portal iframe and does not flip when the device rotates
  * (iOS keeps screen.width / height in portrait terms, Android swaps them: the shorter side is the same either way).
  * Phones play in landscape only (render/orientationGate.ts); tablets and desktops are unaffected.
  */
 export function isPhone(game: Phaser.Game): boolean {
   if (typeof screen === 'undefined' || !touchDevice(game)) return false;
-  return Math.min(screen.width, screen.height) < phoneLayout.maxShortSide;
+  return Math.min(screen.width, screen.height) <= phoneLayout.maxShortSide;
 }
 
 export interface SafeInsets {

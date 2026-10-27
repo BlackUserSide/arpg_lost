@@ -44,5 +44,25 @@ export function canvasTexture(scene: Phaser.Scene, key: string, width: number, h
   return key;
 }
 
+/** A screen-px rectangle the ground beyond a room must cover. */
+export interface GroundArea {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Stretches a ground TileSprite (origin 0, 0) over `area`, its pattern anchored to the world origin so a refit (resize,
+ * zoom change) does not shift it.
+ */
+export function fitTiles(sprite: Phaser.GameObjects.TileSprite | undefined, area: GroundArea): void {
+  if (!sprite) return;
+  const x = Math.floor(area.x);
+  const y = Math.floor(area.y);
+  sprite.setPosition(x, y).setSize(Math.ceil(area.width), Math.ceil(area.height));
+  sprite.setTilePosition(x, y);
+}
+
 /** The player asked the system for less motion: ambient animation (dust, wisps, flicker) stays still or off. */
 export const prefersReducedMotion = (): boolean => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
