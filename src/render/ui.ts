@@ -20,6 +20,82 @@ export const UI = {
   rarity: { normal: '#c9c4b8', magic: '#7aa2ff', rare: '#f3d58a', unique: '#e07a2e', legendary: '#ff5fd2' },
 } as const;
 
+/**
+ * Layout density (docs/design/ui-style.md, "Щільність"): how much chrome a screen can afford.
+ * - `phone`: the screen's short side is at most PHONE_MAX_SHORT_SIDE (landscape phones, 320..450 px high, browser
+ *   toolbars included). Smallest frames and gaps, text at the style guide minimum, touch targets kept >= TOUCH_MIN.
+ * - `compact`: small tablets and small windows (each screen keeps its own threshold for it).
+ * - `wide`: desktop.
+ */
+export type Density = 'phone' | 'compact' | 'wide';
+
+/** Screens whose shorter side is at most this (CSS px) use the phone density. */
+export const PHONE_MAX_SHORT_SIDE = 480;
+/** Smallest touch target (CSS px): buttons drawn smaller still take presses over at least this square. */
+export const TOUCH_MIN = 40;
+
+/** Sizes every screen takes from one place, so a density change is one edit (px). */
+export interface UiMetrics {
+  readonly density: Density;
+  /** phone density. */
+  readonly phone: boolean;
+  /** phone or compact density. */
+  readonly compact: boolean;
+  /** Screen edge margin and the gap between panels. */
+  readonly margin: number;
+  readonly gap: number;
+  /** Screen title (heading font) and the top bar it sits in. */
+  readonly screenTitle: number;
+  readonly headerH: number;
+  /** Buttons in the top bar (Back, Talents, ...): height and the usual width. */
+  readonly headerButtonH: number;
+  readonly headerButtonW: number;
+  /** A panel's own heading (heading font) and the strip it takes at the panel's top. */
+  readonly panelTitle: number;
+  readonly panelHeaderH: number;
+  /** Inner padding of panels and tooltips. */
+  readonly pad: number;
+  /** Action buttons (Equip, Take, ...) and square icon buttons (close cross, zoom). */
+  readonly buttonH: number;
+  readonly iconButton: number;
+  /** Text: item / node names, body text, secondary text (never below UI.size.small on a phone). */
+  readonly heading: number;
+  readonly body: number;
+  readonly small: number;
+}
+
+const METRICS: Readonly<Record<Density, UiMetrics>> = {
+  phone: {
+    density: 'phone', phone: true, compact: true,
+    margin: 8, gap: 6, screenTitle: 20, headerH: 38, headerButtonH: 32, headerButtonW: 96,
+    panelTitle: 16, panelHeaderH: 26, pad: 10, buttonH: 36, iconButton: 32,
+    heading: 16, body: UI.size.small, small: UI.size.small,
+  },
+  compact: {
+    density: 'compact', phone: false, compact: true,
+    margin: 10, gap: 8, screenTitle: 24, headerH: 44, headerButtonH: 34, headerButtonW: 110,
+    panelTitle: 18, panelHeaderH: 30, pad: 14, buttonH: 40, iconButton: 34,
+    heading: UI.size.heading - 2, body: UI.size.body, small: UI.size.small,
+  },
+  wide: {
+    density: 'wide', phone: false, compact: false,
+    margin: 24, gap: 16, screenTitle: 34, headerH: 64, headerButtonH: 42, headerButtonW: 110,
+    panelTitle: 22, panelHeaderH: 40, pad: 16, buttonH: 44, iconButton: 40,
+    heading: UI.size.heading, body: UI.size.body, small: UI.size.small,
+  },
+};
+
+/** The density for a screen size; `compact`: the calling screen's own small-screen rule (default: narrow or short). */
+export function densityOf(width: number, height: number, compact = width < 820 || height < 520): Density {
+  if (Math.min(width, height) <= PHONE_MAX_SHORT_SIDE) return 'phone';
+  return compact ? 'compact' : 'wide';
+}
+
+/** Layout sizes for a screen size (see densityOf). */
+export function uiMetrics(width: number, height: number, compact?: boolean): UiMetrics {
+  return METRICS[densityOf(width, height, compact)];
+}
+
 export type FrameVariant =
   | 'panel'
   | 'card'
@@ -221,11 +297,16 @@ function onPress(target: Phaser.GameObjects.GameObject, onClick: () => void): vo
     });
 }
 
-const frameHitArea = (w: number, h: number): Phaser.Types.Input.InputConfiguration => ({
-  useHandCursor: true,
-  hitArea: new Phaser.Geom.Rectangle(FRAME_PAD, FRAME_PAD, w, h),
-  hitAreaCallback: Phaser.Geom.Rectangle.Contains,
-});
+/** The frame's own rectangle, grown to at least TOUCH_MIN on each side (small phone buttons stay easy to hit). */
+const frameHitArea = (w: number, h: number): Phaser.Types.Input.InputConfiguration => {
+  const hw = Math.max(w, TOUCH_MIN);
+  const hh = Math.max(h, TOUCH_MIN);
+  return {
+    useHandCursor: true,
+    hitArea: new Phaser.Geom.Rectangle(FRAME_PAD - (hw - w) / 2, FRAME_PAD - (hh - h) / 2, hw, hh),
+    hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+  };
+};
 
 export function makeButton(
   scene: Phaser.Scene,
@@ -250,7 +331,8 @@ export function makeButton(
   const normal = frameTexture(scene, w, h, style);
   const hover = frameTexture(scene, w, h, `${style}Hover`);
   const bg = scene.add.image(0, 0, normal);
-  const size = Math.round(Math.min(h * 0.42, UI.size.heading + 4));
+  // Captions scale with the button, but never below the style guide minimum (small phone buttons).
+  const size = Math.round(Math.min(Math.max(h * 0.42, UI.size.small), UI.size.heading + 4));
   const t = scene.add
     .text(0, 0, text, {
       fontFamily: style === 'primary' ? UI.headingFont : UI.bodyFont,
@@ -300,23 +382,26 @@ export function makeCard(scene: Phaser.Scene, x: number, y: number, w: number, h
  */
 export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel: string, onConfirm: () => void, cancelLabel = t('common.cancel'), depth = 1000): void {
   const { width, height } = scene.scale;
+  const m = uiMetrics(width, height);
   const shade = scene.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.7).setInteractive();
   const w = Math.min(440, width - 32);
-  const text = label(scene, width / 2, 0, message, UI.size.body + 2).setOrigin(0.5).setWordWrapWidth(w - 48).setAlign('center');
+  const text = label(scene, width / 2, 0, message, m.phone ? UI.size.body : UI.size.body + 2).setOrigin(0.5).setWordWrapWidth(w - 48).setAlign('center');
   // The panel grows with the message (longer translations wrap to more lines).
-  const panelH = Math.min(height - 16, Math.max(180, text.height + 132));
+  const buttonH = m.phone ? 40 : 46;
+  const textTop = m.phone ? 16 : 24;
+  const panelH = Math.min(height - 16, Math.max(m.phone ? 120 : 180, text.height + textTop + buttonH + (m.phone ? 40 : 62)));
   const top = height / 2 - panelH / 2;
-  text.setY(top + 24 + text.height / 2);
+  text.setY(top + textTop + text.height / 2);
   const panel = makeFrame(scene, width / 2, height / 2, w, panelH, 'panel');
   const parts: Phaser.GameObjects.GameObject[] = [];
   const close = (): void => parts.forEach((p) => p.destroy());
-  const buttonY = top + panelH - 46;
+  const buttonY = top + panelH - buttonH / 2 - (m.phone ? 14 : 23);
   const buttonW = Math.min(150, (w - 48) / 2);
-  const yes = makeButton(scene, width / 2 - buttonW / 2 - 15, buttonY, buttonW, 46, confirmLabel, () => {
+  const yes = makeButton(scene, width / 2 - buttonW / 2 - 15, buttonY, buttonW, buttonH, confirmLabel, () => {
     close();
     onConfirm();
   }, 'danger');
-  const no = makeButton(scene, width / 2 + buttonW / 2 + 15, buttonY, buttonW, 46, cancelLabel, close);
+  const no = makeButton(scene, width / 2 + buttonW / 2 + 15, buttonY, buttonW, buttonH, cancelLabel, close);
   parts.push(shade, panel, text, yes, no);
   // The message is created before the panel (its height sizes the panel): lift it and the buttons above the panel.
   for (const p of [shade, panel]) pinToScreen(p, depth);

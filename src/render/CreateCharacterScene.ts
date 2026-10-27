@@ -8,7 +8,7 @@ import { classDescription, className } from './contentText';
 import { BODY_FONT } from './fonts';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { CLASS_LOOKS, HERO_SETS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
-import { fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
+import { densityOf, fadeIn, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
 
 const SUGGESTED_NAMES: Record<string, readonly string[]> = {
   warrior: ['Borin', 'Hilda', 'Garrick', 'Torvin'],
@@ -99,15 +99,18 @@ export class CreateCharacterScene extends Phaser.Scene {
     this.root = this.add.container(0, 0);
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
+    // Phones: the hub's title and edge sizes (MainMenuScene), a slimmer name field and buttons.
+    const phone = densityOf(width, height, compact) === 'phone';
+    const edge = phone ? 8 : compact ? 12 : 28;
     const panelW = compact ? Math.min(300, width * 0.48) : 380;
-    const panelX = width - panelW / 2 - (compact ? 12 : 28);
-    const sceneW = width - panelW - (compact ? 24 : 56);
+    const panelX = width - panelW / 2 - edge;
+    const sceneW = width - panelW - edge * 2;
 
     this.backdrop.layout(sceneW * 0.55, height * 0.62, width, height);
     this.backdrop.setHero(CLASS_LOOKS.find((l) => l.classId === this.classId)?.sprite);
-    this.root.add(heading(this, compact ? 16 : 32, compact ? 10 : 22, t('create.title'), compact ? 30 : UI.size.display));
+    this.root.add(heading(this, phone ? 12 : compact ? 16 : 32, phone ? 6 : compact ? 10 : 22, t('create.title'), phone ? 24 : compact ? 30 : UI.size.display));
 
-    const top = compact ? 12 : 28;
+    const top = edge;
     const bottom = height - top;
     this.root.add(makeFrame(this, panelX, (top + bottom) / 2, panelW, bottom - top, 'panel'));
     this.root.add(heading(this, panelX - panelW / 2 + 18, top + 10, t('create.chooseClass'), compact ? 18 : 22));
@@ -137,12 +140,12 @@ export class CreateCharacterScene extends Phaser.Scene {
     const nameTop = y - rowH / 2 + (compact ? 2 : 8);
     this.root.add(label(this, panelX - rowW / 2, nameTop, t('create.name'), UI.size.small, UI.muted));
     const inputY = nameTop + 22;
-    const inputH = compact ? 36 : 42;
+    const inputH = phone ? 34 : compact ? 36 : 42;
     this.positionInput(panelX - rowW / 2, inputY, rowW, inputH);
     if (this.errorText) this.root.add(label(this, panelX, inputY + inputH + 8, this.errorText, UI.size.small, UI.danger).setOrigin(0.5, 0));
 
-    const buttonsY = bottom - (compact ? 32 : 44);
-    const buttonH = compact ? 42 : 52;
+    const buttonH = phone ? 38 : compact ? 42 : 52;
+    const buttonsY = bottom - (phone ? 29 : compact ? 32 : 44);
     this.root.add(makeButton(this, panelX + rowW / 4 + 6, buttonsY, rowW / 2 - 6, buttonH, t('create.create'), () => this.submit(), 'primary'));
     this.root.add(makeButton(this, panelX - rowW / 4 - 6, buttonsY, rowW / 2 - 6, buttonH, t('common.back'), () => this.back()));
   }

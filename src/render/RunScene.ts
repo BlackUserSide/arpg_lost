@@ -52,7 +52,7 @@ import { softDotTexture } from './fxTextures';
 import { PointsBadge } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
-import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
+import { confirmDialog, densityOf, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
 import { ISO_K, screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { mobSprite, runSpriteSets, type RunSpriteSets } from './runSprites';
 import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadedSpriteKeys, loadSprites, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, spritesLoaded, spriteSetOf, textureKey, unloadSprites } from './sprites';
@@ -762,7 +762,8 @@ export class RunScene extends Phaser.Scene {
   private layoutUi(): void {
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
-    const margin = compact ? 12 : 22;
+    const phone = densityOf(width, height, compact) === 'phone';
+    const margin = phone ? 8 : compact ? 12 : 22;
     // Touch layout keeps out of the notch / home indicator (zero inside the portal iframe).
     const insets = this.touch ? safeInsets(this.game.canvas) : undefined;
     this.hud.layout(width, height, insets);
@@ -771,13 +772,14 @@ export class RunScene extends Phaser.Scene {
     this.treeButton = undefined;
     this.pauseButton?.destroy();
     this.pauseButton = undefined;
-    const w = compact ? 96 : 150;
-    const h = compact ? 34 : 40;
-    const pw = compact ? 84 : 120;
+    const w = phone ? 88 : compact ? 96 : 150;
+    const h = phone ? 30 : compact ? 34 : 40;
+    const pw = phone ? 76 : compact ? 84 : 120;
     const right = margin + (insets?.right ?? 0);
-    const buttonY = margin + 18 + (insets?.top ?? 0);
+    const buttonY = margin + (phone ? 15 : 18) + (insets?.top ?? 0);
     const hasHero = findCharacter(getApp(this).profile, this.characterId) !== undefined;
-    const reserved = right + w + 10 + pw;
+    const buttonGap = phone ? 8 : 10;
+    const reserved = right + w + buttonGap + pw;
     // Narrow portrait phones: the corner buttons would cover the timer, so the run HUD starts under them.
     const crowded = hasHero && width - 2 * reserved < MIN_HEADER_WIDTH;
     const headerTop = (insets?.top ?? 0) + (crowded ? buttonY + h / 2 + 2 : 0);
@@ -790,7 +792,7 @@ export class RunScene extends Phaser.Scene {
     this.treeButton = pinToScreen(makeButton(this, width - right - w / 2, buttonY, w, h, keyCaptions ? t('arena.talentsKey') : t('arena.talents'), () => this.openTree()), HUD_UI_DEPTH);
     // Touch has no Esc: the pause menu (and with it "end the run") needs a button.
     this.pauseButton = pinToScreen(
-      makeButton(this, width - right - w - 10 - pw / 2, buttonY, pw, h, keyCaptions ? t('arena.pauseKey') : t('arena.pause'), () => {
+      makeButton(this, width - right - w - buttonGap - pw / 2, buttonY, pw, h, keyCaptions ? t('arena.pauseKey') : t('arena.pause'), () => {
         if (!this.paused && !this.treeOpen && !this.ended()) this.setPaused(true);
       }),
       HUD_UI_DEPTH,
@@ -901,6 +903,7 @@ export class RunScene extends Phaser.Scene {
     this.overlayKind = kind;
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
+    const phone = densityOf(width, height, compact) === 'phone';
     const died = kind === 'end' && this.run.failReason === 'death';
     const objects: Phaser.GameObjects.GameObject[] = [];
     const shade = this.add.rectangle(width / 2, height / 2, width, height, died ? 0x1a0303 : 0x000000, died ? 0.6 : 0.55).setInteractive();
@@ -921,10 +924,10 @@ export class RunScene extends Phaser.Scene {
       }
       return h + (l.gap ?? 0);
     };
-    const headerH = compact ? 56 : 78;
+    const headerH = phone ? 46 : compact ? 56 : 78;
     // Key hints (R / Esc) only where there is a keyboard: touch screens get the room for the reward list instead.
     const keyHints = !this.touch;
-    const footerH = compact ? (keyHints ? 92 : 66) : keyHints ? 116 : 86;
+    const footerH = (compact ? (keyHints ? 92 : 66) : keyHints ? 116 : 86) - (phone ? 10 : 0);
     if (kind === 'pause') {
       const pending = this.world.supportDrops.length;
       if (pending > 0) {
@@ -948,7 +951,7 @@ export class RunScene extends Phaser.Scene {
     const panelH = Math.min(height - 8, headerH + bodyH + footerH);
     objects.push(makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel'));
     const top = height / 2 - panelH / 2;
-    objects.push(heading(this, width / 2, top + (compact ? 28 : 40), this.overlayTitle(kind), compact ? 26 : 34).setOrigin(0.5));
+    objects.push(heading(this, width / 2, top + (phone ? 23 : compact ? 28 : 40), this.overlayTitle(kind), phone ? 22 : compact ? 26 : 34).setOrigin(0.5));
     let y = top + headerH;
     let banner: Phaser.GameObjects.Text | undefined;
     for (const l of lines) {
@@ -961,12 +964,13 @@ export class RunScene extends Phaser.Scene {
     }
 
     const buttonW = Math.min(200, (panelW - 48) / 2);
-    const buttonH = compact ? 44 : 52;
-    const buttonY = top + panelH - (compact ? 38 : 50);
+    const buttonH = phone ? 40 : compact ? 44 : 52;
+    const buttonY = top + panelH - (phone ? 32 : compact ? 38 : 50);
     if (kind === 'pause') {
       // Full screen toggle in the panel's top right corner (hidden where the browser has no element full screen).
-      const fsSize = compact ? 34 : 38;
-      const fullscreen = makeFullscreenButton(this, width / 2 + panelW / 2 - fsSize / 2 - 12, top + fsSize / 2 + 12, fsSize);
+      const fsSize = phone ? 30 : compact ? 34 : 38;
+      const fsInset = phone ? 8 : 12;
+      const fullscreen = makeFullscreenButton(this, width / 2 + panelW / 2 - fsSize / 2 - fsInset, top + fsSize / 2 + fsInset, fsSize);
       if (fullscreen) objects.push(fullscreen);
       objects.push(makeButton(this, width / 2 + buttonW / 2 + 6, buttonY, buttonW, buttonH, t('arena.resume'), () => this.setPaused(false), 'primary'));
       objects.push(makeButton(this, width / 2 - buttonW / 2 - 6, buttonY, buttonW, buttonH, t('arena.endRun'), () => this.confirmAbandon()));
@@ -2457,10 +2461,12 @@ export class RunScene extends Phaser.Scene {
     for (const o of this.announcement) o.destroy();
     const { width, height } = this.scale;
     const compact = width < 820 || height < 520;
-    const y = height * (compact ? 0.4 : 0.3);
-    const big = heading(this, width / 2, y, title, compact ? Math.round(size * 0.75) : size).setOrigin(0.5);
+    // Phones: smaller and above the hero (who stands in the screen centre), under the run HUD.
+    const phone = densityOf(width, height, compact) === 'phone';
+    const y = height * (compact && !phone ? 0.4 : 0.3);
+    const big = heading(this, width / 2, y, title, phone ? Math.round(size * 0.62) : compact ? Math.round(size * 0.75) : size).setOrigin(0.5);
     const parts = [big];
-    if (sub) parts.push(label(this, width / 2, y + (compact ? 28 : 38), sub, compact ? UI.size.small : UI.size.body, UI.goldBrightText, true).setOrigin(0.5));
+    if (sub) parts.push(label(this, width / 2, y + (phone ? 24 : compact ? 28 : 38), sub, compact ? UI.size.small : UI.size.body, UI.goldBrightText, true).setOrigin(0.5));
     for (const p of parts) {
       pinToScreen(p, 15000);
       p.setAlpha(0);
