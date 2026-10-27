@@ -35,6 +35,8 @@ import { getApp } from './app';
 import { CombatFx, STUN_BAR_FLASH, statusLook } from './combatFx';
 import { Hud } from './hud';
 import { RoomView, type AltarLook } from './roomView';
+import { environmentAt } from './environment';
+import type { EnvironmentLook } from '../data/environments';
 import { RunHud } from './runHud';
 import { formatCountdown, formatElapsed } from './runText';
 import { SkillFx } from './skillFx';
@@ -84,7 +86,9 @@ const AREA_TTL = 0.18;
 const LIGHT_RADIUS = 520;
 /** Light falloff texture side; must exceed 2 × LIGHT_RADIUS. */
 const LIGHT_TEXTURE = 1200;
-const DARKNESS = 0.92;
+/** Ground shadow under bodies (environments with actorShadow): ellipse size in body radii. */
+const ACTOR_SHADOW_W = 2.4;
+const ACTOR_SHADOW_H = 1.1;
 /** Visual height of projectiles above the ground, in screen pixels. */
 const PROJECTILE_HEIGHT = 34;
 /** Seconds a skill key press stays queued while the hero is busy. */
@@ -364,6 +368,8 @@ export class RunScene extends Phaser.Scene {
   private pointer!: Phaser.GameObjects.Graphics;
   private light!: Phaser.GameObjects.Container;
   private room!: RoomView;
+  /** Look of this run's zone (floor, walls, light), from the map level. */
+  private env!: EnvironmentLook;
   private hud!: Hud;
   private runHud!: RunHud;
   private overlay: Phaser.GameObjects.GameObject[] | undefined;
@@ -476,9 +482,11 @@ export class RunScene extends Phaser.Scene {
 
   preload(): void {
     getApp(this).platform.loadingStart();
-    if (!this.textures.exists('floor')) this.load.spritesheet('floor', 'assets/test/floor.png', { frameWidth: 192, frameHeight: 96 });
-    // Only what this map can show before the boss; the boss's sheets load in the background later (loadBossSprites).
     const character = findCharacter(getApp(this).profile, this.characterId);
+    // Only the floor of this map's zone (the other zone's tiles are not downloaded until it is played).
+    const floor = environmentAt(this.resolveMapLevel(character)).floor;
+    if (!this.textures.exists(floor.texture)) this.load.spritesheet(floor.texture, floor.path, { frameWidth: 192, frameHeight: 96 });
+    // Only what this map can show before the boss; the boss's sheets load in the background later (loadBossSprites).
     const allies = character ? heroMechanics(character, passiveTree, itemsData).flatMap((m) => (m.kind === 'raiseAllies' ? [m.mobId] : [])) : [];
     this.spriteSets = runSpriteSets(this.content, mapsData.rules, this.resolveMapLevel(character), this.heroSet(), allies);
     this.bossSpritesWanted = false;
@@ -635,8 +643,9 @@ export class RunScene extends Phaser.Scene {
     this.immuneShown.clear();
     this.supportFx = new SupportFx(this);
     this.hero = this.createActor(this.heroSet(), this.world.player.pos);
-    this.light = this.createLight();
-    this.cameras.main.setBackgroundColor('#07070a');
+    this.env = environmentAt(this.run.mapLevel);
+    this.light = this.createLight(this.env);
+    this.cameras.main.setBackgroundColor(this.env.light.background);
     this.buildRoom();
 
     this.hud = new Hud(this, getClass(this.content, this.classId), this.content.progression, this.content.skillLevels, this.content, () => {
@@ -725,7 +734,7 @@ export class RunScene extends Phaser.Scene {
   /** Draws the room the hero is in and fits the camera to it. */
   private buildRoom(): void {
     const t = currentTemplate(this.run, mapsData);
-    this.room.build(t, mapsData.rules.doorRadius, mapsData.rules.altarRadius);
+    this.room.build(t, mapsData.rules.doorRadius, mapsData.rules.altarRadius, this.env);
     const b = this.room.cameraBounds();
     this.cameras.main.setBounds(b.x, b.y, b.width, b.height);
     this.hero.display = this.world.player.pos;
@@ -2224,6 +2233,21 @@ export class RunScene extends Phaser.Scene {
     const edt = timeStopped(this.world) ? 0 : dt;
     const player = this.world.player;
 
+    // Light floors (environment): a soft shadow under every body, so pale mobs stand out of pale stone.
+    const shadow = this.env.light.actorShadow;
+    if (shadow) {
+      g.fillStyle(shadow.color, shadow.alpha);
+      if (!player.dead) g.fillEllipse(this.hero.sprite.x, this.hero.sprite.y, player.radius * ACTOR_SHADOW_W, player.radius * ACTOR_SHADOW_H);
+      for (const mob of this.world.mobs) {
+        const actor = this.mobs.get(mob.id);
+        if (actor?.sprite.visible) g.fillEllipse(actor.sprite.x, actor.sprite.y, mob.radius * ACTOR_SHADOW_W, mob.radius * ACTOR_SHADOW_H);
+      }
+      for (const ally of this.world.allies) {
+        const view = this.allies.get(ally.id);
+        if (view?.actor.sprite.visible) g.fillEllipse(view.actor.sprite.x, view.actor.sprite.y, ally.radius * ACTOR_SHADOW_W, ally.radius * ACTOR_SHADOW_H);
+      }
+    }
+
     // Ground zones (fire puddle, ice field) lie on the floor under everything else.
     for (const zone of this.world.zones) {
       const p = toScreen(zone.pos);
@@ -2453,24 +2477,28 @@ export class RunScene extends Phaser.Scene {
    * Darkness with a lit circle around the hero: a small gradient texture for the light falloff plus
    * plain dark rectangles reaching far beyond any screen, so wide displays never show an unlit strip
    * and GPU memory stays small (a screen-sized gradient texture would be ~100 MB on 1440p).
+   * Its strength and colour come from the zone (the crypt: deep darkness; the temple ruins: a soft warm vignette).
    */
-  private createLight(): Phaser.GameObjects.Container {
-    const key = 'light-mask';
+  private createLight(env: EnvironmentLook): Phaser.GameObjects.Container {
+    const { darkness, darknessColor } = env.light;
+    if (darkness <= 0) return this.add.container(0, 0).setDepth(5000);
+    const key = `light-mask:${env.id}`;
     const size = LIGHT_TEXTURE;
+    const rgb = `${(darknessColor >> 16) & 255},${(darknessColor >> 8) & 255},${darknessColor & 255}`;
     if (!this.textures.exists(key)) {
       const canvas = this.textures.createCanvas(key, size, size)!;
       const ctx = canvas.getContext();
       const gradient = ctx.createRadialGradient(size / 2, size / 2, LIGHT_RADIUS * 0.3, size / 2, size / 2, LIGHT_RADIUS);
-      gradient.addColorStop(0, 'rgba(0,0,0,0)');
-      gradient.addColorStop(0.6, `rgba(0,0,0,${DARKNESS * 0.49})`);
-      gradient.addColorStop(1, `rgba(0,0,0,${DARKNESS})`);
+      gradient.addColorStop(0, `rgba(${rgb},0)`);
+      gradient.addColorStop(0.6, `rgba(${rgb},${darkness * 0.49})`);
+      gradient.addColorStop(1, `rgba(${rgb},${darkness})`);
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, size, size);
       canvas.refresh();
     }
     const far = 20000;
     const half = size / 2;
-    const outside = this.add.graphics().fillStyle(0x000000, DARKNESS);
+    const outside = this.add.graphics().fillStyle(darknessColor, darkness);
     outside.fillRect(-far, -far, 2 * far, far - half); // above
     outside.fillRect(-far, half, 2 * far, far - half); // below
     outside.fillRect(-far, -half, far - half, size); // left
@@ -2492,7 +2520,10 @@ export class RunScene extends Phaser.Scene {
     const big = heading(this, width / 2, y, title, phone ? Math.round(size * 0.62) : compact ? Math.round(size * 0.75) : size).setOrigin(0.5);
     const parts = [big];
     if (sub) parts.push(label(this, width / 2, y + (phone ? 24 : compact ? 28 : 38), sub, compact ? UI.size.small : UI.size.body, UI.goldBrightText, true).setOrigin(0.5));
+    // Light floors: a dark halo instead of the warm glow, which washes out on pale stone.
+    const halo = this.env.light.textHalo;
     for (const p of parts) {
+      if (halo) p.setShadow(0, 2, halo, 8, true, true);
       pinToScreen(p, 15000);
       p.setAlpha(0);
       this.tweens.add({ targets: p, alpha: 1, duration: 200, hold: 1300, yoyo: true, onComplete: () => p.destroy() });

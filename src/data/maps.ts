@@ -175,4 +175,12 @@ export const mapsData: MapsData = {
     essence: { perElite: 0.1, perBoss: 0.5 },
   },
   templates: Object.fromEntries(templateList.map((t) => [t.id, t])),
+  // Designer decision 2026-10-27 (maps.md «Зони»): zones of 10 map levels, alternating; the game starts in the sunlit
+  // temple ruins and descends into the crypt. Only the look changes for now (environments.ts).
+  zones: [
+    { from: 1, to: 10, environment: 'temple' },
+    { from: 11, to: 20, environment: 'crypt' },
+    { from: 21, to: 30, environment: 'temple' },
+    { from: 31, to: 40, environment: 'crypt' },
+  ],
 };
