@@ -455,3 +455,50 @@ export function pinToScreen<T extends Phaser.GameObjects.GameObject>(obj: T, dep
   if (depth !== undefined) (obj as unknown as Phaser.GameObjects.Components.Depth).setDepth(depth);
   return obj;
 }
+
+/** Procedural icons for square icon buttons (gold line art like the full screen toggle). */
+export type IconName = 'pause' | 'talents';
+
+const ICON_GOLD = 0xf3d58a;
+const ICON_GOLD_HOVER = 0xfff0c0;
+
+/** Draws `icon` centred at (0, 0) into `g`, sized for a `size` px button. */
+export function drawIcon(g: Phaser.GameObjects.Graphics, icon: IconName, size: number, color: number = ICON_GOLD): void {
+  g.clear();
+  const s = size * 0.3;
+  if (icon === 'pause') {
+    // Two upright bars.
+    const w = Math.max(3, size * 0.12);
+    g.fillStyle(color, 1);
+    g.fillRect(-s * 0.55 - w / 2, -s, w, s * 2);
+    g.fillRect(s * 0.55 - w / 2, -s, w, s * 2);
+    return;
+  }
+  // Talents: a small passive tree, a root node joined to two branches and a crowning notable.
+  const r = Math.max(2.5, size * 0.07);
+  const nodes = [
+    { x: 0, y: s * 0.95 },
+    { x: -s * 0.8, y: s * 0.05 },
+    { x: s * 0.8, y: s * 0.05 },
+    { x: 0, y: -s * 0.85 },
+  ] as const;
+  g.lineStyle(Math.max(1.5, size * 0.05), color, 0.85);
+  for (const [a, b] of [[0, 1], [0, 2], [1, 3], [2, 3]] as const) g.lineBetween(nodes[a].x, nodes[a].y, nodes[b].x, nodes[b].y);
+  g.fillStyle(color, 1);
+  for (let i = 0; i < 3; i++) g.fillCircle(nodes[i]!.x, nodes[i]!.y, r);
+  // The notable on top as a diamond.
+  const top = nodes[3];
+  const d = r * 1.7;
+  g.fillTriangle(top.x, top.y - d, top.x + d, top.y, top.x - d, top.y).fillTriangle(top.x, top.y + d, top.x + d, top.y, top.x - d, top.y);
+}
+
+/** Square secondary button with a procedural icon instead of a caption (hit area at least TOUCH_MIN). */
+export function makeIconButton(scene: Phaser.Scene, x: number, y: number, size: number, icon: IconName, onClick: () => void): Phaser.GameObjects.Container {
+  const button = makeButton(scene, x, y, size, size, '', onClick);
+  const g = scene.add.graphics();
+  button.add(g);
+  const bg = button.list[0] as Phaser.GameObjects.Image;
+  drawIcon(g, icon, size);
+  bg.on('pointerover', () => drawIcon(g, icon, size, ICON_GOLD_HOVER)).on('pointerout', () => drawIcon(g, icon, size));
+  return button;
+}

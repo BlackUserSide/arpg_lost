@@ -5,6 +5,7 @@ export interface TouchControlsTuning {
   /**
    * Auto-aim "nearby" radius in world units: a tap / held basic attack aims at the nearest living enemy whose body is
    * within max(this, the action's own reach); none in range → forward (movement / facing). ~ a phone screen's half.
+   * World units at camera zoom 1; a zoomed run view (phoneLayout.runZoom) divides it by the zoom (same screen share).
    */
   readonly autoAimRadius: number;
   /** Share of the stick radius (0..1) the finger must leave the centre by before the hero moves. */
@@ -32,8 +33,16 @@ export interface PhoneLayoutTuning {
    * small tablets (iPad mini 744, Android 7" ~600) stay above.
    */
   readonly maxShortSide: number;
+  /**
+   * World camera zoom in a run at the phone UI density (render/ui.ts densityOf: screen short side <= 480 px), so a
+   * landscape phone shows more of the room (designer decision 2026-10-27). Desktop and tablets stay at 1.
+   * World-space text (damage numbers, names) keeps its screen size; the auto-aim radius scales to stay "about half a
+   * phone screen".
+   */
+  readonly runZoom: number;
 }
 
 export const phoneLayout: PhoneLayoutTuning = {
   maxShortSide: 500,
+  runZoom: 0.65,
 };

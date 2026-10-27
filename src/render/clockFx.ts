@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { softDotTexture, sparkTexture } from './fxTextures';
+import { keepInWorldCamera, worldOverlayRect } from './worldCamera';
 
 // Visuals of the legendary Clock of the Last Moment (docs/design/items.md): the cheat-death trigger (a clock face
 // flaring over the hero and shattering into glass and brass shards) and the time stop that follows (the world goes
@@ -122,11 +123,13 @@ export class ClockFx {
       .setDepth(4001);
   }
 
-  /** Sizes the screen tint (call on resize). */
-  layout(width: number, height: number): void {
-    this.wash.setSize(width, height);
-    this.tone.setSize(width, height);
-    this.flash.setSize(width, height);
+  /**
+   * Sizes the screen tint (call on resize). The tint stays with the world camera (under the HUD, over the room, the
+   * hero lifted above it), so under a zoomed run view it is sized to cover the zoomed screen (worldCamera.ts).
+   */
+  layout(width: number, height: number, zoom = 1): void {
+    const r = worldOverlayRect(width, height, zoom);
+    for (const o of [this.wash, this.tone, this.flash]) keepInWorldCamera(o).setPosition(r.x, r.y).setSize(r.w, r.h);
   }
 
   /**

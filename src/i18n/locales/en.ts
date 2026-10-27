@@ -106,6 +106,7 @@ export const en = {
   'inv.stat.fireResistance': 'Fire Res',
   'inv.stat.coldResistance': 'Cold Res',
   'inv.stat.lightningResistance': 'Lightning Res',
+  'inv.stat.resistances': 'Resists',
   'inv.stat.lifeRegen': 'Life Regen',
   'inv.stat.weapon': 'Weapon',
   'inv.stat.attacksPerSecond': 'Attacks/sec',

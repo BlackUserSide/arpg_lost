@@ -108,6 +108,7 @@ export const pl: LocaleTable = {
   'inv.stat.fireResistance': 'Odp. na ogień',
   'inv.stat.coldResistance': 'Odp. na zimno',
   'inv.stat.lightningResistance': 'Odp. na błyskawice',
+  'inv.stat.resistances': 'Odporności',
   'inv.stat.lifeRegen': 'Regen. życia',
   'inv.stat.weapon': 'Broń',
   'inv.stat.attacksPerSecond': 'Ataki/s',

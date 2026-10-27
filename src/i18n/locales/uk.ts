@@ -105,6 +105,7 @@ export const uk: LocaleTable = {
   'inv.stat.fireResistance': 'Опір вогню',
   'inv.stat.coldResistance': 'Опір холоду',
   'inv.stat.lightningResistance': 'Опір блискавці',
+  'inv.stat.resistances': 'Опори',
   'inv.stat.lifeRegen': 'Регенерація життя',
   'inv.stat.weapon': 'Зброя',
   'inv.stat.attacksPerSecond': 'Атак за секунду',

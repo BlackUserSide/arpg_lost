@@ -107,6 +107,7 @@ export const de: LocaleTable = {
   'inv.stat.fireResistance': 'Feuerwid.',
   'inv.stat.coldResistance': 'Kältewid.',
   'inv.stat.lightningResistance': 'Blitzwid.',
+  'inv.stat.resistances': 'Widerst.',
   'inv.stat.lifeRegen': 'Lebensreg.',
   'inv.stat.weapon': 'Waffe',
   'inv.stat.attacksPerSecond': 'Angriffe/s',

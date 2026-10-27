@@ -41,6 +41,8 @@ const CRAFT_DATA: CraftData = { items: itemsData, crafting: craftingRules };
 const TOOLTIP_DETAIL_MIN_SCALE = 0.8;
 /** Phones: narrowest item details column beside the stash (px); narrower screens show the details over the stash. */
 const PHONE_DETAILS_MIN_W = 236;
+/** Element colours of the resistances in the phone stats block. */
+const RESIST_COLORS = { fire: '#ff8a4a', cold: '#8fc8ff', lightning: '#f3e070' } as const;
 
 export type InventoryTab = 'items' | 'craft' | 'mail';
 
@@ -253,8 +255,8 @@ export class InventoryScene extends Phaser.Scene {
       const y = gridTop + cell / 2 + d.row * (cell + gap + 14);
       this.buildSlot(character, d.slot, t(d.name), x, y, cell);
     }
-    if (look) {
-      // Hero stands in the free doll cell (left column, bottom row).
+    if (look && !phone) {
+      // Hero stands in the free doll cell (left column, bottom row). Phones show the hero's stats instead.
       const sprite = this.add
         .sprite(dollX - (cell + gap), gridTop + cell + 2 * (cell + gap + 14), textureKey(look.sprite, 'idle'), 6 * 10)
         .setOrigin(0.5, ORIGIN_Y)
@@ -264,6 +266,11 @@ export class InventoryScene extends Phaser.Scene {
       this.root.add(sprite);
     }
     if (!compact) this.buildStats(character, dollX - dollW / 2 + 18, gridTop + 3 * (cell + gap + 14) + 6, dollW - 36);
+    else if (phone) {
+      // Phones: a condensed stats block under the slots, as many of the key rows as fit.
+      const statsTop = gridTop + 3 * (cell + gap + 14) - 2;
+      this.buildCompactStats(character, dollX - dollW / 2 + 12, statsTop, dollW - 24, top + avail - 8 - statsTop);
+    }
 
     // Stash.
     const sCell = Math.floor(Math.min(sCellMax, (avail - headerH - (phone ? 16 : 24)) / rows - (compact ? 4 : 6)));
@@ -356,6 +363,97 @@ export class InventoryScene extends Phaser.Scene {
     if (tooHigh) this.root.add(label(this, x - size / 2 + 4, y + size / 2 - 16, String(item.level), 11, UI.danger, true).setStroke('#000', 3));
     // Rarity pip in the corner.
     this.root.add(this.add.circle(x + size / 2 - 7, y - size / 2 + 7, 3, Phaser.Display.Color.HexStringToColor(UI.rarity[item.rarity]).color));
+  }
+
+  /**
+   * Phones: the key stats in one column of label / value rows (life, resource, weapon damage, armour, the three
+   * resistances in their element colours, crit, attack speed, then the rest), as many as fit in `h` px.
+   */
+  private buildCompactStats(character: CharacterRecord, x: number, y: number, w: number, h: number): void {
+    const s = this.heroStats(character);
+    const rowH = 18;
+    const rows = Math.floor(h / rowH);
+    if (rows <= 0) return;
+    this.root.add(this.add.rectangle(x + w / 2, y, w, 1, 0x5a4320));
+    const pick: Array<[string, string | Array<[string, string]>]> = [
+      [t('inv.stat.life'), s.life],
+      ...(s.energyShield !== '0' ? [[t('inv.stat.energyShield'), s.energyShield] as [string, string]] : []),
+      [s.resourceName, s.resource],
+      [t('inv.stat.weapon'), s.weapon],
+      [t('inv.stat.armour'), s.armour],
+      [t('inv.stat.resistances'), s.resists],
+      [t('inv.stat.critChance'), s.crit],
+      [t('inv.stat.attacksPerSecond'), s.attacksPerSecond],
+      [t('inv.stat.movementSpeed'), s.movementSpeed],
+      [t('inv.stat.lifeRegen'), s.lifeRegen],
+    ];
+    pick.slice(0, rows).forEach(([name, value], i) => {
+      const rowY = y + 4 + i * rowH;
+      let valueW = 0;
+      if (typeof value === 'string') {
+        const v = label(this, x + w, rowY, value, UI.size.small, UI.text, true).setOrigin(1, 0);
+        this.root.add(v);
+        valueW = v.width;
+      } else {
+        // Coloured parts right to left (resistances: fire / cold / lightning).
+        let right = x + w;
+        for (let p = value.length - 1; p >= 0; p--) {
+          const [text, color] = value[p]!;
+          const v = label(this, right, rowY, text, UI.size.small, color, true).setOrigin(1, 0);
+          this.root.add(v);
+          right -= v.width + 5;
+        }
+        valueW = x + w - right;
+      }
+      this.root.add(fitText(label(this, x, rowY, name, UI.size.small, UI.muted), Math.max(20, w - valueW - 6)));
+    });
+  }
+
+  /** Display strings of the hero's derived stats (core computes them; this only formats). */
+  private heroStats(character: CharacterRecord): {
+    life: string;
+    energyShield: string;
+    resourceName: string;
+    resource: string;
+    armour: string;
+    resists: Array<[string, string]>;
+    weapon: string;
+    attacksPerSecond: string;
+    crit: string;
+    movementSpeed: string;
+    lifeRegen: string;
+  } {
+    const classDef = getClass(content, character.classId);
+    const levelMods = levelModifiers(character.level, content.progression);
+    const mods = [...heroModifiers(character, itemsData, passiveTree), ...levelMods];
+    const mechanics = heroMechanics(character, passiveTree, itemsData);
+    const source: StatSource = { baseStats: classDef.baseStats, modifiers: mods, levelModifiers: levelMods, mechanics };
+    const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
+    const int = (stat: StatId): string => String(Math.round(deriveStat(source, stat)));
+    const pct = (stat: StatId): string => `${Math.round(deriveStat(source, stat) * 100)}%`;
+    const crit = critStats(mechanics, {
+      critChance: computeStat(weapon.critChance, mods, 'critChance', ['attack']),
+      critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', ['attack']),
+    });
+    return {
+      life: int('life'),
+      energyShield: int('energyShield'),
+      resourceName: resourceText(classDef.resource.id),
+      resource: int('resource'),
+      armour: int('armour'),
+      resists: [
+        [pct('fireResistance'), RESIST_COLORS.fire],
+        [pct('coldResistance'), RESIST_COLORS.cold],
+        [pct('lightningResistance'), RESIST_COLORS.lightning],
+      ],
+      weapon: Object.entries(weapon.damage)
+        .map(([type, r]) => `${num(r.min)}–${num(r.max)} ${damageTypeText(type, 'short')}`)
+        .join(t('list.separator')),
+      attacksPerSecond: formatNumber(computeStat(weapon.attacksPerSecond, mods, 'attackSpeed', ['attack']), 2),
+      crit: `${formatNumber(crit.critChance * 100, 1)}% ×${formatNumber(crit.critMultiplier, 2)}`,
+      movementSpeed: int('movementSpeed'),
+      lifeRegen: formatNumber(deriveStat(source, 'lifeRegen'), 1),
+    };
   }
 
   private buildStats(character: CharacterRecord, x: number, y: number, w: number): void {

@@ -52,7 +52,7 @@ import { softDotTexture } from './fxTextures';
 import { PointsBadge } from './passiveBanner';
 import type { PassiveTreeSceneData, RunTreeHooks } from './PassiveTreeScene';
 import { SOLO_MODE, type RunMode } from './runMode';
-import { confirmDialog, densityOf, fadeIn, heading, label, makeButton, makeFrame, pinToScreen, UI } from './ui';
+import { confirmDialog, densityOf, fadeIn, heading, label, makeButton, makeFrame, makeIconButton, pinToScreen, TOUCH_MIN, UI } from './ui';
 import { ISO_K, screenDirToWorld, stickyDirectionRow, toScreen, toWorld } from './iso';
 import { mobSprite, runSpriteSets, type RunSpriteSets } from './runSprites';
 import { ACTION_ANIMS, ATTACK_ANIMS, CAST_ANIMS, CLASS_LOOKS, loadedSpriteKeys, loadSprites, ORIGIN_Y, ROAR_ANIM, SPRITE_SETS, spriteLayout, spritesLoaded, spriteSetOf, textureKey, unloadSprites } from './sprites';
@@ -64,7 +64,8 @@ import { SOUL_GREEN, SOUL_VIOLET, SoulFx } from './soulFx';
 import { ClockFx, ENEMY_FX_DEPTH, HERO_STOP_DEPTH } from './clockFx';
 import { soulsMax } from '../core/world/souls';
 import { AllyFx } from './allyFx';
-import { touchControls as touchTuning } from '../data/controls';
+import { phoneLayout, touchControls as touchTuning, type TouchControlsTuning } from '../data/controls';
+import { ZoomedWorldView } from './worldCamera';
 import { makeFullscreenButton } from './fullscreen';
 import { TouchControls } from './touchControls';
 import { ORIENTATION_BLOCKED, orientationBlocked } from './orientationGate';
@@ -437,6 +438,12 @@ export class RunScene extends Phaser.Scene {
   /** Touch controls are on (phones / tablets, or ?touch=1): stick + buttons instead of mouse aim. */
   private touch = false;
   private touchControls: TouchControls | undefined;
+  /** World camera zoom (phones: phoneLayout.runZoom) with the unzoomed HUD camera beside it. */
+  private zoomView!: ZoomedWorldView;
+  /** Touch auto-aim tuning at the current zoom: the "nearby" radius covers the same share of the screen. */
+  private aimTuning: TouchControlsTuning = touchTuning;
+  /** Scale of world-space text (damage numbers, names) that keeps its screen size under the zoom (1 / zoom). */
+  private textScale = 1;
   /** Floor indicator of a drag-aimed skill. */
   private aimGfx!: Phaser.GameObjects.Graphics;
   /**
@@ -659,6 +666,7 @@ export class RunScene extends Phaser.Scene {
     this.treeButton = undefined;
     this.pauseButton = undefined;
     this.badge = new PointsBadge(this, HUD_UI_DEPTH + 2);
+    this.zoomView = new ZoomedWorldView(this);
     this.layoutUi();
     this.refreshBanner();
     const relayout = (): void => {
@@ -766,17 +774,26 @@ export class RunScene extends Phaser.Scene {
     const margin = phone ? 8 : compact ? 12 : 22;
     // Touch layout keeps out of the notch / home indicator (zero inside the portal iframe).
     const insets = this.touch ? safeInsets(this.game.canvas) : undefined;
+    // Phones see more of the room (data/controls phoneLayout.runZoom); world text and the auto-aim radius follow.
+    const zoom = phone ? phoneLayout.runZoom : 1;
+    this.zoomView.set(zoom, width, height);
+    this.textScale = 1 / zoom;
+    this.aimTuning = zoom === 1 ? touchTuning : { ...touchTuning, autoAimRadius: touchTuning.autoAimRadius / zoom };
+    for (const actor of this.mobs.values()) actor.elite?.label.setScale(this.textScale);
+    this.light.setScale(this.textScale);
+    this.supportFx.setTextScale(this.textScale);
     this.hud.layout(width, height, insets);
-    this.clockFx.layout(width, height);
+    this.clockFx.layout(width, height, zoom);
     this.treeButton?.destroy();
     this.treeButton = undefined;
     this.pauseButton?.destroy();
     this.pauseButton = undefined;
-    const w = phone ? 88 : compact ? 96 : 150;
-    const h = phone ? 30 : compact ? 34 : 40;
-    const pw = phone ? 76 : compact ? 84 : 120;
+    // Phones: square icon buttons (designer decision 2026-10-27), at least the touch minimum.
+    const h = phone ? TOUCH_MIN : compact ? 34 : 40;
+    const w = phone ? h : compact ? 96 : 150;
+    const pw = phone ? h : compact ? 84 : 120;
     const right = margin + (insets?.right ?? 0);
-    const buttonY = margin + (phone ? 15 : 18) + (insets?.top ?? 0);
+    const buttonY = margin + (phone ? h / 2 - 2 : 18) + (insets?.top ?? 0);
     const hasHero = findCharacter(getApp(this).profile, this.characterId) !== undefined;
     const buttonGap = phone ? 8 : 10;
     const reserved = right + w + buttonGap + pw;
@@ -789,12 +806,19 @@ export class RunScene extends Phaser.Scene {
     if (!hasHero) return;
     // Key names only with the keyboard layout.
     const keyCaptions = !compact && !this.touch;
-    this.treeButton = pinToScreen(makeButton(this, width - right - w / 2, buttonY, w, h, keyCaptions ? t('arena.talentsKey') : t('arena.talents'), () => this.openTree()), HUD_UI_DEPTH);
+    const openTree = (): void => this.openTree();
+    const pause = (): void => {
+      if (!this.paused && !this.treeOpen && !this.ended()) this.setPaused(true);
+    };
+    const treeX = width - right - w / 2;
+    const pauseX = width - right - w - buttonGap - pw / 2;
+    this.treeButton = pinToScreen(
+      phone ? makeIconButton(this, treeX, buttonY, w, 'talents', openTree) : makeButton(this, treeX, buttonY, w, h, keyCaptions ? t('arena.talentsKey') : t('arena.talents'), openTree),
+      HUD_UI_DEPTH,
+    );
     // Touch has no Esc: the pause menu (and with it "end the run") needs a button.
     this.pauseButton = pinToScreen(
-      makeButton(this, width - right - w - buttonGap - pw / 2, buttonY, pw, h, keyCaptions ? t('arena.pauseKey') : t('arena.pause'), () => {
-        if (!this.paused && !this.treeOpen && !this.ended()) this.setPaused(true);
-      }),
+      phone ? makeIconButton(this, pauseX, buttonY, pw, 'pause', pause) : makeButton(this, pauseX, buttonY, pw, h, keyCaptions ? t('arena.pauseKey') : t('arena.pause'), pause),
       HUD_UI_DEPTH,
     );
     // The unspent points badge sits on the Talents button's top right corner.
@@ -1354,9 +1378,9 @@ export class RunScene extends Phaser.Scene {
     const castAim = first >= 0 ? this.touchAims[first] : undefined;
     let aim: Vec2;
     if (castAction && castAim) {
-      aim = castAim.manual ? manualAim(castAction.delivery, player, castAim.dir, castAim.fraction) : tapAim(castAction.delivery, player, this.world.mobs, moveDir, touchTuning, this.aimFilter);
+      aim = castAim.manual ? manualAim(castAction.delivery, player, castAim.dir, castAim.fraction) : tapAim(castAction.delivery, player, this.world.mobs, moveDir, this.aimTuning, this.aimFilter);
     } else {
-      aim = attack ? tapAim(player.actions.basicAttack.delivery, player, this.world.mobs, moveDir, touchTuning, this.aimFilter) : idleAim(player, moveDir);
+      aim = attack ? tapAim(player.actions.basicAttack.delivery, player, this.world.mobs, moveDir, this.aimTuning, this.aimFilter) : idleAim(player, moveDir);
     }
     // The altar waits for the boss's sheets (bossReady), as with the keyboard.
     const interact = (k.F.isDown || this.interactQueued) && this.bossReady();
@@ -2404,6 +2428,7 @@ export class RunScene extends Phaser.Scene {
     const label = this.add
       .text(actor.sprite.x, actor.sprite.y, eliteModifierName(modifier), { fontFamily: UI.bodyFont, fontStyle: 'bold', fontSize: `${UI.size.small}px`, color: look.css, stroke: '#000', strokeThickness: 4 })
       .setOrigin(0.5, 1)
+      .setScale(this.textScale)
       .setDepth(4001);
     const def = eliteModifierDef(this.content, modifier);
     return { modifier, fire: this.firesWith(modifier), fast: (def?.moveSpeed ?? 1) > 1, label, glow: this.eliteFx.addGlow(actor.sprite, modifier) };
@@ -2506,11 +2531,12 @@ export class RunScene extends Phaser.Scene {
     const screen = toScreen(pos);
     const text = this.textPool.pop() ?? this.add.text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '18px', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(6000);
     // Keep it below the run HUD (timer, boss bar), which would hide it when the mob stands near the top of the screen.
-    const minY = this.cameras.main.worldView.y + this.runHud.bottom() + 16 + style.rise;
-    text.setText(message).setPosition(screen.x, Math.max(screen.y - lift, minY)).setColor(color ?? style.color).setFontSize(style.size).setAlpha(1).setVisible(true);
+    const k = this.textScale;
+    const minY = this.cameras.main.worldView.y + (this.runHud.bottom() + 16) * k + style.rise * k;
+    text.setText(message).setPosition(screen.x, Math.max(screen.y - lift, minY)).setColor(color ?? style.color).setFontSize(style.size).setScale(k).setAlpha(1).setVisible(true);
     this.tweens.add({
       targets: text,
-      y: text.y - style.rise,
+      y: text.y - style.rise * k,
       alpha: 0,
       duration: style.duration,
       ease: 'Cubic.easeOut',
@@ -2537,11 +2563,12 @@ export class RunScene extends Phaser.Scene {
       .setPosition(screen.x + dx, screen.y - (kind === 'heal' ? 84 : small ? 56 : 70))
       .setColor(style.color)
       .setFontSize(style.size)
+      .setScale(this.textScale)
       .setAlpha(1)
       .setVisible(true);
     this.tweens.add({
       targets: text,
-      y: text.y - style.rise,
+      y: text.y - style.rise * this.textScale,
       alpha: 0,
       duration: style.duration,
       onComplete: () => {

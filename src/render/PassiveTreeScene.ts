@@ -182,6 +182,8 @@ export class PassiveTreeScene extends Phaser.Scene {
   private compact = false;
   /** Phone density (render/ui.ts uiMetrics): slimmer header, bottom bar and details panel. */
   private phone = false;
+  /** Screen y where the bottom button bar starts: node names below it are hidden. */
+  private bottomBarTop = Number.POSITIVE_INFINITY;
   private touchUi = false;
 
   // Core-derived state, refreshed after every change.
@@ -753,7 +755,13 @@ export class PassiveTreeScene extends Phaser.Scene {
         text.setColor(own ? UI.goldBrightText : UI.muted).setAlpha(own ? 1 : 0.6);
         continue;
       }
-      text.setPosition(this.sx(p.x), this.sy(p.y) + this.radiusOf(node) + 3);
+      const labelY = this.sy(p.y) + this.radiusOf(node) + 3;
+      // Names never run under the header or the bottom button bar (they would read as part of a button).
+      if (labelY < this.view.y || labelY + text.height > this.bottomBarTop) {
+        text.setVisible(false);
+        continue;
+      }
+      text.setPosition(this.sx(p.x), labelY);
       text.setColor(state === 'allocated' ? UI.goldBrightText : node.type === 'keystone' || node.type === 'specKeystone' ? '#ffb070' : UI.text);
       text.setAlpha(state === 'blocked' ? 0.45 : 1);
     }
@@ -875,6 +883,7 @@ export class PassiveTreeScene extends Phaser.Scene {
     const hero = this.hero();
     const bh = phone ? 32 : compact ? 36 : 44;
     const by = height - (phone ? 6 : m) - bh / 2;
+    this.bottomBarTop = by - bh / 2 - 2;
     const wheel = dryRun(hero, (h, w) => refundWheel(TREE, h, w));
     const spec = dryRun(hero, (h, w) => changeSpec(TREE, h, w));
     const price = (r: { cost: number; error: RespecError | null }): string => (r.error ? '' : r.cost > 0 ? ` · ${r.cost} ◆` : compact ? ' · 0 ◆' : ` · ${t('common.free')}`);
