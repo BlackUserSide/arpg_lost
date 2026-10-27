@@ -65,7 +65,12 @@ export interface QaPanelOptions {
   /** After an action mutated the profile: save, remember the lines, rebuild the menu. */
   readonly onApplied: (lines: QaResultLine[]) => void;
   readonly onClose: () => void;
+  /** Screen / viewport sizes (render/viewport.ts), refreshed while the panel is open: testers screenshot it. */
+  readonly diagnostics?: () => string;
 }
+
+/** How often the size readout refreshes (ms). */
+const DIAGNOSTICS_REFRESH_MS = 500;
 
 /** Builds the modal QA panel into `root` (centred, sized to the screen; tapping the shade closes it). */
 export function buildQaPanel(scene: Phaser.Scene, root: Phaser.GameObjects.Container, o: QaPanelOptions): void {
@@ -90,9 +95,14 @@ export function buildQaPanel(scene: Phaser.Scene, root: Phaser.GameObjects.Conta
   };
   const results = [paragraph(false), paragraph(true)].filter((p): p is Phaser.GameObjects.Text => p !== undefined);
   const resultH = Math.max(lineH * 2, results.reduce((h, p) => h + p.height, 0)) + 4;
+  // Size readout under the title (technical, not translated), measured with its wrapping.
+  const diag = o.diagnostics
+    ? label(scene, width / 2, 0, o.diagnostics(), compact ? 10 : 12, UI.muted).setOrigin(0.5, 0).setWordWrapWidth(innerW).setAlign('center')
+    : undefined;
+  const diagH = diag ? diag.height + 2 : 0;
   const rows = hero ? 4 : 0;
   // Buttons shrink to whatever the screen has left (phones in landscape), but stay a comfortable touch size.
-  const fixedH = headerH + heroH + (hero ? resultH : 0) + pad * 2 + (hero ? gap * (rows - 1) + gap / 2 + 2 : 0);
+  const fixedH = headerH + diagH + heroH + (hero ? resultH : 0) + pad * 2 + (hero ? gap * (rows - 1) + gap / 2 + 2 : 0);
   const btnH = hero ? Math.max(32, Math.min(compact ? 40 : 48, (height - 8 - fixedH) / rows)) : 0;
   const panelH = Math.min(height - 8, fixedH + btnH * rows + (hero ? 0 : lineH * 2));
   const top = height / 2 - panelH / 2;
@@ -104,7 +114,14 @@ export function buildQaPanel(scene: Phaser.Scene, root: Phaser.GameObjects.Conta
   root.add(fitText(heading(scene, width / 2, top + headerH / 2 + 4, t('qa.title'), compact ? 22 : 28).setOrigin(0.5), panelW - closeSize * 2 - 40));
   root.add(makeButton(scene, width / 2 + panelW / 2 - closeSize / 2 - 10, top + closeSize / 2 + 10, closeSize, closeSize, '✕', o.onClose));
 
-  let y = top + headerH + heroH / 2;
+  if (diag && o.diagnostics) {
+    const read = o.diagnostics;
+    root.add(diag.setY(top + headerH));
+    const timer = scene.time.addEvent({ delay: DIAGNOSTICS_REFRESH_MS, loop: true, callback: () => diag.setText(read()) });
+    diag.once('destroy', () => timer.remove());
+  }
+
+  let y = top + headerH + diagH + heroH / 2;
   if (!hero) {
     root.add(fitText(label(scene, width / 2, y + lineH, t('qa.noHero'), UI.size.body, UI.muted).setOrigin(0.5), innerW));
     return;

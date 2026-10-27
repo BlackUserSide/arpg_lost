@@ -9,8 +9,11 @@ import { MainMenuScene } from './render/MainMenuScene';
 import { installOrientationGate } from './render/orientationGate';
 import { PassiveTreeScene } from './render/PassiveTreeScene';
 import { SupportsScene } from './render/SupportsScene';
+import { fitViewport } from './render/viewport';
 
 async function boot(): Promise<void> {
+  // The page shell gets its size before the canvas does (iOS layout box quirks, render/viewport.ts).
+  const keepViewportFit = fitViewport();
   // Portal state events go out only on a change (eventGuard.ts).
   const platform = new EventGuardPlatform(new LocalPlatform());
   // Resolves the language and loads its fonts before the first scene draws text.
@@ -28,6 +31,7 @@ async function boot(): Promise<void> {
     callbacks: { preBoot: (g) => g.registry.set(APP_KEY, app) },
   });
 
+  keepViewportFit(game);
   // Phones play in landscape only: a cover asks to turn the phone while it is held upright.
   installOrientationGate(game);
 

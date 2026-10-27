@@ -17,6 +17,7 @@ import { buildQaPanel, QA_UNLOCK_TAPS, QA_UNLOCK_WINDOW_MS, type QaResultLine } 
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { RunSceneData } from './RunScene';
 import type { SupportsSceneData } from './SupportsScene';
+import { viewportDiagnostics } from './viewport';
 import { CLASS_LOOKS, HERO_SETS, loadSprites, ORIGIN_Y, spriteFrame, textureKey, unloadSprites } from './sprites';
 import { confirmDialog, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, showToast, UI } from './ui';
 
@@ -255,6 +256,7 @@ export class MainMenuScene extends Phaser.Scene {
       hero,
       compact,
       lines: this.qaLines,
+      diagnostics: () => viewportDiagnostics(this.game),
       onApplied: (lines) => {
         this.app.save();
         this.qaLines = lines;

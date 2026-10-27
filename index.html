@@ -13,8 +13,9 @@
     <meta name="apple-mobile-web-app-title" content="ARPG Lost" />
     <style>
       html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #0b0a0e; overflow: hidden; }
-      /* #shell is the full-screen target (scale config fullscreenTarget): the canvas and DOM overlays live inside it. */
-      #shell { position: fixed; inset: 0; margin: 0; padding: 0; background: #0b0a0e; }
+      /* #shell is the full-screen target (scale config fullscreenTarget): the canvas and DOM overlays live inside it.
+         On iOS render/viewport.ts sets its width / height in px (iOS can keep a stale, taller layout box). */
+      #shell { position: fixed; left: 0; top: 0; width: 100%; height: 100%; margin: 0; padding: 0; background: #0b0a0e; }
       /* viewport-fit=cover lets the page reach under the notch / status bar / home indicator: the game itself keeps to
          the safe area (render/touchMode.ts safeInsets() then reports no extra insets). */
       #game {
