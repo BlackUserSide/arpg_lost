@@ -21,6 +21,28 @@ describe('environments', () => {
     }
   });
 
+  it('glows and fog are alphas in [0, 1]; counts are whole and not negative', () => {
+    const alpha = (v: number, label: string): void => {
+      expect(v, label).toBeGreaterThanOrEqual(0);
+      expect(v, label).toBeLessThanOrEqual(1);
+    };
+    const count = (v: number, label: string): void => {
+      expect(Number.isInteger(v) && v >= 0, label).toBe(true);
+    };
+    for (const env of Object.values(environments)) {
+      if (env.bedrock) {
+        alpha(env.bedrock.chasmGlowAlpha, env.id);
+        for (const n of [env.bedrock.boulders, env.bedrock.stalagmites, env.bedrock.chasms]) count(n, env.id);
+      }
+      const c = env.crypt;
+      if (c) {
+        for (const a of [c.candles.alpha, c.braziers.alpha, c.fog.alpha, c.wisps.alpha]) alpha(a, env.id);
+        for (const n of [c.candles.count, c.braziers.count, c.fog.count, c.wisps.count]) count(n, env.id);
+      }
+      if (env.decor) alpha(env.decor.rays.alpha, env.id);
+    }
+  });
+
   it('light: darkness is an alpha in [0, 1]', () => {
     for (const env of Object.values(environments)) {
       expect(env.light.darkness, env.id).toBeGreaterThanOrEqual(0);

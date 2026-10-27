@@ -124,6 +124,55 @@ export interface DecorLook {
   readonly rays: { readonly count: number; readonly color: number; readonly alpha: number; readonly motes: number };
 }
 
+/**
+ * The bedrock a dungeon room is carved into, instead of a flat void: a tileable rock sheet, rough boulders hugging the
+ * walls and ledge, stalagmites and a few chasms with a faint glow from the abyss. Counts are per room.
+ */
+export interface BedrockLook {
+  readonly rock: number;
+  readonly rockLight: number;
+  readonly rockDark: number;
+  readonly crack: number;
+  readonly boulders: number;
+  readonly stalagmites: number;
+  readonly chasms: number;
+  /** Glow out of the chasms, drawn above the darkness so it is seen from afar (keep it faint). */
+  readonly chasmGlow: number;
+  readonly chasmGlowAlpha: number;
+}
+
+/** A warm light island in the dark (candles, braziers): a soft glow on the floor and a softer one above the darkness. */
+export interface FlameLight {
+  readonly count: number;
+  readonly color: number;
+  /** Glow size, multiples of a 64 px dot. */
+  readonly scale: number;
+  /** Alpha of the glow above the darkness (the floor glow under it is stronger). */
+  readonly alpha: number;
+}
+
+/** Dungeon props with no effect on play (no collision; under every body, ground ring and floor effect). */
+export interface CryptDecorLook {
+  /** Small props (bones, skulls, cloth, weapons) per 1,000,000 square world units of floor. */
+  readonly density: number;
+  /** Flat marks (cracks, puddles) per 1,000,000 square world units. */
+  readonly flats: number;
+  /** World units props and lights keep from the entry, exit, altar, boss spawn and spawn points. */
+  readonly clearance: number;
+  readonly bone: number;
+  readonly boneShade: number;
+  readonly cloth: readonly number[];
+  readonly rust: readonly number[];
+  readonly web: number;
+  readonly puddle: number;
+  readonly candles: FlameLight;
+  readonly braziers: FlameLight;
+  /** Low fog banks along the walls and in corners. */
+  readonly fog: { readonly count: number; readonly color: number; readonly alpha: number };
+  /** Ghost wisps drifting about (none with prefers-reduced-motion), drawn above the darkness. */
+  readonly wisps: { readonly count: number; readonly color: number; readonly alpha: number };
+}
+
 export interface EnvironmentLook {
   readonly id: string;
   readonly floor: FloorLook;
@@ -134,6 +183,8 @@ export interface EnvironmentLook {
   readonly light: LightLook;
   readonly outside?: OutsideLook;
   readonly decor?: DecorLook;
+  readonly bedrock?: BedrockLook;
+  readonly crypt?: CryptDecorLook;
 }
 
 /** The dark dungeon: the look every map had before zones (Flare dungeon tiles, deep darkness around the hero). */
@@ -182,6 +233,35 @@ const crypt: EnvironmentLook = {
     spent: 0x4a4450,
   },
   light: { background: 0x07070a, darkness: 0.92, darknessColor: 0x000000, glowBlend: 'add' },
+  // Designer decision 2026-10-27 (maps.md «Зони»): the crypt comes alive too — bedrock and chasms outside, bones,
+  // candles, braziers, cobwebs, fog and ghost wisps inside. Cold violet abyss glow matches the altar palette.
+  bedrock: {
+    rock: 0x2b2631,
+    rockLight: 0x5a5262,
+    rockDark: 0x121016,
+    crack: 0x0a080c,
+    boulders: 34,
+    stalagmites: 12,
+    chasms: 3,
+    chasmGlow: 0x8a5cff,
+    chasmGlowAlpha: 0.15,
+  },
+  crypt: {
+    density: 12,
+    flats: 7,
+    clearance: 110,
+    bone: 0xcfc4ab,
+    boneShade: 0x8e8270,
+    // Faded, dusty cloth (never red: on the floor it would read as blood, PEGI 12).
+    cloth: [0x4f4560, 0x2e2838, 0x6e6280],
+    rust: [0x7a4a2a, 0x5e5a58, 0x8c5a32],
+    web: 0xd8d4e0,
+    puddle: 0x1a2430,
+    candles: { count: 3, color: 0xffb050, scale: 2.4, alpha: 0.16 },
+    braziers: { count: 2, color: 0xff9a40, scale: 3.6, alpha: 0.22 },
+    fog: { count: 7, color: 0x9aa6a8, alpha: 0.12 },
+    wisps: { count: 6, color: 0x8affc4, alpha: 0.45 },
+  },
 };
 
 /**

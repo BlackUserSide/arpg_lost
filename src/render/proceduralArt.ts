@@ -1,4 +1,6 @@
-// Small helpers shared by procedurally drawn room art (roomView, ruinsDecor). Look only, never game state.
+import type * as Phaser from 'phaser';
+
+// Small helpers shared by procedurally drawn room art (roomView, ruinsDecor, cryptDecor). Look only, never game state.
 
 /** CSS rgba() of a 0xRRGGBB colour. */
 export const css = (color: number, alpha = 1): string => `rgba(${(color >> 16) & 255},${(color >> 8) & 255},${color & 255},${alpha})`;
@@ -32,3 +34,15 @@ export function makeCanvas(width: number, height: number): { canvas: HTMLCanvasE
   canvas.height = height;
   return { canvas, ctx: canvas.getContext('2d')! };
 }
+
+/** Canvas texture `key` drawn by `draw` once per game (later calls return the cached key). */
+export function canvasTexture(scene: Phaser.Scene, key: string, width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void): string {
+  if (scene.textures.exists(key)) return key;
+  const { canvas, ctx } = makeCanvas(width, height);
+  draw(ctx);
+  scene.textures.addCanvas(key, canvas);
+  return key;
+}
+
+/** The player asked the system for less motion: ambient animation (dust, wisps, flicker) stays still or off. */
+export const prefersReducedMotion = (): boolean => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;

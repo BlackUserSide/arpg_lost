@@ -4,7 +4,7 @@ import type { RoomTemplate } from '../core/run/types';
 import type { DecorLook, EnvironmentLook, OutsideLook } from '../data/environments';
 import { softDotTexture } from './fxTextures';
 import { toScreen } from './iso';
-import { css, decorRandom, makeCanvas, stringHash } from './proceduralArt';
+import { css, decorRandom, makeCanvas, prefersReducedMotion, stringHash } from './proceduralArt';
 
 // Decoration of an open-air environment (the temple ruins, docs/design/maps.md «Зони»): sand and dunes with
 // half-buried fragments beyond the room, sand drifting over the floor's edges, small props on the floor, sun rays with
@@ -58,8 +58,6 @@ interface Mote {
   readonly alpha: number;
   along: number;
 }
-
-const prefersReducedMotion = (): boolean => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 
 /** Stone colours of an iso block face. */
 function isoBlock(ctx: CanvasRenderingContext2D, cx: number, base: number, rx: number, ry: number, h: number, top: string, left: string, right: string): void {

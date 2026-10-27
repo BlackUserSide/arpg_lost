@@ -4,6 +4,7 @@ import type { RoomTemplate } from '../core/run/types';
 import type { EnvironmentLook, PillarLook, SlabLook } from '../data/environments';
 import { softDotTexture } from './fxTextures';
 import { css, decorRandom, makeCanvas } from './proceduralArt';
+import { CryptDecor } from './cryptDecor';
 import { RuinsDecor } from './ruinsDecor';
 import { toScreen } from './iso';
 
@@ -586,11 +587,14 @@ export class RoomView {
 
   /** Open-air environments: the land beyond the room, floor props and sun rays. */
   private readonly decor: RuinsDecor;
+  /** Dungeon environments: the bedrock beyond the room, props, lights, fog and wisps. */
+  private readonly cryptDecor: CryptDecor;
 
   constructor(private readonly scene: Phaser.Scene) {
     this.rings = scene.add.graphics().setDepth(GLOW_DEPTH);
     this.circle = scene.add.graphics().setDepth(GROUND_DEPTH);
     this.decor = new RuinsDecor(scene);
+    this.cryptDecor = new CryptDecor(scene);
   }
 
   /** Replaces whatever room was shown with template `t`, in the look of environment `env`. */
@@ -604,6 +608,7 @@ export class RoomView {
     this.buildFloor(t.width, t.height);
     this.buildWalls(t.width, t.height);
     this.decor.build(t, env);
+    this.cryptDecor.build(t, env);
     for (const o of t.obstacles ?? []) {
       // Ruins: about half the columns are broken off at a height picked by their position.
       const h = Math.abs(tileHash(Math.round(o.pos.x), Math.round(o.pos.y)));
@@ -669,6 +674,7 @@ export class RoomView {
   update(dt: number, f: RoomFrame): void {
     this.time += dt;
     this.decor.update(dt);
+    this.cryptDecor.update(dt);
     const rings = this.rings.clear();
     const door = this.door;
     if (door) {
@@ -732,6 +738,7 @@ export class RoomView {
     const texture = slabs ? slabTileTexture(this.scene, this.env, slabs) : floor.texture;
     const cols = Math.ceil(width / TILE_WORLD);
     const rows = Math.ceil(height / TILE_WORLD);
+    const landOutside = this.env.outside !== undefined || this.env.bedrock !== undefined;
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
         const hash = tileHash(i, j);
@@ -743,10 +750,10 @@ export class RoomView {
           frame = pool[Math.abs(hash >> 3) % pool.length] ?? 0;
         }
         const p = toScreen(vec((i + 0.5) * TILE_WORLD, (j + 0.5) * TILE_WORLD));
-        // Open air: nothing covers the land beyond the room, so the last row / column of tiles is cut at the edge.
+        // Land beyond the room (sand, bedrock): nothing covers it, so the last row / column of tiles is cut at the edge.
         const fu = Math.min(1, width / TILE_WORLD - i);
         const fv = Math.min(1, height / TILE_WORLD - j);
-        if (this.env.outside && (fu < 1 || fv < 1)) {
+        if (landOutside && (fu < 1 || fv < 1)) {
           const part = partialTileTexture(this.scene, texture, Math.abs(hash >> 3) % PARTIAL_VARIANTS, fu, fv);
           this.objects.push(this.scene.add.image(p.x, p.y, part).setScale(TILE_SCALE).setDepth(FLOOR_DEPTH));
           continue;
@@ -754,7 +761,7 @@ export class RoomView {
         this.objects.push(this.scene.add.image(p.x, p.y, texture, frame).setScale(TILE_SCALE).setDepth(FLOOR_DEPTH));
       }
     }
-    if (this.env.outside) return;
+    if (landOutside) return;
     // Tiles overhang the room edges by up to a tile: darkness over everything outside.
     const v = VOID_BAND;
     const g = this.scene.add.graphics().setDepth(VOID_DEPTH).fillStyle(this.env.light.background, 1);
@@ -954,5 +961,6 @@ export class RoomView {
     this.rings.clear();
     this.circle.clear();
     this.decor.clear();
+    this.cryptDecor.clear();
   }
 }
