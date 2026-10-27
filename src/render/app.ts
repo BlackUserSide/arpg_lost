@@ -50,6 +50,8 @@ const applySettings = (platform: Platform, settings: Settings): Promise<boolean>
 
 export async function createApp(platform: Platform): Promise<App> {
   await platform.init();
+  // Loading runs from here (SDK ready) until the first screen is built (MainMenuScene.create stops it).
+  platform.loadingStart();
   const settings = loadSettings(platform.storage);
   await applySettings(platform, settings);
   // A save this build cannot read (newer version) loads read-only: never save over it.

@@ -13,6 +13,7 @@ import { loadGlyphs } from './fonts';
 import { makeFullscreenButton } from './fullscreen';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { PointsBanner } from './passiveBanner';
+import { finishPreloader, trackPreloaderLoader } from './preloader';
 import { buildQaPanel, QA_UNLOCK_TAPS, QA_UNLOCK_WINDOW_MS, type QaResultLine } from './qaPanel';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { RunSceneData } from './RunScene';
@@ -123,6 +124,8 @@ export class MainMenuScene extends Phaser.Scene {
   preload(): void {
     this.app = getApp(this);
     this.app.platform.loadingStart();
+    // First launch: the preloader bar follows this loader.
+    trackPreloaderLoader(this);
     // Mob and boss sheets of a finished run are not drawn in the hub: free their GPU memory (phones).
     unloadSprites(this, HERO_SETS);
     loadSprites(this, HERO_SETS);
@@ -149,6 +152,7 @@ export class MainMenuScene extends Phaser.Scene {
     if (moved.length > 0) this.app.save();
     this.build();
     fadeIn(this);
+    finishPreloader();
     if (moved.length > 0) showToast(this, t('inv.mailMoved', { count: moved.length }));
 
     const rebuild = (): void => this.build();

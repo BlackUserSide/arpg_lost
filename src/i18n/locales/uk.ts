@@ -49,6 +49,15 @@ export const uk: LocaleTable = {
   'menu.fullscreenFailed': 'Повноекранний режим тут недоступний',
   'orientation.rotate': 'Поверніть телефон горизонтально, щоб грати',
 
+  // ---- Boot: preloader, closed-beta access window (test build only) ----
+  'boot.failed': 'Не вдалося завантажити. Оновіть сторінку.',
+  'beta.title': 'Закритий бета-тест',
+  'beta.notice': 'Будь ласка, не поширюйте посилання й нічого з гри: вона ще не публічна.',
+  'beta.reset': 'Під час тесту прогрес може бути скинуто.',
+  'beta.codePlaceholder': 'Код доступу',
+  'beta.enter': 'Увійти',
+  'beta.wrong': 'Невірний код. Спробуйте ще раз.',
+
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'Режим QA увімкнено',
   'qa.off': 'Режим QA вимкнено',

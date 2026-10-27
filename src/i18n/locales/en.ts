@@ -50,6 +50,15 @@ export const en = {
   'menu.fullscreenFailed': 'Full screen is not available here',
   'orientation.rotate': 'Turn your phone sideways to play',
 
+  // ---- Boot: preloader, closed-beta access window (test build only) ----
+  'boot.failed': 'Failed to load. Refresh the page.',
+  'beta.title': 'Closed beta test',
+  'beta.notice': 'Please don’t share the link or anything from the game: it is not public yet.',
+  'beta.reset': 'Progress may be reset during the test.',
+  'beta.codePlaceholder': 'Access code',
+  'beta.enter': 'Enter',
+  'beta.wrong': 'Wrong code. Try again.',
+
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'QA mode on',
   'qa.off': 'QA mode off',

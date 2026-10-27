@@ -51,6 +51,15 @@ export const de: LocaleTable = {
   'menu.fullscreenFailed': 'Vollbild ist hier nicht verfügbar',
   'orientation.rotate': 'Dreh dein Handy ins Querformat, um zu spielen',
 
+  // ---- Boot: preloader, closed-beta access window (test build only) ----
+  'boot.failed': 'Laden fehlgeschlagen. Lade die Seite neu.',
+  'beta.title': 'Geschlossener Betatest',
+  'beta.notice': 'Bitte teile weder den Link noch Inhalte aus dem Spiel: Es ist noch nicht öffentlich.',
+  'beta.reset': 'Der Fortschritt kann während des Tests zurückgesetzt werden.',
+  'beta.codePlaceholder': 'Zugangscode',
+  'beta.enter': 'Weiter',
+  'beta.wrong': 'Falscher Code. Versuch es noch einmal.',
+
   // ---- QA mode (closed beta, hidden) ----
   'qa.on': 'QA-Modus an',
   'qa.off': 'QA-Modus aus',
