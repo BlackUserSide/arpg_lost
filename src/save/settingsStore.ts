@@ -11,6 +11,8 @@ export const SETTINGS_VERSION = 1;
 export interface Settings {
   /** Manually chosen UI language (a locale code such as "uk"); absent = follow the browser / portal language. */
   language?: string;
+  /** Closed-beta QA mode (secret unlock in the main menu): shows the QA panel. Absent = off. */
+  qa?: boolean;
   readonly [key: string]: unknown;
 }
 
@@ -28,6 +30,7 @@ export function loadSettings(storage: KeyValueStorage): Settings {
     if (typeof file !== 'object' || file === null || typeof file.settings !== 'object' || file.settings === null) return {};
     const settings: Settings = { ...file.settings };
     if (settings.language !== undefined && typeof settings.language !== 'string') delete settings.language;
+    if (settings.qa !== undefined && typeof settings.qa !== 'boolean') delete settings.qa;
     return settings;
   } catch {
     return {};

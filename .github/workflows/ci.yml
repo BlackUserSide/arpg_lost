@@ -1,0 +1,145 @@
+# Checks, the closed-beta test build on GitHub Pages and the CrazyGames release ZIP.
+#   pull request to main → checks (typecheck, lint, tests, plain build)
+#   push to main         → checks, then the test build WITH the beta access gate → GitHub Pages
+#   tag v*               → checks, then the release build WITHOUT the gate → ZIP attached to a GitHub Release
+# Setup on GitHub (docs/release.md): Settings → Pages → Source: GitHub Actions; secret BETA_CODE in
+# Settings → Secrets and variables → Actions.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # No engines field / .nvmrc in the repo: current Node LTS.
+  NODE_VERSION: '24'
+
+jobs:
+  check:
+    name: Typecheck, lint, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      # Pull requests: make sure it still builds (no gate, nothing published).
+      - if: github.event_name == 'pull_request'
+        run: npm run build
+
+  pages:
+    name: Test build → GitHub Pages
+    needs: check
+    # Manual run (Actions → CI → Run workflow on main) redeploys, e.g. after adding or changing BETA_CODE.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # One Pages deployment at a time; a newer push waits instead of cancelling one in flight.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # The public Pages URL is guessable (public repo), so an ungated deploy would expose the beta: no secret → fail.
+      - name: Require the beta access code
+        env:
+          BETA_CODE: ${{ secrets.BETA_CODE }}
+        run: |
+          if [ -z "$BETA_CODE" ]; then
+            echo "::error title=BETA_CODE secret missing::Add the BETA_CODE secret (Settings → Secrets and variables → Actions). The test build is not deployed without the closed-beta gate."
+            exit 1
+          fi
+      # vite.config.ts hashes BETA_CODE (salted SHA-256); only the hash goes into the bundle.
+      - name: Build (with beta gate)
+        env:
+          BETA_CODE: ${{ secrets.BETA_CODE }}
+        run: npm run build
+      # The gate must really be in the bundle (src/main.ts imports render/betaGate.ts only when vite.config.ts baked a hash).
+      - name: Check the beta gate is bundled
+        run: |
+          if ! ls dist/assets/betaGate-*.js > /dev/null 2>&1; then
+            echo "::error title=Beta gate missing::dist/assets/betaGate-*.js not found: the build is ungated and is not deployed."
+            exit 1
+          fi
+      - name: Build size
+        run: |
+          echo "### Test build: $(du -sh dist | cut -f1) (version $(node -p "require('./package.json').version"), ${GITHUB_SHA::7})" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+      - id: deploy
+        uses: actions/deploy-pages@v5
+
+  release:
+    name: Release ZIP for CrazyGames
+    needs: check
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # The menu shows the package.json version: a tag that does not match it would ship a mislabelled build.
+      - name: Tag matches package.json version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error title=Version mismatch::Tag ${GITHUB_REF_NAME} but package.json version is ${version}. Bump the version (and merge it) before tagging, or tag v${version}."
+            exit 1
+          fi
+      # No BETA_CODE here on purpose: the CrazyGames build has no access gate (its code is not even bundled).
+      # Nor the QA panel (closed beta only): QA_MODE=0 leaves its code out of the bundle (vite.config.ts __QA_MODE__).
+      - name: Build (release, no gate, no QA panel)
+        env:
+          BETA_CODE: ''
+          QA_MODE: '0'
+        run: npm run build
+      - name: Zip dist/ contents (index.html at the ZIP root)
+        run: |
+          zip_name="arpg-lost-${GITHUB_REF_NAME}.zip"
+          (cd dist && zip -r -9 -X "../${zip_name}" .)
+          unzip -l "${zip_name}" | grep -q ' index.html$' || { echo "::error::index.html is not at the ZIP root"; exit 1; }
+          echo "ZIP_NAME=${zip_name}" >> "$GITHUB_ENV"
+          echo "### ${zip_name}: $(du -h "${zip_name}" | cut -f1) (dist $(du -sh dist | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
+      # gh is preinstalled on GitHub-hosted runners. Re-running the job replaces the asset instead of failing.
+      - name: Attach to a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${ZIP_NAME}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${ZIP_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes --verify-tag
+          fi

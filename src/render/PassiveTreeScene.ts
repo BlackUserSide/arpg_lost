@@ -25,7 +25,7 @@ import { getApp, type App } from './app';
 import { t } from '../i18n';
 import { passiveName, specName } from './contentText';
 import { allocateError, costLabel, describeNode, nodesWord, nodeTypeLabel, pendingEffect, pointsWord, respecError, shardsWord } from './passiveText';
-import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, UI } from './ui';
+import { confirmDialog, fadeIn, heading, label, makeButton, makeFrame, UI, uiMetrics } from './ui';
 
 // Passive tree screen: the wheel + specialization branches, pan/zoom (mouse drag + wheel, touch drag + pinch),
 // hover tooltip (mouse) / tap-to-inspect panel (touch), allocation, path allocation and paid respec.
@@ -180,6 +180,10 @@ export class PassiveTreeScene extends Phaser.Scene {
   private minZoom = 0.2;
   private view = { x: 0, y: 0, w: 0, h: 0 };
   private compact = false;
+  /** Phone density (render/ui.ts uiMetrics): slimmer header, bottom bar and details panel. */
+  private phone = false;
+  /** Screen y where the bottom button bar starts: node names below it are hidden. */
+  private bottomBarTop = Number.POSITIVE_INFINITY;
   private touchUi = false;
 
   // Core-derived state, refreshed after every change.
@@ -302,8 +306,10 @@ export class PassiveTreeScene extends Phaser.Scene {
 
   private layout(): void {
     const { width, height } = this.scale;
-    this.compact = width < 820 || height < 520;
-    const headerH = this.compact ? 44 : 60;
+    const metrics = uiMetrics(width, height);
+    this.compact = metrics.compact;
+    this.phone = metrics.phone;
+    const headerH = this.phone ? metrics.headerH : this.compact ? 44 : 60;
     this.view = { x: 0, y: headerH, w: width, h: height - headerH };
     this.backdrop?.setSize(width, height);
     this.dirty = true;
@@ -749,7 +755,13 @@ export class PassiveTreeScene extends Phaser.Scene {
         text.setColor(own ? UI.goldBrightText : UI.muted).setAlpha(own ? 1 : 0.6);
         continue;
       }
-      text.setPosition(this.sx(p.x), this.sy(p.y) + this.radiusOf(node) + 3);
+      const labelY = this.sy(p.y) + this.radiusOf(node) + 3;
+      // Names never run under the header or the bottom button bar (they would read as part of a button).
+      if (labelY < this.view.y || labelY + text.height > this.bottomBarTop) {
+        text.setVisible(false);
+        continue;
+      }
+      text.setPosition(this.sx(p.x), labelY);
       text.setColor(state === 'allocated' ? UI.goldBrightText : node.type === 'keystone' || node.type === 'specKeystone' ? '#ffb070' : UI.text);
       text.setAlpha(state === 'blocked' ? 0.45 : 1);
     }
@@ -842,14 +854,15 @@ export class PassiveTreeScene extends Phaser.Scene {
     // Header: blocks taps, shows points and shards.
     ui.add(this.add.rectangle(0, 0, width, headerH, 0x0e0b10, 0.97).setOrigin(0).setInteractive());
     ui.add(this.add.rectangle(0, headerH - 2, width, 2, 0x9a6a22, 1).setOrigin(0));
-    const title = heading(this, m + 4, compact ? 6 : 10, t('tree.title'), compact ? 24 : 32);
+    const phone = this.phone;
+    const title = heading(this, m + 4, phone ? 7 : compact ? 6 : 10, t('tree.title'), phone ? 20 : compact ? 24 : 32);
     ui.add(title);
     const level = this.hero().level;
     if (width >= 900) ui.add(label(this, title.x + title.width + 14, headerH / 2, t('tree.heroLine', { name: character.name, level }), UI.size.small, UI.muted).setOrigin(0, 0.5));
 
-    const closeW = compact ? 44 : this.run ? 150 : 120;
+    const closeW = phone ? 40 : compact ? 44 : this.run ? 150 : 120;
     const closeText = compact ? '✕' : this.run ? t('tree.closeRun') : t('common.back');
-    ui.add(makeButton(this, width - m - closeW / 2, headerH / 2, closeW, compact ? 34 : 42, closeText, () => this.close()));
+    ui.add(makeButton(this, width - m - closeW / 2, headerH / 2, closeW, phone ? 30 : compact ? 34 : 42, closeText, () => this.close()));
 
     const shards = this.app.profile.currency[TREE.respec.currency] ?? 0;
     const { points, specPoints } = this.points;
@@ -868,15 +881,16 @@ export class PassiveTreeScene extends Phaser.Scene {
 
     // Bottom left: respec actions with their current price.
     const hero = this.hero();
-    const bh = compact ? 36 : 44;
-    const by = height - m - bh / 2;
+    const bh = phone ? 32 : compact ? 36 : 44;
+    const by = height - (phone ? 6 : m) - bh / 2;
+    this.bottomBarTop = by - bh / 2 - 2;
     const wheel = dryRun(hero, (h, w) => refundWheel(TREE, h, w));
     const spec = dryRun(hero, (h, w) => changeSpec(TREE, h, w));
     const price = (r: { cost: number; error: RespecError | null }): string => (r.error ? '' : r.cost > 0 ? ` · ${r.cost} ◆` : compact ? ' · 0 ◆' : ` · ${t('common.free')}`);
     const wheelText = t('tree.resetWheel', { price: price(wheel) });
     const specText = t(compact ? 'tree.changeSpecShort' : 'tree.changeSpec', { price: price(spec) });
-    const bw1 = compact ? 170 : 220;
-    const bw2 = compact ? 180 : 280;
+    const bw1 = phone ? 150 : compact ? 170 : 220;
+    const bw2 = phone ? 160 : compact ? 180 : 280;
     const resetBtn = makeButton(this, m + bw1 / 2, by, bw1, bh, wheelText, () => this.requestWheelReset());
     const specBtn = makeButton(this, m + bw1 + 8 + bw2 / 2, by, bw2, bh, specText, () => this.requestSpecChange());
     if (wheel.error) resetBtn.setAlpha(0.5);
@@ -884,23 +898,23 @@ export class PassiveTreeScene extends Phaser.Scene {
     ui.add([resetBtn, specBtn]);
 
     // Bottom right: zoom controls (also the only zoom on touch screens without pinch).
-    const zs = compact ? 36 : 42;
+    const zs = phone ? 32 : compact ? 36 : 42;
     const zoomButtons: Array<[string, number, () => void]> = [
-      ['−', compact ? 36 : 42, () => this.zoomAt(this.view.x + this.view.w / 2, this.view.y + this.view.h / 2, this.zoom / 1.3)],
-      ['+', compact ? 36 : 42, () => this.zoomAt(this.view.x + this.view.w / 2, this.view.y + this.view.h / 2, this.zoom * 1.3)],
-      [t('tree.overview'), compact ? 70 : 90, () => this.fitView()],
+      ['−', phone ? 36 : compact ? 36 : 42, () => this.zoomAt(this.view.x + this.view.w / 2, this.view.y + this.view.h / 2, this.zoom / 1.3)],
+      ['+', phone ? 36 : compact ? 36 : 42, () => this.zoomAt(this.view.x + this.view.w / 2, this.view.y + this.view.h / 2, this.zoom * 1.3)],
+      [t('tree.overview'), phone ? 64 : compact ? 70 : 90, () => this.fitView()],
     ];
     let zx = width - m;
     for (let i = zoomButtons.length - 1; i >= 0; i--) {
       const [text, w, fn] = zoomButtons[i]!;
       ui.add(makeButton(this, zx - w / 2, by, w, zs, text, fn));
-      zx -= w + 6;
+      zx -= w + (phone ? 8 : 6);
     }
 
     // Message line above the bottom buttons; a hint when nothing happened yet.
     const hint = this.touchUi ? t('tree.hintTouch') : t('tree.hintMouse');
     const msg = this.message || hint;
-    const msgText = label(this, m + 4, by - bh / 2 - 8, msg, compact ? 13 : UI.size.small, this.message ? this.messageTone : UI.muted, !!this.message).setOrigin(0, 1);
+    const msgText = label(this, m + 4, by - bh / 2 - (phone ? 6 : 8), msg, compact && !phone ? 13 : UI.size.small, this.message ? this.messageTone : UI.muted, !!this.message).setOrigin(0, 1);
     msgText.setStroke('#000', 3);
     ui.add(msgText);
   }
@@ -934,7 +948,7 @@ export class PassiveTreeScene extends Phaser.Scene {
       y += t.height + gap;
     };
     const nameColor = node.type === 'keystone' || node.type === 'specKeystone' ? '#ffb070' : node.type === 'notable' || node.type === 'start' ? UI.goldBrightText : UI.text;
-    add(passiveName(node), UI.size.heading - 2, nameColor, true, 2);
+    add(passiveName(node), this.phone ? 16 : UI.size.heading - 2, nameColor, true, 2);
     if (node.type === 'start') {
       add(nodeTypeLabel('start'), 12, UI.muted, false, 8);
       add(id === this.ownStart ? t('tree.ownStart') : t('tree.otherStart'), UI.size.small, UI.muted);
@@ -1011,8 +1025,8 @@ export class PassiveTreeScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const compact = this.compact;
     const m = compact ? 8 : 16;
-    const w = Math.min(compact ? 270 : 330, width * 0.45);
-    const pad = 16;
+    const w = Math.min(this.phone ? 250 : compact ? 270 : 330, width * 0.45);
+    const pad = this.phone ? 12 : 16;
     const left = width - m - w;
     const top = this.view.y + m;
     const panel = this.add.container(0, 0).setDepth(200);
@@ -1022,7 +1036,7 @@ export class PassiveTreeScene extends Phaser.Scene {
 
     // Actions.
     const state = this.states.get(id);
-    const bh = compact ? 38 : 44;
+    const bh = this.phone ? 36 : compact ? 38 : 44;
     const bw = w - pad * 2;
     const cxBtn = left + w / 2;
     const buttons: Phaser.GameObjects.Container[] = [];
@@ -1039,7 +1053,7 @@ export class PassiveTreeScene extends Phaser.Scene {
       y += bh + 8;
     }
 
-    const maxH = height - top - m - (compact ? 44 : 56);
+    const maxH = height - top - m - (this.phone ? 38 : compact ? 44 : 56);
     const h = Math.min(maxH, Math.ceil((y - top + pad - 8) / 10) * 10);
     // Panel frame swallows taps so they do not reach the tree underneath.
     const frame = makeFrame(this, left + w / 2, top + h / 2, w, h, 'panel');

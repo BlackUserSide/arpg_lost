@@ -19,7 +19,7 @@ import { formatNumber, t, upper, type MessageKey } from '../i18n';
 import { getApp, type App } from './app';
 import { itemIcon, legendaryGlow } from './itemIcons';
 import { className, itemName } from './contentText';
-import { buildCraftPanel, CURRENCY_LOOK, type CraftFlash } from './craftPanel';
+import { buildCraftPanel, CRAFT_ONE_COLUMN_H, CRAFT_TWO_COLUMNS_W, CURRENCY_LOOK, type CraftFlash } from './craftPanel';
 import { AFFIX_OPS, changedAffixes, currencyAmount } from './craftText';
 import { describeItem, LINE_TONE, rarityLabel } from './itemText';
 import { shardsWord } from './passiveText';
@@ -28,7 +28,7 @@ import { damageTypeText, num } from './statText';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { SupportsSceneData } from './SupportsScene';
 import { CLASS_LOOKS, HERO_SETS, loadSprites, ORIGIN_Y, spriteFrame, textureKey } from './sprites';
-import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, makeFrame, showToast, UI } from './ui';
+import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, makeFrame, showToast, TOUCH_MIN, UI, uiMetrics } from './ui';
 
 // Paper doll (8 slots) + shared stash + item details. Select-then-act controls so it works by touch;
 // double click / double tap equips or unequips directly. The Craft tab (hub only: this scene is never opened during a
@@ -39,6 +39,10 @@ import { confirmDialog, fadeIn, fitText, heading, label, makeButton, makeCard, m
 const CRAFT_DATA: CraftData = { items: itemsData, crafting: craftingRules };
 /** Below this shrink factor the item tooltip drops its tier detail lines instead of shrinking further. */
 const TOOLTIP_DETAIL_MIN_SCALE = 0.8;
+/** Phones: narrowest item details column beside the stash (px); narrower screens show the details over the stash. */
+const PHONE_DETAILS_MIN_W = 236;
+/** Element colours of the resistances in the phone stats block. */
+const RESIST_COLORS = { fire: '#ff8a4a', cold: '#8fc8ff', lightning: '#f3e070' } as const;
 
 export type InventoryTab = 'items' | 'craft' | 'mail';
 
@@ -101,6 +105,8 @@ export class InventoryScene extends Phaser.Scene {
   private heroSprite: { sprite: Phaser.GameObjects.Sprite; set: string } | undefined;
   private elapsed = 0;
   private tab: InventoryTab = 'items';
+  /** Phone density (render/ui.ts uiMetrics): tighter item details. */
+  private phone = false;
   /** Craft tab: the affix picked on the selected item (position in Item.affixes). */
   private craftAffix: number | undefined;
   /** Craft tab: highlight of the last craft, shown once on the next build. */
@@ -159,9 +165,12 @@ export class InventoryScene extends Phaser.Scene {
       return;
     }
     const { width, height } = this.scale;
-    const compact = width < 1100 || height < 600;
-    const m = compact ? 10 : 24;
-    const titleH = compact ? 40 : 64;
+    const M = uiMetrics(width, height, width < 1100 || height < 600);
+    const compact = M.compact;
+    const phone = M.phone;
+    this.phone = phone;
+    const m = M.margin;
+    const titleH = phone ? M.headerH : compact ? 40 : 64;
     const look = CLASS_LOOKS.find((l) => l.classId === character.classId);
     const overflow = this.app.profile.stash.overflow;
     // The last mail item was claimed: back to the stash.
@@ -170,12 +179,15 @@ export class InventoryScene extends Phaser.Scene {
       if (this.selection?.where === 'overflow') this.selection = undefined;
     }
 
-    // Header buttons from the right: Back, Talents, Supports (130 wide at -250), then Mail while the overflow has items.
+    // Header buttons from the right: Back, Talents, Supports, then Mail while the overflow has items.
     const headerY = titleH / 2 + (compact ? 0 : 4);
-    const headerBtnH = compact ? 34 : 42;
-    const mailW = overflow.length > 0 ? (compact ? 112 : 136) : 0;
-    const buttonsLeft = width - m - 60 - 250 - 65 - (mailW > 0 ? mailW + 8 : 0);
-    const title = heading(this, m + 4, compact ? 4 : 12, compact ? character.name : t('inv.title', { name: character.name, class: className(character.classId) }), compact ? 24 : 34);
+    const headerBtnH = M.headerButtonH;
+    const [backW, talentsW, supportsW] = phone ? [84, 96, 116] : [110, 110, 130];
+    const headerGap = 10;
+    const mailW = overflow.length > 0 ? (phone ? 100 : compact ? 112 : 136) : 0;
+    const supportsLeft = width - m - backW - talentsW - supportsW - headerGap * 2;
+    const buttonsLeft = supportsLeft - (mailW > 0 ? mailW + 8 : 0);
+    const title = heading(this, m + 4, phone ? 6 : compact ? 4 : 12, compact ? character.name : t('inv.title', { name: character.name, class: className(character.classId) }), phone ? M.screenTitle : compact ? 24 : 34);
     // Narrow phones with mail: the name shrinks, or hides, to leave the header buttons their room.
     const titleRoom = buttonsLeft - 8 - title.x;
     fitText(title, titleRoom);
@@ -184,17 +196,19 @@ export class InventoryScene extends Phaser.Scene {
     // narrow for it.
     const levelX = title.x + title.width + 16;
     const levelRoom = buttonsLeft - 8 - levelX;
-    const level = fitText(label(this, levelX, title.y + title.height - (compact ? 20 : 26), levelLine(character), UI.size.small, UI.goldBrightText), levelRoom);
+    const level = fitText(label(this, levelX, title.y + title.height - (phone ? 18 : compact ? 20 : 26), levelLine(character), UI.size.small, UI.goldBrightText), levelRoom);
     this.root.add(level.setVisible(level.width <= levelRoom));
-    this.root.add(makeButton(this, width - m - 60, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, t('common.back'), () => this.back()));
+    const backX = width - m - backW / 2;
+    const talentsX = backX - backW / 2 - headerGap - talentsW / 2;
+    this.root.add(makeButton(this, backX, headerY, backW, headerBtnH, t('common.back'), () => this.back()));
     this.root.add(
-      makeButton(this, width - m - 60 - 120, titleH / 2 + (compact ? 0 : 4), 110, compact ? 34 : 42, t('menu.talents'), () => {
+      makeButton(this, talentsX, headerY, talentsW, headerBtnH, t('menu.talents'), () => {
         const data: PassiveTreeSceneData = { characterId: character.id, returnTo: 'inventory' };
         this.scene.start('passive-tree', data);
       }),
     );
     this.root.add(
-      makeButton(this, width - m - 60 - 250, titleH / 2 + (compact ? 0 : 4), 130, compact ? 34 : 42, t('menu.supports'), () => {
+      makeButton(this, supportsLeft + supportsW / 2, headerY, supportsW, headerBtnH, t('menu.supports'), () => {
         const data: SupportsSceneData = { characterId: character.id, returnTo: 'inventory' };
         this.scene.start('supports', data);
       }),
@@ -208,21 +222,41 @@ export class InventoryScene extends Phaser.Scene {
 
     const top = titleH + (compact ? 0 : 6);
     const avail = height - top - m;
+    const rules = itemsData.rules;
+    const cols = 6;
+    const rows = Math.ceil(rules.stashSize / cols);
+    const headerH = phone ? 34 : compact ? 38 : 50;
+    const sGap = compact ? 4 : 6;
+    const panelGap = phone ? 6 : compact ? 8 : 16;
+    const gap = phone ? 6 : compact ? 8 : 14;
+    const dollInset = phone ? 24 : 32;
+    const stashInset = phone ? 12 : 14;
+
+    // Phones: doll and stash cells as large as fit, but small enough to leave the item details their own column
+    // (an overlay would hide the stash). Never below a comfortable touch size.
+    let cellMax = phone ? 50 : compact ? 58 : 84;
+    let sCellMax = phone ? 44 : compact ? 48 : 66;
+    if (phone) {
+      const used = (c: number, sc: number): number => m + c * 3 + gap * 2 + dollInset + panelGap + cols * sc + (cols - 1) * sGap + stashInset * 2 + panelGap;
+      if (width - m - used(cellMax, sCellMax) < PHONE_DETAILS_MIN_W) {
+        cellMax = 44;
+        sCellMax = TOUCH_MIN;
+      }
+    }
 
     // Paper doll.
-    const cell = Math.floor(Math.min(compact ? 58 : 84, (avail - (compact ? 40 : 230)) / 3 - 14));
-    const gap = compact ? 8 : 14;
-    const dollW = cell * 3 + gap * 2 + 32;
+    const cell = Math.floor(Math.min(cellMax, (avail - (compact ? 40 : 230)) / 3 - 14));
+    const dollW = cell * 3 + gap * 2 + dollInset;
     const dollX = m + dollW / 2;
     this.root.add(makeFrame(this, dollX, top + avail / 2, dollW, avail, 'panel'));
-    const gridTop = top + (compact ? 14 : 22);
+    const gridTop = top + (phone ? 10 : compact ? 14 : 22);
     for (const d of DOLL) {
       const x = dollX - (cell + gap) + d.col * (cell + gap);
       const y = gridTop + cell / 2 + d.row * (cell + gap + 14);
       this.buildSlot(character, d.slot, t(d.name), x, y, cell);
     }
-    if (look) {
-      // Hero stands in the free doll cell (left column, bottom row).
+    if (look && !phone) {
+      // Hero stands in the free doll cell (left column, bottom row). Phones show the hero's stats instead.
       const sprite = this.add
         .sprite(dollX - (cell + gap), gridTop + cell + 2 * (cell + gap + 14), textureKey(look.sprite, 'idle'), 6 * 10)
         .setOrigin(0.5, ORIGIN_Y)
@@ -232,23 +266,23 @@ export class InventoryScene extends Phaser.Scene {
       this.root.add(sprite);
     }
     if (!compact) this.buildStats(character, dollX - dollW / 2 + 18, gridTop + 3 * (cell + gap + 14) + 6, dollW - 36);
+    else if (phone) {
+      // Phones: a condensed stats block under the slots, as many of the key rows as fit.
+      const statsTop = gridTop + 3 * (cell + gap + 14) - 2;
+      this.buildCompactStats(character, dollX - dollW / 2 + 12, statsTop, dollW - 24, top + avail - 8 - statsTop);
+    }
 
     // Stash.
-    const rules = itemsData.rules;
-    const cols = 6;
-    const rows = Math.ceil(rules.stashSize / cols);
-    const headerH = compact ? 38 : 50;
-    const sCell = Math.floor(Math.min(compact ? 48 : 66, (avail - headerH - 24) / rows - (compact ? 4 : 6)));
-    const sGap = compact ? 4 : 6;
-    const stashW = cols * sCell + (cols - 1) * sGap + 28;
-    const stashX = dollX + dollW / 2 + (compact ? 8 : 16) + stashW / 2;
+    const sCell = Math.floor(Math.min(sCellMax, (avail - headerH - (phone ? 16 : 24)) / rows - (compact ? 4 : 6)));
+    const stashW = cols * sCell + (cols - 1) * sGap + stashInset * 2;
+    const stashX = dollX + dollW / 2 + panelGap + stashW / 2;
     this.root.add(makeFrame(this, stashX, top + avail / 2, stashW, avail, 'panel'));
     const items = this.app.profile.stash.items;
     // Tabs: Stash (equip / salvage) and Craft; the tab row doubles as the stash header.
-    const tabW = compact ? 100 : 124;
-    const tabH = compact ? 32 : 36;
+    const tabW = phone ? 88 : compact ? 100 : 124;
+    const tabH = phone ? 28 : compact ? 32 : 36;
     const tabY = top + headerH / 2 + 1;
-    const tabsLeft = stashX - stashW / 2 + 12;
+    const tabsLeft = stashX - stashW / 2 + (phone ? 10 : 12);
     (['items', 'craft'] as const).forEach((tab, i) => {
       const caption = tab === 'items' ? t('inv.stash') : t('inv.tab.craft');
       this.root.add(makeButton(this, tabsLeft + tabW / 2 + i * (tabW + 6), tabY, tabW, tabH, caption, () => this.setTab(tab), this.tab === tab ? 'primary' : 'secondary'));
@@ -260,7 +294,7 @@ export class InventoryScene extends Phaser.Scene {
         : this.tab === 'mail'
           ? `${t('inv.mail', { count: overflow.length })}/${rules.overflow.size}`
           : `${items.length}/${rules.stashSize}   ◆ ${compact ? (wallet[SALVAGE_CURRENCY] ?? 0) : shardsWord(wallet[SALVAGE_CURRENCY] ?? 0)}`;
-    const headerRight = stashX + stashW / 2 - 14;
+    const headerRight = stashX + stashW / 2 - stashInset;
     const headerRoom = headerRight - (tabsLeft + tabW * 2 + 6 + 10);
     const info = fitText(label(this, headerRight, tabY, headerText, UI.size.small, UI.muted).setOrigin(1, 0.5), headerRoom);
     this.root.add(info.setVisible(info.width <= headerRoom));
@@ -270,7 +304,7 @@ export class InventoryScene extends Phaser.Scene {
     const cells = mail ? Math.min(Math.max(overflow.length, rules.overflow.size), rules.stashSize) : rules.stashSize;
     const shown = mail ? overflow : items;
     for (let i = 0; i < cells; i++) {
-      const x = stashX - stashW / 2 + 14 + sCell / 2 + (i % cols) * (sCell + sGap);
+      const x = stashX - stashW / 2 + stashInset + sCell / 2 + (i % cols) * (sCell + sGap);
       const y = top + headerH + sCell / 2 + Math.floor(i / cols) * (sCell + sGap);
       const item = shown[i];
       if (item) this.buildStashCell(item, x, y, sCell, mail ? 'overflow' : 'stash');
@@ -289,11 +323,11 @@ export class InventoryScene extends Phaser.Scene {
     }
 
     // Details: own column on wide screens, overlay on narrow ones.
-    const detailsLeft = stashX + stashW / 2 + (compact ? 8 : 16);
+    const detailsLeft = stashX + stashW / 2 + panelGap;
     const spare = width - m - detailsLeft;
     // The crafting panel needs more room than an item tooltip: on narrow screens it covers the whole content area.
     this.detailsArea =
-      spare >= 280
+      (this.tab === 'craft' ? spare >= 280 && (spare >= CRAFT_TWO_COLUMNS_W || avail >= CRAFT_ONE_COLUMN_H) : spare >= (phone ? PHONE_DETAILS_MIN_W : 280))
         ? { x: detailsLeft, y: top, w: spare, h: avail, overlay: false }
         : this.tab === 'craft'
           ? { x: m, y: top, w: width - m * 2, h: avail, overlay: true }
@@ -329,6 +363,97 @@ export class InventoryScene extends Phaser.Scene {
     if (tooHigh) this.root.add(label(this, x - size / 2 + 4, y + size / 2 - 16, String(item.level), 11, UI.danger, true).setStroke('#000', 3));
     // Rarity pip in the corner.
     this.root.add(this.add.circle(x + size / 2 - 7, y - size / 2 + 7, 3, Phaser.Display.Color.HexStringToColor(UI.rarity[item.rarity]).color));
+  }
+
+  /**
+   * Phones: the key stats in one column of label / value rows (life, resource, weapon damage, armour, the three
+   * resistances in their element colours, crit, attack speed, then the rest), as many as fit in `h` px.
+   */
+  private buildCompactStats(character: CharacterRecord, x: number, y: number, w: number, h: number): void {
+    const s = this.heroStats(character);
+    const rowH = 18;
+    const rows = Math.floor(h / rowH);
+    if (rows <= 0) return;
+    this.root.add(this.add.rectangle(x + w / 2, y, w, 1, 0x5a4320));
+    const pick: Array<[string, string | Array<[string, string]>]> = [
+      [t('inv.stat.life'), s.life],
+      ...(s.energyShield !== '0' ? [[t('inv.stat.energyShield'), s.energyShield] as [string, string]] : []),
+      [s.resourceName, s.resource],
+      [t('inv.stat.weapon'), s.weapon],
+      [t('inv.stat.armour'), s.armour],
+      [t('inv.stat.resistances'), s.resists],
+      [t('inv.stat.critChance'), s.crit],
+      [t('inv.stat.attacksPerSecond'), s.attacksPerSecond],
+      [t('inv.stat.movementSpeed'), s.movementSpeed],
+      [t('inv.stat.lifeRegen'), s.lifeRegen],
+    ];
+    pick.slice(0, rows).forEach(([name, value], i) => {
+      const rowY = y + 4 + i * rowH;
+      let valueW = 0;
+      if (typeof value === 'string') {
+        const v = label(this, x + w, rowY, value, UI.size.small, UI.text, true).setOrigin(1, 0);
+        this.root.add(v);
+        valueW = v.width;
+      } else {
+        // Coloured parts right to left (resistances: fire / cold / lightning).
+        let right = x + w;
+        for (let p = value.length - 1; p >= 0; p--) {
+          const [text, color] = value[p]!;
+          const v = label(this, right, rowY, text, UI.size.small, color, true).setOrigin(1, 0);
+          this.root.add(v);
+          right -= v.width + 5;
+        }
+        valueW = x + w - right;
+      }
+      this.root.add(fitText(label(this, x, rowY, name, UI.size.small, UI.muted), Math.max(20, w - valueW - 6)));
+    });
+  }
+
+  /** Display strings of the hero's derived stats (core computes them; this only formats). */
+  private heroStats(character: CharacterRecord): {
+    life: string;
+    energyShield: string;
+    resourceName: string;
+    resource: string;
+    armour: string;
+    resists: Array<[string, string]>;
+    weapon: string;
+    attacksPerSecond: string;
+    crit: string;
+    movementSpeed: string;
+    lifeRegen: string;
+  } {
+    const classDef = getClass(content, character.classId);
+    const levelMods = levelModifiers(character.level, content.progression);
+    const mods = [...heroModifiers(character, itemsData, passiveTree), ...levelMods];
+    const mechanics = heroMechanics(character, passiveTree, itemsData);
+    const source: StatSource = { baseStats: classDef.baseStats, modifiers: mods, levelModifiers: levelMods, mechanics };
+    const weapon = equippedWeapon(character.equipment, itemsData, classDef.weapon);
+    const int = (stat: StatId): string => String(Math.round(deriveStat(source, stat)));
+    const pct = (stat: StatId): string => `${Math.round(deriveStat(source, stat) * 100)}%`;
+    const crit = critStats(mechanics, {
+      critChance: computeStat(weapon.critChance, mods, 'critChance', ['attack']),
+      critMultiplier: computeStat(content.combat.critMultiplierBase, mods, 'critMultiplier', ['attack']),
+    });
+    return {
+      life: int('life'),
+      energyShield: int('energyShield'),
+      resourceName: resourceText(classDef.resource.id),
+      resource: int('resource'),
+      armour: int('armour'),
+      resists: [
+        [pct('fireResistance'), RESIST_COLORS.fire],
+        [pct('coldResistance'), RESIST_COLORS.cold],
+        [pct('lightningResistance'), RESIST_COLORS.lightning],
+      ],
+      weapon: Object.entries(weapon.damage)
+        .map(([type, r]) => `${num(r.min)}–${num(r.max)} ${damageTypeText(type, 'short')}`)
+        .join(t('list.separator')),
+      attacksPerSecond: formatNumber(computeStat(weapon.attacksPerSecond, mods, 'attackSpeed', ['attack']), 2),
+      crit: `${formatNumber(crit.critChance * 100, 1)}% ×${formatNumber(crit.critMultiplier, 2)}`,
+      movementSpeed: int('movementSpeed'),
+      lifeRegen: formatNumber(deriveStat(source, 'lifeRegen'), 1),
+    };
   }
 
   private buildStats(character: CharacterRecord, x: number, y: number, w: number): void {
@@ -477,32 +602,37 @@ export class InventoryScene extends Phaser.Scene {
     }
     const owner = this.character;
     const tooltip = describeItem(item, itemsData, owner ? getClass(content, owner.classId).resource.id : undefined);
-    const pad = 16;
+    const phone = this.phone;
+    const pad = phone ? 10 : 16;
     const x = area.x + pad;
     let y = area.y + pad;
     const w = area.w - pad * 2;
+    // Overlays keep their top right corner for the close cross.
+    const titleW = w - (area.overlay ? 56 : 0);
+    const buttonH = phone ? 36 : 40;
     const parts: Phaser.GameObjects.GameObject[] = [];
     const color = UI.rarity[tooltip.rarity];
-    parts.push(label(this, area.x + area.w / 2, y, tooltip.title, UI.size.heading, color, true).setOrigin(0.5, 0));
-    y += 26;
+    const title = fitText(label(this, area.x + area.w / 2, y, tooltip.title, phone ? 16 : UI.size.heading, color, true).setOrigin(0.5, 0), titleW);
+    parts.push(title);
+    y += Math.max(title.height, phone ? 20 : 26);
     if (tooltip.subtitle) {
-      parts.push(label(this, area.x + area.w / 2, y, tooltip.subtitle, UI.size.small, color).setOrigin(0.5, 0));
-      y += 20;
+      parts.push(fitText(label(this, area.x + area.w / 2, y, tooltip.subtitle, UI.size.small, color).setOrigin(0.5, 0), titleW));
+      y += phone ? 18 : 20;
     }
     parts.push(label(this, area.x + area.w / 2, y, upper(rarityLabel(tooltip.rarity)), 11, UI.muted).setOrigin(0.5, 0));
-    y += 22;
+    y += phone ? 16 : 22;
     const linesTop = y;
     const headerParts = parts.length;
-    const buttonsY = area.y + area.h - pad - 22;
+    const buttonsY = area.y + area.h - pad - buttonH / 2 - (phone ? 0 : 2);
     // Long tooltips on short screens (and longer translations): the text block shrinks, kept centred, so it never
     // runs under the buttons.
-    const textBottom = buttonsY - 30 - (this.message ? 22 : 0);
+    const textBottom = buttonsY - buttonH / 2 - (phone ? 6 : 10) - (this.message ? 22 : 0);
     const layoutLines = (details: boolean): void => {
       let lastKind = '';
       for (const line of tooltip.lines) {
         if (lastKind && line.kind !== lastKind) {
-          parts.push(this.add.rectangle(area.x + area.w / 2, y + 4, w * 0.8, 1, 0x5a4320));
-          y += 10;
+          parts.push(this.add.rectangle(area.x + area.w / 2, y + (phone ? 2 : 4), w * 0.8, 1, 0x5a4320));
+          y += phone ? 6 : 10;
         }
         lastKind = line.kind;
         const tooHigh = line.kind === 'meta' && item.level > (this.character?.level ?? 1);
@@ -515,12 +645,13 @@ export class InventoryScene extends Phaser.Scene {
           parts.push(label(this, x + 8, y, line.detail, 11, '#7a7262'));
           y += 15;
         }
-        y += 3;
+        y += phone ? 2 : 3;
       }
     };
     layoutLines(true);
-    // Too long to stay readable when shrunk (uniques on a phone): drop the tier detail lines first.
-    if (y > textBottom && (textBottom - area.y) / (y - area.y) < TOOLTIP_DETAIL_MIN_SCALE) {
+    // Too long to stay readable when shrunk (uniques on a phone): drop the tier detail lines first. Phones drop them
+    // before shrinking at all (text already at the style guide minimum).
+    if (y > textBottom && (textBottom - area.y) / (y - area.y) < (phone ? 1 : TOOLTIP_DETAIL_MIN_SCALE)) {
       for (const o of parts.splice(headerParts)) o.destroy();
       y = linesTop;
       layoutLines(false);
@@ -534,23 +665,23 @@ export class InventoryScene extends Phaser.Scene {
       body.setScale(s).setPosition((area.x + area.w / 2) * (1 - s), area.y * (1 - s));
     }
     parts.push(body);
-    if (this.message) parts.push(label(this, area.x + area.w / 2, buttonsY - 38, this.message, UI.size.small, UI.danger).setOrigin(0.5));
+    if (this.message) parts.push(fitText(label(this, area.x + area.w / 2, buttonsY - buttonH / 2 - (phone ? 14 : 18), this.message, UI.size.small, UI.danger).setOrigin(0.5), w));
     if (isSelected && this.selection?.where === 'stash') {
       const id = this.selection.id;
       const bw = (w - 10) / 2;
-      parts.push(makeButton(this, x + bw / 2, buttonsY, bw, 40, t('inv.equip'), () => this.equip(id), 'primary'));
-      parts.push(makeButton(this, x + bw * 1.5 + 10, buttonsY, bw, 40, t('inv.salvage', { value: itemsData.rules.salvage[item.rarity] }), () => this.salvage(item), 'danger'));
+      parts.push(makeButton(this, x + bw / 2, buttonsY, bw, buttonH, t('inv.equip'), () => this.equip(id), 'primary'));
+      parts.push(makeButton(this, x + bw * 1.5 + 10, buttonsY, bw, buttonH, t('inv.salvage', { value: itemsData.rules.salvage[item.rarity] }), () => this.salvage(item), 'danger'));
     } else if (isSelected && this.selection?.where === 'overflow') {
       const id = this.selection.id;
-      parts.push(makeButton(this, area.x + area.w / 2, buttonsY, Math.min(200, w), 40, t('inv.claim'), () => this.claim(id), 'primary'));
+      parts.push(makeButton(this, area.x + area.w / 2, buttonsY, Math.min(200, w), buttonH, t('inv.claim'), () => this.claim(id), 'primary'));
     } else if (isSelected && this.selection?.where === 'equip') {
       const slot = this.selection.slot;
-      parts.push(makeButton(this, area.x + area.w / 2, buttonsY, Math.min(200, w), 40, t('inv.unequip'), () => this.unequip(slot)));
+      parts.push(makeButton(this, area.x + area.w / 2, buttonsY, Math.min(200, w), buttonH, t('inv.unequip'), () => this.unequip(slot)));
     } else {
       parts.push(label(this, area.x + area.w / 2, buttonsY, t('inv.clickToSelect'), 12, UI.muted).setOrigin(0.5));
     }
 
-    const panelH = area.overlay ? Math.min(area.h, buttonsY - area.y + 34) : area.h;
+    const panelH = area.overlay ? Math.min(area.h, buttonsY - area.y + (phone ? buttonH / 2 + pad : 34)) : area.h;
     this.details.add(makeFrame(this, area.x + area.w / 2, area.y + panelH / 2, area.w, panelH, 'panel'));
     if (area.overlay) {
       const close = makeButton(this, area.x + area.w - 20, area.y + 20, 30, 30, '✕', () => {

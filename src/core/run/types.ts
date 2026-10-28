@@ -168,10 +168,25 @@ export interface RunRewardRules {
   readonly essence: { readonly perElite: number; readonly perBoss: number };
 }
 
+/**
+ * A band of map levels sharing one environment (docs/design/maps.md «Зони»). The environment only changes the look for
+ * now (render keys it by id); rules, rooms and mobs are the same in every zone.
+ */
+export interface MapZone {
+  /** First map level of the zone (inclusive). */
+  readonly from: number;
+  /** Last map level of the zone (inclusive). */
+  readonly to: number;
+  /** Environment id (src/data/environments.ts). */
+  readonly environment: string;
+}
+
 export interface MapsData {
   readonly rules: RunRules;
   readonly rewards: RunRewardRules;
   readonly templates: Readonly<Record<string, RoomTemplate>>;
+  /** Zones of map levels, in ascending order without gaps (see zoneAt). Absent: one look everywhere. */
+  readonly zones?: readonly MapZone[];
 }
 
 /** One planned room of a run: its template and its waves (mobs with rank and scaling already applied). */

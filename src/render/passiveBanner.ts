@@ -58,7 +58,8 @@ export class PointsBanner {
     this.destroy();
     if (!this.visible) return;
     const text = unspentBanner(Math.max(0, this.points), Math.max(0, this.specPoints));
-    const fontSize = Math.round(Math.min(this.height * 0.42, 24));
+    // Same caption size rule as makeButton (never below the style guide minimum).
+    const fontSize = Math.round(Math.min(Math.max(this.height * 0.42, UI.size.small), 24));
     // Measure with the same font the button uses (heading font for primary buttons).
     const probe = this.scene.add.text(0, 0, text, { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: `${fontSize}px` });
     // Long translations: the button never grows past maxWidth, its caption shrinks to fit instead (makeButton).

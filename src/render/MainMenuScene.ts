@@ -10,25 +10,104 @@ import { getLocale, LOCALE_NAMES, LOCALES, t, type Locale } from '../i18n';
 import { getApp, type App } from './app';
 import { className } from './contentText';
 import { loadGlyphs } from './fonts';
+import { makeFullscreenButton } from './fullscreen';
 import { MenuBackdrop, preloadBackdrop } from './menuBackdrop';
 import { PointsBanner } from './passiveBanner';
+import { finishPreloader, trackPreloaderLoader } from './preloader';
+// Type only: the panel module is loaded on demand, and not bundled at all where __QA_MODE__ is off (release build).
+import type * as QaPanelModule from './qaPanel';
+import type { QaResultLine } from './qaPanel';
 import type { PassiveTreeSceneData } from './PassiveTreeScene';
 import type { RunSceneData } from './RunScene';
 import type { SupportsSceneData } from './SupportsScene';
+import { viewportDiagnostics } from './viewport';
 import { CLASS_LOOKS, HERO_SETS, loadSprites, ORIGIN_Y, spriteFrame, textureKey, unloadSprites } from './sprites';
-import { confirmDialog, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, showToast, UI } from './ui';
+import { confirmDialog, densityOf, fadeIn, fitText, heading, label, makeAvatar, makeButton, makeCard, makeFrame, showToast, TOUCH_MIN, UI, type Density } from './ui';
 
 const AVATAR_KEY = 'user-avatar';
+/** Secret QA unlock (render/qaPanel.ts): this many presses on the version label within the window toggle QA mode. */
+const QA_UNLOCK_TAPS = 7;
+const QA_UNLOCK_WINDOW_MS = 3000;
 /** Portrait phones narrower than this get the stacked menu (px): account line, list top, room kept for the play group. */
 const PORTRAIT_MAX_WIDTH = 560;
 const PORTRAIT_ACCOUNT_Y = 76;
 const PORTRAIT_LIST_TOP = 104;
 const PORTRAIT_PLAY_ROOM = 300;
 
+/** Hub sizes per density (render/ui.ts uiMetrics): phones in landscape get the tightest set (px). */
+interface MenuSizes {
+  /** Screen edge margin. */
+  readonly edge: number;
+  readonly titleX: number;
+  readonly titleY: number;
+  readonly title: number;
+  /** Character list: width (capped by a share of the screen), top, row height and gap, header strip, heading. */
+  readonly listW: number;
+  readonly listShare: number;
+  readonly listTop: number;
+  readonly rowH: number;
+  readonly rowGap: number;
+  readonly listHeaderH: number;
+  readonly listTitle: number;
+  /** Text in the list rows: hero name, class line. */
+  readonly rowName: number;
+  readonly rowLine: number;
+  readonly rowDelete: number;
+  /** Play group: Enter button, build screen buttons, map selector, gaps; play row centre from the bottom. */
+  readonly playW: number;
+  readonly playH: number;
+  readonly playSub: number;
+  readonly sideW: number;
+  readonly modW: number;
+  readonly sideH: number;
+  readonly gap: number;
+  readonly mapsW: number;
+  readonly playFromBottom: number;
+  /** Hero name above the play group, and the points banner above it. */
+  readonly nameAbove: number;
+  readonly nameSize: number;
+  readonly bannerAbove: number;
+  readonly bannerH: number;
+  /** Title row: language switcher, full screen and QA buttons, gaps; account widget. */
+  readonly switcherW: number;
+  readonly switcherH: number;
+  readonly fullscreen: number;
+  readonly qaW: number;
+  readonly titleRowGap: number;
+  readonly avatar: number;
+  readonly accountY: number;
+}
+
+const MENU_SIZES: Readonly<Record<Density, MenuSizes>> = {
+  phone: {
+    edge: 8, titleX: 12, titleY: 6, title: 24,
+    listW: 230, listShare: 0.32, listTop: 46, rowH: 44, rowGap: 4, listHeaderH: 26, listTitle: 16, rowName: UI.size.small, rowLine: UI.size.small, rowDelete: 30,
+    playW: 176, playH: 42, playSub: 12, sideW: 96, modW: 112, sideH: 34, gap: 6, mapsW: 68, playFromBottom: 29,
+    nameAbove: 33, nameSize: UI.size.body, bannerAbove: 32, bannerH: 30,
+    switcherW: 100, switcherH: 30, fullscreen: 30, qaW: 44, titleRowGap: 6, avatar: 26, accountY: 22,
+  },
+  compact: {
+    edge: 12, titleX: 16, titleY: 10, title: 30,
+    listW: 250, listShare: 0.4, listTop: 72, rowH: 50, rowGap: 6, listHeaderH: 28, listTitle: 18, rowName: UI.size.body, rowLine: UI.size.small, rowDelete: 32,
+    playW: 200, playH: 48, playSub: 12, sideW: 108, modW: 120, sideH: 40, gap: 8, mapsW: 84, playFromBottom: 40,
+    nameAbove: 38, nameSize: UI.size.body, bannerAbove: 38, bannerH: 34,
+    switcherW: 112, switcherH: 32, fullscreen: 32, qaW: 48, titleRowGap: 8, avatar: 30, accountY: 30,
+  },
+  wide: {
+    edge: 28, titleX: 32, titleY: 22, title: UI.size.display,
+    listW: 320, listShare: 1, listTop: 104, rowH: 72, rowGap: 10, listHeaderH: 40, listTitle: 22, rowName: UI.size.heading - 2, rowLine: UI.size.small, rowDelete: 40,
+    playW: 260, playH: 60, playSub: 14, sideW: 150, modW: 160, sideH: 48, gap: 12, mapsW: 104, playFromBottom: 64,
+    nameAbove: 50, nameSize: UI.size.heading, bannerAbove: 48, bannerH: 40,
+    switcherW: 136, switcherH: 36, fullscreen: 36, qaW: 56, titleRowGap: 12, avatar: 38, accountY: 44,
+  },
+};
+
 /** Hub entry: hero by the campfire, character list, account widget, records, play. */
 export class MainMenuScene extends Phaser.Scene {
   private app!: App;
   private root!: Phaser.GameObjects.Container;
+  /** Sizes for the current screen (set by build). */
+  private sizes: MenuSizes = MENU_SIZES.wide;
   private backdrop!: MenuBackdrop;
   /** Language list open under the switcher. */
   private languageOpen = false;
@@ -36,6 +115,14 @@ export class MainMenuScene extends Phaser.Scene {
   private languageBusy = false;
   /** The map list (replay a lower map) is open over the menu. */
   private mapsOpen = false;
+  /** The QA panel (closed-beta shortcuts, only in QA mode) is open over the menu. */
+  private qaOpen = false;
+  /** Result of the last QA action, shown in the panel until it closes. */
+  private qaLines: QaResultLine[] = [];
+  /** Recent presses on the version label (secret QA unlock), scene clock ms. */
+  private versionTaps: number[] = [];
+  /** The QA panel module once loaded (dynamic import on the first open). */
+  private qaPanel: typeof QaPanelModule | undefined;
 
   constructor() {
     super('main-menu');
@@ -44,6 +131,8 @@ export class MainMenuScene extends Phaser.Scene {
   preload(): void {
     this.app = getApp(this);
     this.app.platform.loadingStart();
+    // First launch: the preloader bar follows this loader.
+    trackPreloaderLoader(this);
     // Mob and boss sheets of a finished run are not drawn in the hub: free their GPU memory (phones).
     unloadSprites(this, HERO_SETS);
     loadSprites(this, HERO_SETS);
@@ -62,11 +151,15 @@ export class MainMenuScene extends Phaser.Scene {
     this.languageOpen = false;
     this.languageBusy = false;
     this.mapsOpen = false;
+    this.qaOpen = false;
+    this.qaLines = [];
+    this.versionTaps = [];
     // Mail items take any stash room freed since they arrived (oldest first).
     const moved = fillStashFromOverflow(this.app.profile, itemsData);
     if (moved.length > 0) this.app.save();
     this.build();
     fadeIn(this);
+    finishPreloader();
     if (moved.length > 0) showToast(this, t('inv.mailMoved', { count: moved.length }));
 
     const rebuild = (): void => this.build();
@@ -93,7 +186,10 @@ export class MainMenuScene extends Phaser.Scene {
     this.root?.destroy();
     this.root = this.add.container(0, 0);
     const { width, height } = this.scale;
-    const compact = width < 820 || height < 520;
+    const density = densityOf(width, height);
+    const compact = density !== 'wide';
+    const s = MENU_SIZES[density];
+    this.sizes = s;
 
     const characters = this.app.profile.characters;
     if (!findCharacter(this.app.profile, this.app.selectedCharacterId ?? '')) this.app.selectedCharacterId = characters[0]?.id;
@@ -102,34 +198,29 @@ export class MainMenuScene extends Phaser.Scene {
     // Right column: character list. Left area: campfire scene, title, play.
     // Narrow portrait phones: the account line moves under the title row and the list spans the width above the scene.
     const portrait = width < PORTRAIT_MAX_WIDTH && height > width;
-    const listW = portrait ? width - 24 : compact ? Math.min(250, width * 0.4) : 320;
-    const listX = portrait ? width / 2 : width - listW / 2 - (compact ? 12 : 28);
-    const sceneW = portrait ? width : width - listW - (compact ? 24 : 56);
+    const listW = portrait ? width - 24 : Math.min(s.listW, width * s.listShare);
+    const listX = portrait ? width / 2 : width - listW / 2 - s.edge;
+    const sceneW = portrait ? width : width - listW - s.edge * 2;
 
     this.backdrop.layout(sceneW * 0.55, height * (portrait ? 0.7 : compact ? 0.6 : 0.62), width, height);
     this.backdrop.setHero(selected ? CLASS_LOOKS.find((l) => l.classId === selected.classId)?.sprite : undefined);
 
-    const title = heading(this, compact ? 16 : 32, compact ? 10 : 22, 'ARPG Lost', compact ? 30 : UI.size.display);
+    const title = heading(this, s.titleX, s.titleY, 'ARPG Lost', s.title);
     this.root.add(title);
     this.buildAccountWidget(width, compact, portrait ? PORTRAIT_ACCOUNT_Y : undefined);
-    const listTop = portrait ? PORTRAIT_LIST_TOP : compact ? 72 : 104;
+    const listTop = portrait ? PORTRAIT_LIST_TOP : s.listTop;
     // Portrait: the play button group keeps the bottom of the screen.
-    const listBottom = this.buildCharacterList(listX, listW, listTop, portrait ? height - PORTRAIT_PLAY_ROOM : height - (compact ? 12 : 28), compact);
+    const listBottom = this.buildCharacterList(listX, listW, listTop, portrait ? height - PORTRAIT_PLAY_ROOM : height - s.edge, compact);
 
-    const playY = height - (compact ? 40 : 64);
+    const playY = height - s.playFromBottom;
     if (selected) {
-      const playW = compact ? 200 : 260;
-      const playH = compact ? 48 : 60;
-      const sideW = compact ? 108 : 150;
-      const modW = compact ? 120 : 160;
-      const sideH = compact ? 40 : 48;
-      const gap = compact ? 8 : 12;
+      const { playW, playH, sideW, modW, sideH, gap } = s;
       // The map selector sits right next to the play button (only when there is a lower map to replay).
       const multiMap = unlockedMap(selected) > 1;
-      const mapsW = multiMap ? (compact ? 84 : 104) : 0;
+      const mapsW = multiMap ? s.mapsW : 0;
       const mapsGap = multiMap ? 6 : 0;
       // Room left of the character list (phones in landscape have far less than the one-row layout needs).
-      const room = sceneW - (compact ? 16 : 32);
+      const room = sceneW - s.edge * 2;
       const rowW = sideW * 2 + modW + playW + mapsGap + mapsW + gap * 3;
       const openInventory = (): void => {
         this.scene.start('inventory', { characterId: selected.id });
@@ -147,7 +238,7 @@ export class MainMenuScene extends Phaser.Scene {
         const talentsX = playX + playW / 2 + mapsGap + mapsW + gap + sideW / 2;
         this.root.add(makeButton(this, talentsX, playY, sideW, sideH, t('menu.talents'), () => this.openTree(selected.id)));
         this.root.add(makeButton(this, talentsX + sideW / 2 + gap + modW / 2, playY, modW, sideH, t('menu.supports'), () => this.openSupports(selected.id)));
-        nameY = playY - (compact ? 38 : 50);
+        nameY = playY - s.nameAbove;
         groupX = playX + (mapsGap + mapsW) / 2;
       } else {
         // Too narrow: the three build screens in a row above the play button and the map selector.
@@ -164,11 +255,11 @@ export class MainMenuScene extends Phaser.Scene {
         this.root.add(makeButton(this, left + w3 * 2.5 + gap * 2, sideY, w3, sideH, t('menu.supports'), () => this.openSupports(selected.id)));
         nameY = sideY - sideH / 2 - 12;
       }
-      this.root.add(label(this, groupX, nameY, selected.name, compact ? UI.size.body : UI.size.heading, UI.goldBrightText, true).setOrigin(0.5));
+      this.root.add(label(this, groupX, nameY, selected.name, s.nameSize, UI.goldBrightText, true).setOrigin(0.5));
       // Unspent passive points: a call to action above the hero's name.
       const { points, specPoints } = unspentPoints(passiveTree, selected);
       const banner = new PointsBanner(this, () => this.openTree(selected.id), { depth: 5, pinned: false, parent: this.root, maxWidth: room });
-      banner.setPosition(groupX, nameY - (compact ? 38 : 48), compact ? 34 : 40);
+      banner.setPosition(groupX, nameY - s.bannerAbove, s.bannerH);
       banner.setPoints(points, specPoints);
     } else {
       this.mapsOpen = false;
@@ -176,17 +267,115 @@ export class MainMenuScene extends Phaser.Scene {
     }
     if (!compact) this.buildRecords(32, 92);
     this.buildLoginHint(sceneW, compact, portrait ? listBottom + 8 : undefined);
-    this.root.add(label(this, 12, height - 8, `v${__APP_VERSION__}`, 12, UI.muted).setOrigin(0, 1).setAlpha(0.6));
+    // Phones in landscape: the play row reaches the bottom left corner, so the version goes under the title.
+    if (density === 'phone' && !portrait) this.buildVersionLabel(title.x, title.y + title.height, 0);
+    else this.buildVersionLabel(12, height - 8, 1);
+    const switcherLeft = title.x + title.width + (compact ? 12 : 20);
+    const rowY = title.y + title.height / 2;
+    const rowGap = s.titleRowGap;
+    // Full screen toggle and (QA mode) the QA button right of the language switcher; built before it, so the
+    // language list draws over them.
+    let rowLeft = switcherLeft + s.switcherW + rowGap;
+    const fsSize = s.fullscreen;
+    const fullscreen = makeFullscreenButton(this, rowLeft + fsSize / 2, rowY, fsSize);
+    if (fullscreen) {
+      this.root.add(fullscreen);
+      rowLeft += fsSize + rowGap;
+    }
+    if (__QA_MODE__ && this.app.settings.qa === true) {
+      // Narrow portrait phones: no room left in the title row, the QA button goes left of the account line below it.
+      const fits = rowLeft + s.qaW <= width - (compact ? 8 : 16);
+      if (fits) this.buildQaButton(rowLeft, rowY);
+      else this.buildQaButton(title.x, portrait ? PORTRAIT_ACCOUNT_Y : rowY + (compact ? 42 : 48));
+    }
     // Last, so its list draws over everything else.
-    this.buildLanguageSwitcher(title.x + title.width + (compact ? 12 : 20), title.y + title.height / 2, compact);
+    this.buildLanguageSwitcher(switcherLeft, rowY, compact);
     if (selected && this.mapsOpen) this.buildMapList(selected, compact);
+    if (__QA_MODE__ && this.qaOpen && this.app.settings.qa === true) this.buildQa(selected, compact);
+  }
+
+  /**
+   * Build version (bottom left; under the title on landscape phones), `originY` 0 = top edge at y, 1 = bottom. Also the secret QA unlock for closed-beta testers (designer decision): seven
+   * presses within three seconds toggle QA mode. The hit area is padded so it works by touch. Builds without
+   * __QA_MODE__ (the CrazyGames release) have no unlock.
+   */
+  private buildVersionLabel(x: number, y: number, originY: number): void {
+    const version = label(this, x, y, `v${__APP_VERSION__}`, 12, UI.muted).setOrigin(0, originY).setAlpha(0.6);
+    const pad = 12;
+    if (__QA_MODE__) {
+      version.setInteractive(new Phaser.Geom.Rectangle(-pad, -pad, version.width + pad * 2, version.height + pad * 2), Phaser.Geom.Rectangle.Contains);
+      version.on('pointerdown', () => this.onVersionTap());
+    }
+    this.root.add(version);
+  }
+
+  private onVersionTap(): void {
+    if (!__QA_MODE__) return;
+    const now = this.time.now;
+    this.versionTaps = this.versionTaps.filter((at) => now - at <= QA_UNLOCK_WINDOW_MS);
+    this.versionTaps.push(now);
+    if (this.versionTaps.length < QA_UNLOCK_TAPS) return;
+    this.versionTaps = [];
+    const on = this.app.settings.qa !== true;
+    this.app.setQaMode(on);
+    this.qaOpen = false;
+    this.qaLines = [];
+    this.build();
+    showToast(this, t(on ? 'qa.on' : 'qa.off'));
+  }
+
+  private buildQaButton(left: number, y: number): void {
+    const w = this.sizes.qaW;
+    const h = this.sizes.switcherH;
+    const button = makeButton(this, left + w / 2, y, w, h, t('qa.button'), () => this.openQa());
+    this.root.add(button.setAlpha(0.75));
+  }
+
+  /** Opens the QA panel, loading its module first (once). */
+  private openQa(): void {
+    if (!__QA_MODE__) return;
+    const show = (): void => {
+      this.qaOpen = true;
+      this.qaLines = [];
+      this.build();
+    };
+    if (this.qaPanel) {
+      show();
+      return;
+    }
+    void import('./qaPanel').then((module) => {
+      this.qaPanel = module;
+      // The menu may have been left while the chunk loaded.
+      if (this.scene.isActive()) show();
+    });
+  }
+
+  private buildQa(hero: CharacterRecord | undefined, compact: boolean): void {
+    if (!__QA_MODE__ || !this.qaPanel) return;
+    this.qaPanel.buildQaPanel(this, this.root, {
+      profile: this.app.profile,
+      hero,
+      compact,
+      lines: this.qaLines,
+      diagnostics: () => viewportDiagnostics(this.game),
+      onApplied: (lines) => {
+        this.app.save();
+        this.qaLines = lines;
+        this.build();
+      },
+      onClose: () => {
+        this.qaOpen = false;
+        this.qaLines = [];
+        this.build();
+      },
+    });
   }
 
   /** "Enter the dungeon" with the map it leads to (the hero's highest unlocked map) on a second line. */
   private addPlayButton(hero: CharacterRecord, x: number, y: number, w: number, h: number, compact: boolean): void {
     const button = makeButton(this, x, y, w, h, t('menu.play'), () => this.play(hero.id), 'primary');
     const caption = button.list[1] as Phaser.GameObjects.Text;
-    const subSize = compact ? 12 : 14;
+    const subSize = compact ? this.sizes.playSub : 14;
     fitText(caption, w - 24, h - subSize - 14);
     caption.setY(-subSize * 0.5);
     const sub = label(this, 0, caption.y + caption.height / 2 + subSize * 0.55, t('menu.mapN', { map: unlockedMap(hero) }), subSize, UI.goldBrightText, true).setOrigin(0.5);
@@ -218,18 +407,19 @@ export class MainMenuScene extends Phaser.Scene {
     shade.on('pointerup', close);
     const maps = availableMaps(hero);
     const highest = maps[maps.length - 1] ?? 1;
-    const panelW = Math.min(compact ? 620 : 680, width - 16);
-    const pad = compact ? 12 : 20;
-    const headerH = compact ? 50 : 66;
-    const hintH = compact ? 26 : 32;
+    const phone = this.sizes === MENU_SIZES.phone;
+    const panelW = Math.min(compact ? (phone ? 560 : 620) : 680, width - 16);
+    const pad = phone ? 10 : compact ? 12 : 20;
+    const headerH = phone ? 40 : compact ? 50 : 66;
+    const hintH = phone ? 24 : compact ? 26 : 32;
     const tileGap = compact ? 6 : 8;
     // Columns: as many as fit at a comfortable touch size (at most 10), but no more than there are maps.
-    const minTileW = compact ? 52 : 60;
+    const minTileW = phone ? 44 : compact ? 52 : 60;
     const cols = Math.max(1, Math.min(maps.length, 10, Math.floor((panelW - pad * 2 + tileGap) / (minTileW + tileGap))));
     const rows = Math.ceil(maps.length / cols);
-    const tileW = Math.min(compact ? 72 : 84, (panelW - pad * 2 - tileGap * (cols - 1)) / cols);
+    const tileW = Math.min(phone ? 52 : compact ? 72 : 84, (panelW - pad * 2 - tileGap * (cols - 1)) / cols);
     const freeH = height - 16 - headerH - hintH - pad;
-    const tileH = Math.max(30, Math.min(compact ? 44 : 54, (freeH - tileGap * (rows - 1)) / rows));
+    const tileH = Math.max(30, Math.min(phone ? 40 : compact ? 44 : 54, (freeH - tileGap * (rows - 1)) / rows));
     const gridW = cols * tileW + (cols - 1) * tileGap;
     const gridH = rows * tileH + (rows - 1) * tileGap;
     const panelH = Math.min(height - 8, headerH + gridH + hintH + pad);
@@ -237,9 +427,9 @@ export class MainMenuScene extends Phaser.Scene {
     // The panel swallows taps so only the shade around it closes the list.
     const panel = makeFrame(this, width / 2, height / 2, panelW, panelH, 'panel').setInteractive();
     this.root.add([shade, panel]);
-    const closeSize = compact ? 34 : 40;
-    this.root.add(fitText(heading(this, width / 2, top + (compact ? 25 : 33), t('menu.mapsTitle'), compact ? 22 : 28).setOrigin(0.5), panelW - closeSize * 2 - 40));
-    this.root.add(makeButton(this, width / 2 + panelW / 2 - closeSize / 2 - 10, top + closeSize / 2 + 10, closeSize, closeSize, '✕', close));
+    const closeSize = phone ? 30 : compact ? 34 : 40;
+    this.root.add(fitText(heading(this, width / 2, top + (phone ? 20 : compact ? 25 : 33), t('menu.mapsTitle'), phone ? 18 : compact ? 22 : 28).setOrigin(0.5), panelW - closeSize * 2 - 40));
+    this.root.add(makeButton(this, width / 2 + panelW / 2 - closeSize / 2 - 10, top + closeSize / 2 + (phone ? 6 : 10), closeSize, closeSize, '✕', close));
     const left = width / 2 - gridW / 2;
     const gridTop = top + headerH;
     maps.forEach((map, i) => {
@@ -257,8 +447,8 @@ export class MainMenuScene extends Phaser.Scene {
    * (it wins over the browser language from then on) and the menu is rebuilt in the new language at once.
    */
   private buildLanguageSwitcher(left: number, y: number, compact: boolean): void {
-    const w = compact ? 112 : 136;
-    const h = compact ? 32 : 36;
+    const w = this.sizes.switcherW;
+    const h = this.sizes.switcherH;
     const x = left + w / 2;
     const toggle = makeButton(this, x, y, w, h, LOCALE_NAMES[getLocale()], () => void this.toggleLanguageList());
     if (this.languageBusy) toggle.setAlpha(0.6);
@@ -271,9 +461,9 @@ export class MainMenuScene extends Phaser.Scene {
       this.languageOpen = false;
       this.build();
     });
-    const rowH = compact ? 38 : 42;
-    const pad = 10;
-    const headerH = compact ? 26 : 30;
+    const rowH = compact ? TOUCH_MIN : 42;
+    const pad = compact ? 8 : 10;
+    const headerH = compact ? 24 : 30;
     const listW = w + 24;
     const listH = headerH + LOCALES.length * (rowH + 6) - 6 + pad * 2;
     const top = y + h / 2 + 6;
@@ -324,17 +514,17 @@ export class MainMenuScene extends Phaser.Scene {
   private buildAccountWidget(width: number, compact: boolean, top?: number): void {
     const { user, platform } = this.app;
     const name = user?.username ?? t('menu.guest');
-    const size = compact ? 30 : 38;
-    const right = width - (compact ? 12 : 28);
-    const y = top ?? (compact ? 30 : 44);
+    const size = this.sizes.avatar;
+    const right = width - this.sizes.edge;
+    const y = top ?? this.sizes.accountY;
     this.root.add(makeAvatar(this, right - size / 2, y, size, user ? AVATAR_KEY : undefined, name));
-    const nameText = label(this, right - size - 14, y - (user ? 10 : 18), name, compact ? UI.size.small : UI.size.body, UI.text, true).setOrigin(1, 0);
+    const nameText = label(this, right - size - 14, y - (user ? 10 : compact ? 16 : 18), name, compact ? UI.size.small : UI.size.body, UI.text, true).setOrigin(1, 0);
     this.root.add(nameText);
     if (!user && platform.isLoginAvailable()) {
       // Offered, never forced and never the main call to action (CrazyGames rules).
       const link = makeButton(this, 0, 0, 10, 24, t('menu.loginCrazyGames'), () => void this.login(), 'link');
       const linkText = link.list[1] as Phaser.GameObjects.Text;
-      link.setPosition(right - size - 14 - linkText.width / 2, y + 14);
+      link.setPosition(right - size - 14 - linkText.width / 2, y + (compact ? 12 : 14));
       this.root.add(link);
     }
   }
@@ -343,25 +533,27 @@ export class MainMenuScene extends Phaser.Scene {
   private buildCharacterList(x: number, w: number, top: number, bottom: number, compact: boolean): number {
     const characters = this.app.profile.characters;
     const slots = profileRules.maxCharacters;
-    const rowH = compact ? 50 : 72;
-    const gap = compact ? 6 : 10;
+    const s = this.sizes;
+    const rowH = s.rowH;
+    const gap = s.rowGap;
     const rows = Math.min(slots, characters.length + 1);
-    const headerH = compact ? 28 : 40;
-    const panelH = Math.min(bottom - top, headerH + rows * (rowH + gap) + 16);
+    const headerH = s.listHeaderH;
+    const inset = compact ? 16 : 24;
+    const panelH = Math.min(bottom - top, headerH + rows * (rowH + gap) + (compact ? 12 : 16));
     this.root.add(makeFrame(this, x, top + panelH / 2, w, panelH, 'panel'));
-    this.root.add(heading(this, x - w / 2 + 18, top + 8, t('menu.characters'), compact ? 18 : 22));
-    this.root.add(label(this, x + w / 2 - 18, top + (compact ? 10 : 14), `${characters.length}/${slots}`, UI.size.small, UI.muted).setOrigin(1, 0));
+    this.root.add(heading(this, x - w / 2 + inset - 4, top + (compact ? 5 : 8), t('menu.characters'), s.listTitle));
+    this.root.add(label(this, x + w / 2 - inset + 4, top + (compact ? 6 : 14), `${characters.length}/${slots}`, UI.size.small, UI.muted).setOrigin(1, 0));
 
     let y = top + headerH + rowH / 2 + 4;
     for (const character of characters) {
-      this.buildCharacterRow(character, x, y, w - 24, rowH, compact);
+      this.buildCharacterRow(character, x, y, w - inset, rowH, compact);
       y += rowH + gap;
     }
     if (characters.length < slots) {
-      const card = makeCard(this, x, y, w - 24, rowH, false, () => this.scene.start('create-character'));
+      const card = makeCard(this, x, y, w - inset, rowH, false, () => this.scene.start('create-character'));
       this.root.add(card);
-      this.root.add(heading(this, x - (w - 24) / 2 + 26, y, '+', compact ? 24 : 30).setOrigin(0.5));
-      this.root.add(fitText(label(this, x - (w - 24) / 2 + 48, y, t('menu.createHero'), compact ? UI.size.small : UI.size.body, UI.goldText).setOrigin(0, 0.5), w - 24 - 58));
+      this.root.add(heading(this, x - (w - inset) / 2 + 22, y, '+', compact ? 24 : 30).setOrigin(0.5));
+      this.root.add(fitText(label(this, x - (w - inset) / 2 + 42, y, t('menu.createHero'), compact ? UI.size.small : UI.size.body, UI.goldText).setOrigin(0, 0.5), w - inset - 52));
     }
     return top + panelH;
   }
@@ -389,13 +581,16 @@ export class MainMenuScene extends Phaser.Scene {
       portrait.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
       this.root.add(portrait);
     }
-    const textX = left + h + 6;
+    const s = this.sizes;
+    const textX = left + h + (compact ? 2 : 6);
     // Text stops before the delete button of the selected row (long class names in some languages shrink instead).
-    const textW = (isSelected ? x + w / 2 - (compact ? 22 : 28) - (compact ? 16 : 20) - 6 : x + w / 2 - 10) - textX;
-    this.root.add(fitText(label(this, textX, y - (compact ? 16 : 20), character.name, compact ? UI.size.body : UI.size.heading - 2, isSelected ? UI.goldBrightText : UI.text, true), textW));
-    this.root.add(fitText(label(this, textX, y + (compact ? 2 : 6), t('menu.heroLine', { class: className(character.classId), level: character.level }), UI.size.small, UI.muted), textW));
+    const delX = x + w / 2 - s.rowDelete / 2 - (compact ? 6 : 8);
+    const textW = (isSelected ? delX - s.rowDelete / 2 - 6 : x + w / 2 - 10) - textX;
+    // Name above the row's centre line, class and level below it.
+    this.root.add(fitText(label(this, textX, y + (compact ? 3 : 2), character.name, s.rowName, isSelected ? UI.goldBrightText : UI.text, true).setOrigin(0, 1), textW));
+    this.root.add(fitText(label(this, textX, y + (compact ? 1 : 6), t('menu.heroLine', { class: className(character.classId), level: character.level }), s.rowLine, UI.muted), textW));
     if (isSelected) {
-      const del = makeButton(this, x + w / 2 - (compact ? 22 : 28), y, compact ? 32 : 40, compact ? 32 : 40, '✕', () =>
+      const del = makeButton(this, delX, y, s.rowDelete, s.rowDelete, '✕', () =>
         confirmDialog(this, t('menu.deleteConfirm', { name: character.name }), t('menu.delete'), () => {
           deleteCharacter(this.app.profile, character.id);
           this.app.save();

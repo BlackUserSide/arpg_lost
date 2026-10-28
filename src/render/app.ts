@@ -23,6 +23,8 @@ export interface App {
    * its fonts are loaded. When choices overlap, only the latest one is applied.
    */
   setLanguage(locale: Locale): Promise<void>;
+  /** Closed-beta QA mode on / off (saved in the settings at once). */
+  setQaMode(on: boolean): void;
 }
 
 export const APP_KEY = 'app';
@@ -48,6 +50,8 @@ const applySettings = (platform: Platform, settings: Settings): Promise<boolean>
 
 export async function createApp(platform: Platform): Promise<App> {
   await platform.init();
+  // Loading runs from here (SDK ready) until the first screen is built (MainMenuScene.create stops it).
+  platform.loadingStart();
   const settings = loadSettings(platform.storage);
   await applySettings(platform, settings);
   // A save this build cannot read (newer version) loads read-only: never save over it.
@@ -73,6 +77,12 @@ export async function createApp(platform: Platform): Promise<App> {
       app.settings = { ...app.settings, language: locale };
       saveSettings(platform.storage, app.settings);
       await switchLocale(locale);
+    },
+    setQaMode: (on) => {
+      const next: Settings = { ...app.settings, qa: true };
+      if (!on) delete next.qa;
+      app.settings = next;
+      saveSettings(platform.storage, app.settings);
     },
   };
   app.selectedCharacterId = app.profile.characters[0]?.id;

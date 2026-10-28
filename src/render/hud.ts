@@ -20,7 +20,7 @@ import { AlliesBadge } from './alliesHud';
 import { POTION_ROSE } from './potionFx';
 import { PotionSlot } from './potionHud';
 import { SoulsBadge } from './soulsHud';
-import { frameTexture, label, makeFrame, UI } from './ui';
+import { densityOf, frameTexture, label, makeFrame, UI, type Density } from './ui';
 import type { ButtonState } from './touchControls';
 import type { SafeInsets } from './touchMode';
 
@@ -80,11 +80,16 @@ export interface TouchButton {
   readonly r: number;
 }
 
-/** Touch layout (px): the big basic attack button, the skill buttons round it, the potion; extra hit margin. */
-const TOUCH_SIZES = {
-  compact: { attack: 84, skill: 60, potion: 56, arcGap: 28, gap: 12, orb: 30, hit: 8 },
-  wide: { attack: 104, skill: 72, potion: 64, arcGap: 28, gap: 16, orb: 40, hit: 10 },
-} as const;
+/**
+ * Touch layout per density (px): the big basic attack button, the skill buttons round it, the potion; extra hit
+ * margin; the orbs' radius, the screen edge margin. Phones keep the play field clear: smaller frames, a wider hit
+ * margin (the touch target stays about the old size).
+ */
+const TOUCH_SIZES: Readonly<Record<Density, { attack: number; skill: number; potion: number; arcGap: number; gap: number; orb: number; hit: number; margin: number }>> = {
+  phone: { attack: 70, skill: 50, potion: 46, arcGap: 18, gap: 10, orb: 24, hit: 10, margin: 8 },
+  compact: { attack: 84, skill: 60, potion: 56, arcGap: 28, gap: 12, orb: 30, hit: 8, margin: 12 },
+  wide: { attack: 104, skill: 72, potion: 64, arcGap: 28, gap: 16, orb: 40, hit: 10, margin: 22 },
+};
 /** Screen angles (degrees, 0 = right, 90 = down) of skills 1..3 round the attack button: left, up-left, up. */
 const TOUCH_ARC = [180, 225, 270] as const;
 /** Touch button held: scale and rim colour. */
@@ -192,6 +197,8 @@ export class Hud {
   /** Skill level pips, skill XP bars and level-up glows under / around the skill slots. */
   private readonly skillLevelGfx: Phaser.GameObjects.Graphics;
   private compact = false;
+  /** Phone density (render/ui.ts): the touch layout uses its smallest set. */
+  private density: Density = 'wide';
   private readonly levelText: Phaser.GameObjects.Text;
   private xpRect = { x: 0, y: 0, w: 0, h: 0 };
   private levelPulse = 0;
@@ -316,6 +323,7 @@ export class Hud {
   layout(width: number, height: number, touch?: SafeInsets): void {
     const compact = width < 820 || height < 520;
     this.compact = compact;
+    this.density = densityOf(width, height, compact);
     this.touch = touch !== undefined;
     for (const slot of this.slots) slot.key.setVisible(!touch);
     this.potion?.setKeyHint(!touch);
@@ -364,30 +372,31 @@ export class Hud {
    */
   private layoutTouch(width: number, height: number, insets: SafeInsets): void {
     const compact = this.compact;
-    const z = compact ? TOUCH_SIZES.compact : TOUCH_SIZES.wide;
-    const margin = compact ? 12 : 22;
+    const phone = this.density === 'phone';
+    const z = TOUCH_SIZES[this.density];
+    const margin = z.margin;
     const left = margin + insets.left;
     const right = width - margin - insets.right;
-    const top = (compact ? 8 : 16) + insets.top;
+    const top = (phone ? 4 : compact ? 8 : 16) + insets.top;
     const bottom = height - margin - insets.bottom;
     const strip = compact ? 10 : 13;
 
     // Orbs, top left; the resource name sits above its orb.
     const r = z.orb;
-    const nameH = compact ? 14 : 16;
+    const nameH = phone ? 12 : compact ? 14 : 16;
     const narrow = width < 560;
     const orbY = top + nameH + r + 4;
     this.placeOrb(this.life, left + r + 4, orbY, r);
     if (narrow) this.placeOrb(this.resource, this.life.x, orbY + r * 2 + nameH + 12, r);
-    else this.placeOrb(this.resource, this.life.x + r * 2 + 18, orbY, r);
-    this.resourceName.setPosition(this.resource.x, this.resource.y - r - (compact ? 6 : 8)).setFontSize(compact ? 11 : 12);
+    else this.placeOrb(this.resource, this.life.x + r * 2 + (phone ? 14 : 18), orbY, r);
+    this.resourceName.setPosition(this.resource.x, this.resource.y - r - (phone ? 5 : compact ? 6 : 8)).setFontSize(compact ? 11 : 12);
     this.resourceNote.setPosition(this.resource.x, this.resource.y);
 
     // XP bar under the orbs, the level number left of it.
     const barH = compact ? 6 : 8;
     const xpLeft = left + (compact ? 22 : 26);
-    const xpRight = Math.max(xpLeft + 110, this.resource.x + r + 4);
-    this.xpRect = { x: xpLeft, y: this.resource.y + r + (compact ? 12 : 16), w: xpRight - xpLeft, h: barH };
+    const xpRight = Math.max(xpLeft + (phone ? 90 : 110), this.resource.x + r + 4);
+    this.xpRect = { x: xpLeft, y: this.resource.y + r + (phone ? 10 : compact ? 12 : 16), w: xpRight - xpLeft, h: barH };
     this.levelText.setPosition(this.xpRect.x - 8, this.xpRect.y + barH / 2).setFontSize(compact ? 13 : 15);
     this.buffAnchor = { x: left + BUFF_SIZE / 2, y: this.xpRect.y + barH + 10 + BUFF_SIZE / 2 };
     // Badges under the buff row (its timer caption included).

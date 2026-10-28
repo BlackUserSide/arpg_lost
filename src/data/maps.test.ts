@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import { distance, type Vec2 } from '../core/math';
 import { eliteModifierPoolAt, mobLevelScaling, mobPoolAt } from '../core/run/run';
+import { zoneAt } from '../core/run/zones';
+import { environments } from './environments';
 import { content } from './index';
 import { mapsData } from './maps';
 
@@ -131,5 +133,22 @@ describe('map data invariants', () => {
         for (const other of obstacles.slice(i + 1)) expect(distance(o.pos, other.pos) - o.radius - other.radius, label).toBeGreaterThanOrEqual(passage);
       });
     }
+  });
+
+  it('zones (maps.md «Зони»): cover maps 1..maxLinearMap in order without gaps; every environment exists', () => {
+    const zones = mapsData.zones ?? [];
+    expect(zones.length).toBeGreaterThan(0);
+    expect(zones[0]!.from).toBe(1);
+    expect(zones[zones.length - 1]!.to).toBe(mapsData.rules.maxLinearMap);
+    zones.forEach((z, i) => {
+      expect(z.from, z.environment).toBeLessThanOrEqual(z.to);
+      if (i > 0) expect(z.from).toBe(zones[i - 1]!.to + 1);
+      expect(environments[z.environment], z.environment).toBeDefined();
+    });
+  });
+
+  it('designer zones 2026-10-27: 10 maps each, temple ruins first, alternating with the crypt', () => {
+    const at = (level: number): string | undefined => zoneAt(mapsData.zones ?? [], level)?.environment;
+    expect([1, 10, 11, 20, 21, 30, 31, 40].map(at)).toEqual(['temple', 'temple', 'crypt', 'crypt', 'temple', 'temple', 'crypt', 'crypt']);
   });
 });

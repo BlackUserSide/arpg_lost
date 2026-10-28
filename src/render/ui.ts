@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { phoneLayout } from '../data/controls';
 import { t } from '../i18n';
 import { BODY_FONT, HEADING_FONT } from './fonts';
 
@@ -19,6 +20,85 @@ export const UI = {
   size: { display: 44, title: 28, heading: 20, body: 16, small: 14 },
   rarity: { normal: '#c9c4b8', magic: '#7aa2ff', rare: '#f3d58a', unique: '#e07a2e', legendary: '#ff5fd2' },
 } as const;
+
+/**
+ * Layout density (docs/design/ui-style.md, "Щільність"): how much chrome a screen can afford.
+ * - `phone`: the screen's short side is at most PHONE_MAX_SHORT_SIDE (landscape phones, 320..450 px high, browser
+ *   toolbars included). Smallest frames and gaps, text at the style guide minimum, touch targets kept >= TOUCH_MIN.
+ * - `compact`: small tablets and small windows (each screen keeps its own threshold for it).
+ * - `wide`: desktop.
+ */
+export type Density = 'phone' | 'compact' | 'wide';
+
+/**
+ * Screens whose shorter side is at most this (CSS px) use the phone density: the same threshold as the phone device
+ * check (data/controls phoneLayout.maxShortSide), applied to the canvas size, not the device.
+ */
+export const PHONE_MAX_SHORT_SIDE = phoneLayout.maxShortSide;
+/** Smallest touch target (CSS px): buttons drawn smaller still take presses over at least this square. */
+export const TOUCH_MIN = 40;
+
+/** Sizes every screen takes from one place, so a density change is one edit (px). */
+export interface UiMetrics {
+  readonly density: Density;
+  /** phone density. */
+  readonly phone: boolean;
+  /** phone or compact density. */
+  readonly compact: boolean;
+  /** Screen edge margin and the gap between panels. */
+  readonly margin: number;
+  readonly gap: number;
+  /** Screen title (heading font) and the top bar it sits in. */
+  readonly screenTitle: number;
+  readonly headerH: number;
+  /** Buttons in the top bar (Back, Talents, ...): height and the usual width. */
+  readonly headerButtonH: number;
+  readonly headerButtonW: number;
+  /** A panel's own heading (heading font) and the strip it takes at the panel's top. */
+  readonly panelTitle: number;
+  readonly panelHeaderH: number;
+  /** Inner padding of panels and tooltips. */
+  readonly pad: number;
+  /** Action buttons (Equip, Take, ...) and square icon buttons (close cross, zoom). */
+  readonly buttonH: number;
+  readonly iconButton: number;
+  /** Text: item / node names, body text, secondary text (never below UI.size.small on a phone). */
+  readonly heading: number;
+  readonly body: number;
+  readonly small: number;
+}
+
+const METRICS: Readonly<Record<Density, UiMetrics>> = {
+  phone: {
+    density: 'phone', phone: true, compact: true,
+    margin: 8, gap: 6, screenTitle: 20, headerH: 38, headerButtonH: 32, headerButtonW: 96,
+    panelTitle: 16, panelHeaderH: 26, pad: 10, buttonH: 36, iconButton: 32,
+    heading: 16, body: UI.size.small, small: UI.size.small,
+  },
+  compact: {
+    density: 'compact', phone: false, compact: true,
+    margin: 10, gap: 8, screenTitle: 24, headerH: 44, headerButtonH: 34, headerButtonW: 110,
+    panelTitle: 18, panelHeaderH: 30, pad: 14, buttonH: 40, iconButton: 34,
+    heading: UI.size.heading - 2, body: UI.size.body, small: UI.size.small,
+  },
+  wide: {
+    density: 'wide', phone: false, compact: false,
+    margin: 24, gap: 16, screenTitle: 34, headerH: 64, headerButtonH: 42, headerButtonW: 110,
+    panelTitle: 22, panelHeaderH: 40, pad: 16, buttonH: 44, iconButton: 40,
+    heading: UI.size.heading, body: UI.size.body, small: UI.size.small,
+  },
+};
+
+/** The density for a screen size; `compact`: the calling screen's own small-screen rule (default: narrow or short). */
+export function densityOf(width: number, height: number, compact = width < 820 || height < 520): Density {
+  if (Math.min(width, height) <= PHONE_MAX_SHORT_SIDE) return 'phone';
+  return compact ? 'compact' : 'wide';
+}
+
+/** Layout sizes for a screen size (see densityOf). */
+export function uiMetrics(width: number, height: number, compact?: boolean): UiMetrics {
+  return METRICS[densityOf(width, height, compact)];
+}
 
 export type FrameVariant =
   | 'panel'
@@ -221,11 +301,16 @@ function onPress(target: Phaser.GameObjects.GameObject, onClick: () => void): vo
     });
 }
 
-const frameHitArea = (w: number, h: number): Phaser.Types.Input.InputConfiguration => ({
-  useHandCursor: true,
-  hitArea: new Phaser.Geom.Rectangle(FRAME_PAD, FRAME_PAD, w, h),
-  hitAreaCallback: Phaser.Geom.Rectangle.Contains,
-});
+/** The frame's own rectangle, grown to at least TOUCH_MIN on each side (small phone buttons stay easy to hit). */
+const frameHitArea = (w: number, h: number): Phaser.Types.Input.InputConfiguration => {
+  const hw = Math.max(w, TOUCH_MIN);
+  const hh = Math.max(h, TOUCH_MIN);
+  return {
+    useHandCursor: true,
+    hitArea: new Phaser.Geom.Rectangle(FRAME_PAD - (hw - w) / 2, FRAME_PAD - (hh - h) / 2, hw, hh),
+    hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+  };
+};
 
 export function makeButton(
   scene: Phaser.Scene,
@@ -250,7 +335,8 @@ export function makeButton(
   const normal = frameTexture(scene, w, h, style);
   const hover = frameTexture(scene, w, h, `${style}Hover`);
   const bg = scene.add.image(0, 0, normal);
-  const size = Math.round(Math.min(h * 0.42, UI.size.heading + 4));
+  // Captions scale with the button, but never below the style guide minimum (small phone buttons).
+  const size = Math.round(Math.min(Math.max(h * 0.42, UI.size.small), UI.size.heading + 4));
   const t = scene.add
     .text(0, 0, text, {
       fontFamily: style === 'primary' ? UI.headingFont : UI.bodyFont,
@@ -300,23 +386,26 @@ export function makeCard(scene: Phaser.Scene, x: number, y: number, w: number, h
  */
 export function confirmDialog(scene: Phaser.Scene, message: string, confirmLabel: string, onConfirm: () => void, cancelLabel = t('common.cancel'), depth = 1000): void {
   const { width, height } = scene.scale;
+  const m = uiMetrics(width, height);
   const shade = scene.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.7).setInteractive();
   const w = Math.min(440, width - 32);
-  const text = label(scene, width / 2, 0, message, UI.size.body + 2).setOrigin(0.5).setWordWrapWidth(w - 48).setAlign('center');
+  const text = label(scene, width / 2, 0, message, m.phone ? UI.size.body : UI.size.body + 2).setOrigin(0.5).setWordWrapWidth(w - 48).setAlign('center');
   // The panel grows with the message (longer translations wrap to more lines).
-  const panelH = Math.min(height - 16, Math.max(180, text.height + 132));
+  const buttonH = m.phone ? 40 : 46;
+  const textTop = m.phone ? 16 : 24;
+  const panelH = Math.min(height - 16, Math.max(m.phone ? 120 : 180, text.height + textTop + buttonH + (m.phone ? 40 : 62)));
   const top = height / 2 - panelH / 2;
-  text.setY(top + 24 + text.height / 2);
+  text.setY(top + textTop + text.height / 2);
   const panel = makeFrame(scene, width / 2, height / 2, w, panelH, 'panel');
   const parts: Phaser.GameObjects.GameObject[] = [];
   const close = (): void => parts.forEach((p) => p.destroy());
-  const buttonY = top + panelH - 46;
+  const buttonY = top + panelH - buttonH / 2 - (m.phone ? 14 : 23);
   const buttonW = Math.min(150, (w - 48) / 2);
-  const yes = makeButton(scene, width / 2 - buttonW / 2 - 15, buttonY, buttonW, 46, confirmLabel, () => {
+  const yes = makeButton(scene, width / 2 - buttonW / 2 - 15, buttonY, buttonW, buttonH, confirmLabel, () => {
     close();
     onConfirm();
   }, 'danger');
-  const no = makeButton(scene, width / 2 + buttonW / 2 + 15, buttonY, buttonW, 46, cancelLabel, close);
+  const no = makeButton(scene, width / 2 + buttonW / 2 + 15, buttonY, buttonW, buttonH, cancelLabel, close);
   parts.push(shade, panel, text, yes, no);
   // The message is created before the panel (its height sizes the panel): lift it and the buttons above the panel.
   for (const p of [shade, panel]) pinToScreen(p, depth);
@@ -369,4 +458,51 @@ export function pinToScreen<T extends Phaser.GameObjects.GameObject>(obj: T, dep
   pin(obj);
   if (depth !== undefined) (obj as unknown as Phaser.GameObjects.Components.Depth).setDepth(depth);
   return obj;
+}
+
+/** Procedural icons for square icon buttons (gold line art like the full screen toggle). */
+export type IconName = 'pause' | 'talents';
+
+const ICON_GOLD = 0xf3d58a;
+const ICON_GOLD_HOVER = 0xfff0c0;
+
+/** Draws `icon` centred at (0, 0) into `g`, sized for a `size` px button. */
+export function drawIcon(g: Phaser.GameObjects.Graphics, icon: IconName, size: number, color: number = ICON_GOLD): void {
+  g.clear();
+  const s = size * 0.3;
+  if (icon === 'pause') {
+    // Two upright bars.
+    const w = Math.max(3, size * 0.12);
+    g.fillStyle(color, 1);
+    g.fillRect(-s * 0.55 - w / 2, -s, w, s * 2);
+    g.fillRect(s * 0.55 - w / 2, -s, w, s * 2);
+    return;
+  }
+  // Talents: a small passive tree, a root node joined to two branches and a crowning notable.
+  const r = Math.max(2.5, size * 0.07);
+  const nodes = [
+    { x: 0, y: s * 0.95 },
+    { x: -s * 0.8, y: s * 0.05 },
+    { x: s * 0.8, y: s * 0.05 },
+    { x: 0, y: -s * 0.85 },
+  ] as const;
+  g.lineStyle(Math.max(1.5, size * 0.05), color, 0.85);
+  for (const [a, b] of [[0, 1], [0, 2], [1, 3], [2, 3]] as const) g.lineBetween(nodes[a].x, nodes[a].y, nodes[b].x, nodes[b].y);
+  g.fillStyle(color, 1);
+  for (let i = 0; i < 3; i++) g.fillCircle(nodes[i]!.x, nodes[i]!.y, r);
+  // The notable on top as a diamond.
+  const top = nodes[3];
+  const d = r * 1.7;
+  g.fillTriangle(top.x, top.y - d, top.x + d, top.y, top.x - d, top.y).fillTriangle(top.x, top.y + d, top.x + d, top.y, top.x - d, top.y);
+}
+
+/** Square secondary button with a procedural icon instead of a caption (hit area at least TOUCH_MIN). */
+export function makeIconButton(scene: Phaser.Scene, x: number, y: number, size: number, icon: IconName, onClick: () => void): Phaser.GameObjects.Container {
+  const button = makeButton(scene, x, y, size, size, '', onClick);
+  const g = scene.add.graphics();
+  button.add(g);
+  const bg = button.list[0] as Phaser.GameObjects.Image;
+  drawIcon(g, icon, size);
+  bg.on('pointerover', () => drawIcon(g, icon, size, ICON_GOLD_HOVER)).on('pointerout', () => drawIcon(g, icon, size));
+  return button;
 }

@@ -36,7 +36,7 @@ import {
   supportTitle,
   tierLabel,
 } from './supportText';
-import { confirmDialog, fadeIn, fitText, frameTexture, heading, label, makeButton, makeCard, makeFrame, UI } from './ui';
+import { confirmDialog, fadeIn, fitText, frameTexture, heading, label, makeButton, makeCard, makeFrame, UI, uiMetrics } from './ui';
 
 // Skill modifiers screen (docs/design/skill-modifiers.md): the hero's supports tab and the 3 class skills with their
 // slots. Select-then-act so it works by touch: tap a support, then a compatible slot (incompatible slots are
@@ -55,6 +55,10 @@ type Selection = { kind: 'support'; id: string } | { kind: 'skill'; id: string }
 const GROUP_ORDER: Record<SupportDef['group'], number> = { melee: 0, projectile: 1, spell: 2, general: 3 };
 const EMBER = 0xff7a2a;
 const AFFIX_TEXT = '#8fb3ff';
+/** Shortest details panel under the grid (px); below this the details open over the grid. */
+const DETAILS_MIN_H = 190;
+/** Room kept under the grid for the short hint when the details open over it (px). */
+const SHORT_HINT_H = 46;
 
 /** A support item with its def (unknown defs are dropped by the save loader, but stay safe here). */
 interface Owned {
@@ -161,16 +165,20 @@ export class SupportsScene extends Phaser.Scene {
     }
     const classDef = getClass(content, character.classId);
     const { width, height } = this.scale;
-    const compact = width < 1100 || height < 600;
+    const metrics = uiMetrics(width, height, width < 1100 || height < 600);
+    const compact = metrics.compact;
+    const phone = metrics.phone;
     this.compact = compact;
-    const m = compact ? 10 : 24;
-    const titleH = compact ? 44 : 64;
+    // Phones: the same slim header as the inventory (the panels below keep this screen's own sizes).
+    const m = phone ? metrics.margin : compact ? 10 : 24;
+    const titleH = phone ? metrics.headerH : compact ? 44 : 64;
 
-    const title = heading(this, m + 4, compact ? 6 : 12, t('supports.title'), compact ? 24 : 34);
+    const title = heading(this, m + 4, compact ? 6 : 12, t('supports.title'), phone ? metrics.screenTitle : compact ? 24 : 34);
     this.root.add(title);
     const shards = this.app.profile.currency[SALVAGE_CURRENCY] ?? 0;
-    this.root.add(label(this, title.x + title.width + 14, title.y + title.height - (compact ? 20 : 26), t('supports.header', { name: character.name, shards: shardsWord(shards) }), UI.size.small, UI.goldBrightText));
-    this.root.add(makeButton(this, width - m - 55, titleH / 2 + (compact ? 0 : 4), 110, compact ? 36 : 42, t('common.back'), () => this.back()));
+    this.root.add(label(this, title.x + title.width + 14, title.y + title.height - (phone ? 18 : compact ? 20 : 26), t('supports.header', { name: character.name, shards: shardsWord(shards) }), UI.size.small, UI.goldBrightText));
+    const backW = phone ? 84 : 110;
+    this.root.add(makeButton(this, width - m - backW / 2, titleH / 2 + (compact ? 0 : 4), backW, phone ? metrics.headerButtonH : compact ? 36 : 42, t('common.back'), () => this.back()));
 
     const top = titleH + (compact ? 0 : 6);
     const avail = height - top - m;
@@ -185,15 +193,19 @@ export class SupportsScene extends Phaser.Scene {
     const rightW = width - m - rightX;
     const cols = rightW >= 10 * 44 + 28 ? 10 : 6;
     const cellGap = compact ? 4 : 6;
-    const cell = Math.floor(Math.min(compact ? 48 : 60, (rightW - 28 - (cols - 1) * cellGap) / cols));
     const rows = Math.ceil(data.rules.tabSize / cols);
     const headerH = compact ? 30 : 40;
-    const gridH = headerH + rows * (cell + cellGap) - cellGap + 18;
+    // As wide as the column allows, but the whole grid stays on screen (short landscape phones), with room under it
+    // for the two-line hint when the details have to open over the grid.
+    const gridHeight = (c: number): number => headerH + rows * (c + cellGap) - cellGap + 18;
+    let cell = Math.floor(Math.min(compact ? 48 : 60, (rightW - 28 - (cols - 1) * cellGap) / cols));
+    if (avail - gridHeight(cell) - gap < DETAILS_MIN_H) cell = Math.min(cell, Math.floor((avail - SHORT_HINT_H - headerH - 18 + cellGap) / rows - cellGap));
+    const gridH = gridHeight(cell);
     this.buildTab(character, data, rightX, top, rightW, gridH, cols, cell, cellGap, headerH);
 
     const detailsTop = top + gridH + gap;
     const detailsH = avail - gridH - gap;
-    this.detailsArea = detailsH >= 190 ? { x: rightX, y: detailsTop, w: rightW, h: detailsH, overlay: false } : { x: rightX, y: top, w: rightW, h: avail, overlay: true };
+    this.detailsArea = detailsH >= DETAILS_MIN_H ? { x: rightX, y: detailsTop, w: rightW, h: detailsH, overlay: false } : { x: rightX, y: top, w: rightW, h: avail, overlay: true };
     if (this.detailsArea.overlay && !this.selection) {
       // Short screens: the details only open over the tab on a tap; the hint (or the last message) sits under it.
       const hint = character.supports.length === 0 ? t('supports.hintEmptyShort') : t('supports.hintShort');

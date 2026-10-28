@@ -6,7 +6,7 @@ import type { Profile } from '../core/progression/profile';
 import { t, upper } from '../i18n';
 import { AFFIX_OPS, costParts, craftEffect, craftReason, CRAFT_OP_NAME, currencyAmount, currencyWord } from './craftText';
 import { describeItem, LINE_TONE, rarityLabel } from './itemText';
-import { fitText, label, makeButton, makeFrame, UI } from './ui';
+import { fitText, label, makeButton, makeFrame, UI, uiMetrics } from './ui';
 
 // Crafting tab of the inventory (docs/design/crafting.md): the chosen item with pickable affix lines, the wallet and
 // the five operations with cost and, when unavailable, the reason. Core decides availability and cost (canCraft,
@@ -45,9 +45,14 @@ export interface CraftPanelOptions {
   onCraft(op: CraftOp): void;
 }
 
-const TWO_COLUMNS_MIN_W = 560;
+export const CRAFT_TWO_COLUMNS_W = 560;
+/** Height a single-column panel needs (item above the five operations), px; shorter areas get an overlay instead. */
+export const CRAFT_ONE_COLUMN_H = 520;
 
 /** Every text here has a one-line slot: shrink the font, never wrap, and squeeze as a last resort. */
+/** Phone density (render/ui.ts uiMetrics). */
+const isPhone = (scene: Phaser.Scene): boolean => uiMetrics(scene.scale.width, scene.scale.height).phone;
+
 function oneLine(text: Phaser.GameObjects.Text, maxW: number): Phaser.GameObjects.Text {
   fitText(text, maxW, 0);
   if (text.width > maxW && maxW > 0) text.setScale(maxW / text.width, 1);
@@ -58,9 +63,10 @@ const WALLET_H = 26;
 /** Draws the panel into `parent`. */
 export function buildCraftPanel(scene: Phaser.Scene, parent: Phaser.GameObjects.Container, o: CraftPanelOptions): void {
   const { area } = o;
-  const pad = 14;
+  const phone = isPhone(scene);
+  const pad = phone ? 10 : 14;
   parent.add(makeFrame(scene, area.x + area.w / 2, area.y + area.h / 2, area.w, area.h, 'panel'));
-  const columns = area.w >= TWO_COLUMNS_MIN_W;
+  const columns = area.w >= CRAFT_TWO_COLUMNS_W;
   let itemBox: Box;
   let opsBox: Box;
   if (columns) {
@@ -92,7 +98,7 @@ function buildItem(scene: Phaser.Scene, parent: Phaser.GameObjects.Container, o:
   const cx = box.x + box.w / 2;
   const parts: Phaser.GameObjects.GameObject[] = [];
   let y = box.y;
-  const title = oneLine(label(scene, cx, y, tooltip.title, UI.size.heading, color, true).setOrigin(0.5, 0), box.w);
+  const title = oneLine(label(scene, cx, y, tooltip.title, isPhone(scene) ? 16 : UI.size.heading, color, true).setOrigin(0.5, 0), box.w);
   parts.push(title);
   y += title.height + 2;
   if (tooltip.subtitle) {
@@ -225,7 +231,7 @@ function buildOps(scene: Phaser.Scene, parent: Phaser.GameObjects.Container, o: 
 
   const rowH = Math.min(62, Math.floor((box.h - WALLET_H) / CRAFT_OPS.length));
   const buttonW = Math.min(150, Math.round(box.w * 0.4));
-  const buttonH = Math.min(44, rowH - 8);
+  const buttonH = Math.min(isPhone(scene) ? 36 : 44, rowH - 8);
   const textX = box.x + buttonW + 10;
   const textW = box.x + box.w - textX;
   CRAFT_OPS.forEach((op, i) => {

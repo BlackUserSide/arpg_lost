@@ -7,7 +7,7 @@ import { t } from '../i18n';
 import { mobName } from './contentText';
 import { formatCountdown, runInfoLine, urgentFrom } from './runText';
 import { touchControlsOn } from './touchMode';
-import { fitText, label, makeButton, pinToScreen, UI } from './ui';
+import { densityOf, fitText, label, makeButton, pinToScreen, UI } from './ui';
 
 // Map run HUD (docs/design/maps.md): the countdown (always visible, flashes on time warnings), the line under it
 // (map, room, wave / door / altar), the boss life bar, and the "awaken the altar" action button (tap or F).
@@ -83,18 +83,19 @@ export class RunHud {
     this.touchClusterTop = touchClusterTop;
     const compact = width < 820 || height < 520;
     this.compact = compact;
-    const margin = (compact ? 6 : 14) + top;
+    const phone = densityOf(width, height, compact) === 'phone';
+    const margin = (phone ? 2 : compact ? 6 : 14) + top;
     // Centred origin: the warning pulse grows the timer both ways instead of into the info line under it.
-    this.timer.setFontSize(compact ? 30 : 42);
+    this.timer.setFontSize(phone ? 24 : compact ? 30 : 42);
     if (this.timer.text === '') this.timer.setText('0:00');
     this.timer.setPosition(width / 2, margin + this.timer.height / 2);
     this.infoMaxW = Math.max(160, 2 * (width - rightReserved - width / 2) - 24);
-    const infoY = margin + (compact ? 34 : 48);
+    const infoY = margin + (phone ? 27 : compact ? 34 : 48);
     this.info.setFontSize(compact ? 13 : UI.size.small).setPosition(width / 2, infoY);
     this.shownRoom = -1;
     const barW = Math.min(compact ? 300 : 460, this.infoMaxW);
     const barH = compact ? 14 : 18;
-    this.bossRect = { x: width / 2 - barW / 2, y: infoY + (compact ? 22 : 26), w: barW, h: barH };
+    this.bossRect = { x: width / 2 - barW / 2, y: infoY + (phone ? 18 : compact ? 22 : 26), w: barW, h: barH };
     this.bossName.setPosition(width / 2, this.bossRect.y + barH / 2).setFontSize(compact ? 11 : 12);
     this.placeAwaken();
   }
@@ -198,11 +199,12 @@ export class RunHud {
   /** Bottom right, above the resource orb: under the right thumb on phones, clear of the hero in the centre. */
   private awakenRect(): { x: number; y: number; w: number; h: number } {
     const compact = this.compact;
-    const w = compact ? 190 : 250;
-    const h = compact ? 40 : 48;
-    const margin = compact ? 12 : 22;
+    const phone = densityOf(this.width, this.height, compact) === 'phone';
+    const w = phone ? 170 : compact ? 190 : 250;
+    const h = phone ? 38 : compact ? 40 : 48;
+    const margin = phone ? 8 : compact ? 12 : 22;
     // Touch layout: just above the skill buttons.
-    if (this.touchClusterTop !== undefined) return { x: this.width - margin - w / 2, y: this.touchClusterTop - (compact ? 12 : 18) - h / 2, w, h };
+    if (this.touchClusterTop !== undefined) return { x: this.width - margin - w / 2, y: this.touchClusterTop - (phone ? 10 : compact ? 12 : 18) - h / 2, w, h };
     const orbTop = this.height - margin - (compact ? 38 : 54) * 2 - 12;
     return { x: this.width - margin - w / 2, y: orbTop - (compact ? 18 : 26) - h / 2, w, h };
   }

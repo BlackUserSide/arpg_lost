@@ -107,6 +107,8 @@ export class SupportFx {
   private readonly ghostPool: Phaser.GameObjects.Sprite[] = [];
   private readonly drops: Drop[] = [];
 
+  private textScale = 1;
+
   constructor(private readonly scene: Phaser.Scene) {
     this.sparks = scene.add
       .particles(0, 0, sparkTexture(scene), {
@@ -236,6 +238,7 @@ export class SupportFx {
       const text = this.scene.add
         .text(0, 0, '', { fontFamily: UI.headingFont, fontStyle: 'bold', fontSize: '17px', stroke: '#000', strokeThickness: 4 })
         .setOrigin(0.5)
+        .setScale(this.textScale)
         .setDepth(DROP_DEPTH + 2);
       drop = { gem, glow, beam, text, x: 0, y: 0, age: 0, active: false, flyX: 0, flyY: 0, labelLift: 0 };
       this.drops.push(drop);
@@ -259,6 +262,12 @@ export class SupportFx {
    * The hero entered another room: gems still in the air (and chain bolts / knockback bursts) belong to the old room's
    * screen positions, so they vanish at once. The drops themselves are already in core (WorldState.supportDrops).
    */
+  /** Scale of the drop names (1 / camera zoom: they keep their screen size in a zoomed run view). */
+  setTextScale(scale: number): void {
+    this.textScale = scale;
+    for (const d of this.drops) d.text.setScale(scale);
+  }
+
   clearRoom(): void {
     for (const drop of this.drops) this.hideDrop(drop);
     for (const bolt of this.bolts) bolt.active = false;
@@ -382,7 +391,7 @@ export class SupportFx {
     // Label: fades in, rises slowly, fades out.
     const lt = age / DROP_LABEL_TIME;
     drop.text
-      .setPosition(drop.x, drop.y - DROP_LIFT - 30 - drop.labelLift - 14 * lt)
+      .setPosition(drop.x, drop.y - DROP_LIFT - 30 - (drop.labelLift + 14 * lt) * this.textScale)
       .setAlpha(lt < 0.1 ? lt / 0.1 : lt > 0.75 ? Math.max(0, 1 - (lt - 0.75) / 0.25) : 1);
     if (age < flyStart) {
       const pop = Math.min(1, age / DROP_POP);
